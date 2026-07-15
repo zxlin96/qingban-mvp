@@ -153,21 +153,183 @@ html, body {
   border-radius: 4px;
 }
 
-.topbar .version-badge {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--accent);
-  padding: 2px 8px;
-  background: var(--bg3);
-  border-radius: 4px;
+.topbar .date-badge-clickable {
   cursor: pointer;
-  user-select: none;
-  border: 1px solid transparent;
-  transition: border-color 0.2s;
+  transition: color 0.2s, background 0.2s;
 }
 
-.topbar .version-badge:hover {
-  border-color: var(--accent);
+.topbar .date-badge-clickable:hover {
+  color: var(--accent);
+  background: var(--bg2);
+}
+
+.topbar .app-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 功能菜单下拉 */
+.menu-btn {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 48px;
+  left: 8px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 180px;
+  z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.menu-item:hover {
+  background: var(--bg3);
+}
+
+.menu-item .menu-ver {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+/* 日历 */
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.calendar-nav .btn {
+  padding: 4px 8px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-grid .cal-head {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted2);
+  padding: 4px 0;
+  font-weight: 600;
+}
+
+.calendar-grid .cal-day {
+  text-align: center;
+  font-size: 12px;
+  padding: 6px 0;
+  border-radius: 6px;
+  cursor: default;
+  color: var(--muted);
+  position: relative;
+}
+
+.calendar-grid .cal-day.has-data {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.calendar-grid .cal-day.has-data:hover {
+  background: var(--bg3);
+}
+
+.calendar-grid .cal-day.today {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.calendar-grid .cal-day .cal-dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+
+.calendar-grid .cal-day .cal-dot.chat { background: var(--accent); }
+.calendar-grid .cal-day .cal-dot.diet { background: #f0a050; }
+.calendar-grid .cal-day .cal-dot.both {
+  background: linear-gradient(90deg, var(--accent) 50%, #f0a050 50%);
+}
+
+.calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted2);
+  flex-wrap: wrap;
+}
+
+.calendar-legend .cal-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+
+.calendar-legend .cal-dot.has-chat { background: var(--accent); }
+.calendar-legend .cal-dot.has-diet { background: #f0a050; }
+.calendar-legend .cal-dot.today {
+  background: var(--bg3);
+  border: 2px solid var(--accent);
+}
+
+/* 历史记录查看器 */
+#historyContent .hist-msg {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#historyContent .hist-msg.user {
+  background: var(--bg3);
+  margin-left: 20px;
+}
+
+#historyContent .hist-msg.assistant {
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  margin-right: 20px;
+}
+
+#historyContent .hist-msg .role-tag {
+  font-size: 10px;
+  color: var(--muted2);
+  margin-bottom: 2px;
+}
+
+/* 版本号在菜单中 */
+.topbar .version-badge {
+  display: none;
 }
 
 .topbar .actions {

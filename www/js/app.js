@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.2.1';
+const APP_VERSION = '2.3.2';
 const APP_VERSION_DATE = '2026-07-15';
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
@@ -865,12 +865,27 @@ ${habits}
     photoBtn.addEventListener('click', () => this.showPhotoMenu());
     fileInput.addEventListener('change', (e) => this.handlePhotoUpload(e));
 
-    // 主题切换
-    document.getElementById('themeBtn').addEventListener('click', () => this.cycleTheme());
-
-    // 字体大小
-    document.getElementById('fontBtn').addEventListener('click', (e) => {
+    // 功能菜单 — 点击展开/关闭
+    document.getElementById('menuBtn').addEventListener('click', (e) => {
       e.stopPropagation();
+      const dd = document.getElementById('menuDropdown');
+      dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+    });
+    document.getElementById('menuDropdown').addEventListener('click', (e) => e.stopPropagation());
+
+    // 菜单项 — 主题切换
+    document.getElementById('menuTheme').addEventListener('click', () => {
+      this.cycleTheme();
+      document.getElementById('menuDropdown').style.display = 'none';
+    });
+
+    // 菜单项 — 字体大小
+    document.getElementById('menuFont').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('menuDropdown').style.display = 'none';
       this.toggleFontPopover();
     });
     document.getElementById('fontPopover').addEventListener('click', (e) => e.stopPropagation());
@@ -884,6 +899,74 @@ ${habits}
       document.getElementById('fontPopover').classList.remove('show');
     });
 
+    // 菜单项 — Token 用量
+    document.getElementById('menuToken').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      const bar = document.getElementById('tokenBar');
+      bar.style.display = bar.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // 菜单项 — 更新日志
+    document.getElementById('menuChangelog').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showChangelog();
+    });
+    document.getElementById('closeChangelog').addEventListener('click', () => {
+      document.getElementById('changelogOverlay').style.display = 'none';
+    });
+    document.getElementById('changelogOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'changelogOverlay') {
+        document.getElementById('changelogOverlay').style.display = 'none';
+      }
+    });
+
+    // 菜单项 — 重建索引
+    document.getElementById('menuRebuild').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      if (confirm('确定要重建 INDEX.md 索引文件吗？\n\n这会重新扫描所有 MD 文件并更新索引，不会删除任何数据。')) {
+        this.rebuildIndex();
+      }
+    });
+
+    // 菜单项 — 重置数据
+    document.getElementById('menuReset').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      if (confirm('确定要重置所有数据吗？\n\n这将清除全部对话历史、饮食记录、身体指标等数据，且无法恢复！')) {
+        this.resetData();
+      }
+    });
+
+    // 菜单项 — 模拟次日
+    document.getElementById('menuNextDay').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      if (confirm('确定要模拟次日吗？\n\n这将触发跨天总结流程，保存当前对话并开始新的一天。')) {
+        this.advanceDay();
+      }
+    });
+
+    // 日期徽章 — 点击打开日历
+    document.getElementById('dateBadge').addEventListener('click', () => this.showCalendar());
+    document.getElementById('closeCalendar').addEventListener('click', () => {
+      document.getElementById('calendarOverlay').style.display = 'none';
+    });
+    document.getElementById('calendarOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'calendarOverlay') {
+        document.getElementById('calendarOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('calPrevMonth').addEventListener('click', () => this._calendarNav(-1));
+    document.getElementById('calNextMonth').addEventListener('click', () => this._calendarNav(1));
+
+    // 历史记录查看器关闭
+    document.getElementById('closeHistory').addEventListener('click', () => {
+      document.getElementById('historyOverlay').style.display = 'none';
+    });
+    document.getElementById('historyOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'historyOverlay') {
+        document.getElementById('historyOverlay').style.display = 'none';
+      }
+    });
+
     // 记忆面板
     document.getElementById('memoryBtn').addEventListener('click', () => this.showMemory());
     document.getElementById('closeMemory').addEventListener('click', () => {
@@ -895,28 +978,8 @@ ${habits}
       }
     });
 
-    // 版本号 — 点击查看更新日志
-    document.getElementById('versionBadge').addEventListener('click', () => this.showChangelog());
-    document.getElementById('closeChangelog').addEventListener('click', () => {
-      document.getElementById('changelogOverlay').style.display = 'none';
-    });
-    document.getElementById('changelogOverlay').addEventListener('click', (e) => {
-      if (e.target.id === 'changelogOverlay') {
-        document.getElementById('changelogOverlay').style.display = 'none';
-      }
-    });
-
-    // 模拟次日
-    document.getElementById('nextDayBtn').addEventListener('click', () => this.advanceDay());
-
     // Auto Dream — 生成周报/月报/模式分析
     document.getElementById('autoDreamBtn').addEventListener('click', () => this.runAutoDream());
-
-    // 重建索引
-    document.getElementById('rebuildIndexBtn').addEventListener('click', () => this.rebuildIndex());
-
-    // 重置数据
-    document.getElementById('resetBtn').addEventListener('click', () => this.resetData());
 
     // 关闭文件查看器
     document.getElementById('closeViewer').addEventListener('click', () => {
@@ -2030,14 +2093,158 @@ updated: ${profile.startDate}
 
   updateDateBadge() {
     document.getElementById('dateBadge').textContent = this.chatManager.currentDate;
-    // 更新版本号显示
-    const vb = document.getElementById('versionBadge');
-    if (vb) vb.textContent = `v${APP_VERSION}`;
+    // 更新菜单中的版本号显示
+    const mv = document.getElementById('menuVersion');
+    if (mv) mv.textContent = `v${APP_VERSION}`;
+  }
+
+  // ===== 日历功能 =====
+
+  _calendarMonth = new Date(); // 当前查看的月份
+
+  async showCalendar() {
+    this._calendarMonth = new Date();
+    document.getElementById('calendarOverlay').style.display = 'flex';
+    await this._renderCalendar();
+  }
+
+  async _calendarNav(delta) {
+    this._calendarMonth.setMonth(this._calendarMonth.getMonth() + delta);
+    await this._renderCalendar();
+  }
+
+  async _renderCalendar() {
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const viewDate = this._calendarMonth;
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+
+    const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+    document.getElementById('calMonthLabel').textContent = `${year}年 ${monthNames[month]}`;
+
+    // 获取该月所有文件
+    const allFiles = await this.fm.listFiles();
+    const fileDates = {}; // { '2026-07-14': { chat: true, diet: true } }
+    for (const f of allFiles) {
+      const fp = f.path || f;
+      const m = fp.match(/^(?:chat|diet)\/(\d{4}-\d{2}-\d{2})\.md$/);
+      if (m) {
+        const d = m[1];
+        if (!fileDates[d]) fileDates[d] = { chat: false, diet: false };
+        if (fp.startsWith('chat/')) fileDates[d].chat = true;
+        if (fp.startsWith('diet/')) fileDates[d].diet = true;
+      }
+    }
+
+    const grid = document.getElementById('calendarGrid');
+    grid.innerHTML = '';
+
+    // 星期标题
+    ['日','一','二','三','四','五','六'].forEach(d => {
+      const head = document.createElement('div');
+      head.className = 'cal-head';
+      head.textContent = d;
+      grid.appendChild(head);
+    });
+
+    // 计算第一天是星期几
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // 填充空白
+    for (let i = 0; i < firstDay; i++) {
+      const empty = document.createElement('div');
+      grid.appendChild(empty);
+    }
+
+    // 填充日期
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const cell = document.createElement('div');
+      cell.className = 'cal-day';
+      cell.textContent = d;
+
+      const data = fileDates[dateStr];
+      if (data) {
+        cell.classList.add('has-data');
+        if (data.chat && data.diet) {
+          cell.innerHTML += '<span class="cal-dot both"></span>';
+        } else if (data.chat) {
+          cell.innerHTML += '<span class="cal-dot chat"></span>';
+        } else if (data.diet) {
+          cell.innerHTML += '<span class="cal-dot diet"></span>';
+        }
+        cell.addEventListener('click', () => this._showDayHistory(dateStr));
+      }
+
+      if (dateStr === todayStr) {
+        cell.classList.add('today');
+      }
+
+      grid.appendChild(cell);
+    }
+  }
+
+  async _showDayHistory(dateStr) {
+    document.getElementById('calendarOverlay').style.display = 'none';
+    document.getElementById('historyOverlay').style.display = 'flex';
+    document.getElementById('historyTitle').textContent = `${dateStr} 历史记录`;
+    document.getElementById('historyContent').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;">加载中...</div>';
+
+    const chatFile = await this.fm.readFile(`chat/${dateStr}.md`);
+    const dietFile = await this.fm.readFile(`diet/${dateStr}.md`);
+
+    let html = '';
+
+    if (dietFile) {
+      html += `<div style="margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--accent);margin-bottom:4px;">饮食记录</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;font-size:13px;white-space:pre-wrap;line-height:1.6;">${this.formatMarkdown(dietFile)}</div>
+      </div>`;
+    }
+
+    if (chatFile) {
+      html += `<div style="margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--accent);margin-bottom:4px;">对话摘要</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;font-size:13px;line-height:1.6;">${this.formatMarkdown(chatFile)}</div>
+      </div>`;
+    }
+
+    if (!html) {
+      html = '<div style="text-align:center;color:var(--muted);padding:20px;">该日期没有历史记录</div>';
+    }
+
+    document.getElementById('historyContent').innerHTML = html;
   }
 
   // 显示更新日志
   showChangelog() {
     const log = [
+      {
+        ver: '2.3.2', date: '2026-07-15',
+        items: [
+          '新增：Token 用量移入功能菜单',
+          '调整：重建索引/重置数据/模拟次日取消隐藏，全部显示'
+        ]
+      },
+      {
+        ver: '2.3.1', date: '2026-07-15',
+        items: [
+          '修复：功能菜单按钮移到最左边，下拉菜单正常显示',
+          '修复：日历月份切换箭头图标渲染'
+        ]
+      },
+      {
+        ver: '2.3.0', date: '2026-07-15',
+        items: [
+          '新增：左上角功能菜单（汉堡按钮），收纳主题/字体/更新日志/重置等功能',
+          '新增：日期徽章可点击打开日历，查看历史聊天记录',
+          '新增：日历支持月份切换，有记录的日期显示彩色圆点',
+          '新增：点击日期查看当天的饮食记录和对话摘要',
+          '优化：顶栏精简为 日期 + 记忆 + Auto Dream 三个按钮'
+        ]
+      },
       {
         ver: '2.2.1', date: '2026-07-15',
         items: [
