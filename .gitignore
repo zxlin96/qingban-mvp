@@ -1,0 +1,54 @@
+# ============================================
+# 轻伴 MVP - .gitignore
+# ============================================
+
+# === Dependencies ===
+node_modules/
+
+# === Environment & Secrets ===
+.env
+.env.local
+.env.*.local
+
+# === Build Tools (large binaries - DO NOT commit) ===
+android-sdk/
+jdk21/
+gradle-home/
+gradle-*.zip
+
+# === Build Outputs ===
+*.apk
+*.aab
+build-log.txt
+build-status.txt
+android/build-output/
+轻伴-Demo.html.zip
+
+# === Capacitor Generated Assets ===
+android/app/src/main/assets/public/
+
+# === IDE & Editor ===
+.trae/
+.trae-html-share-packages/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# === Logs ===
+*.log
+
+# === Temp & Test Files ===
+cmd_test.txt
+test_ps.txt
+*.tmp
+*.bak
+
+# === Runtime Uploads ===
+.uploads/

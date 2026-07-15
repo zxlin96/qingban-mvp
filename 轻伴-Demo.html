@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>轻伴 - AI减重陪伴助手</title>
+<style>
+/* ==================== CSS Variables ==================== */
+:root {
+  --bg: #0f1117;
+  --bg2: #181b24;
+  --bg3: #1f2330;
+  --bg4: #262a38;
+  --accent: #6ee7a3;
+  --accent-dim: #4ab87e;
+  --accent-glow: rgba(110, 231, 163, 0.15);
+  --text: #e4e6eb;
+  --text-dim: #8b8f9a;
+  --text-dimmer: #5a5e6a;
+  --border: #2a2d3a;
+  --border-light: #353948;
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --info: #60a5fa;
+  --purple: #c084fc;
+  --user-bubble: rgba(110, 231, 163, 0.10);
+  --assistant-bubble: #1f2330;
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+  --radius: 10px;
+  --mono: 'SF Mono','Cascadia Code','Consolas','Liberation Mono',monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+}
+[data-theme="light"] {
+  --bg: #f5f6f8;
+  --bg2: #ffffff;
+  --bg3: #ebedf0;
+  --bg4: #e0e2e8;
+  --accent: #1a9c5f;
+  --accent-dim: #157a48;
+  --accent-glow: rgba(26,156,95,0.10);
+  --text: #1a1d24;
+  --text-dim: #6b7280;
+  --text-dimmer: #9ca3af;
+  --border: #d1d5db;
+  --border-light: #e5e7eb;
+  --user-bubble: rgba(26,156,95,0.08);
+  --assistant-bubble: #f0f1f3;
+  --shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+[data-theme="warm"] {
+  --bg: #1a1410;
+  --bg2: #241c16;
+  --bg3: #2e241d;
+  --bg4: #3a2e24;
+  --accent: #f0a050;
+  --accent-dim: #c08030;
+  --accent-glow: rgba(240,160,80,0.12);
+  --text: #f0e0d0;
+  --text-dim: #a09080;
+  --text-dimmer: #706050;
+  --border: #3a2e24;
+  --border-light: #4a3e34;
+  --user-bubble: rgba(240,160,80,0.08);
+  --assistant-bubble: #2e241d;
+  --shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+
+/* ==================== Reset & Base ==================== */
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dimmer); }
+
+/* ==================== Top Bar ==================== */
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  position: relative;
+  z-index: 100;
+}
+.topbar-left { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.logo {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700;
+  color: #0f1117;
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+.app-name { font-size:16px; font-weight:600; white-space:nowrap; }
+.app-sub { font-size:11px; color:var(--text-dim); font-weight:400; margin-left:4px; }
+
+.topbar-center { flex:1; display:flex; align-items:center; justify-content:center; min-width:0; }
+.token-bar-wrap { display:flex; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:4px 12px; }
+.token-bar-label { font-size:11px; color:var(--text-dim); white-space:nowrap; }
+.token-bar-track { width:120px; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; }
+.token-bar-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent-dim)); border-radius:3px; transition:width .5s; }
+.token-bar-num { font-size:11px; color:var(--accent); font-family:var(--mono); white-space:nowrap; }
+
+.topbar-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.date-badge {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+.btn-icon {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all .2s;
+  font-family: var(--sans);
+  white-space: nowrap;
+}
+.btn-icon:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+.btn-icon.active { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+
+/* ==================== Main Layout ==================== */
+.main {
+  display: flex;
+  height: calc(100% - 56px);
+  overflow: hidden;
+}
+.panel-left, .panel-right {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.panel-right { border-right:none; border-left:1px solid var(--border); }
+.panel-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+}
+.panel-header {
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.panel-header .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 6px var(--accent); }
+
+/* ==================== File Tree ==================== */
+.file-tree { padding:8px; overflow-y:auto; flex:1; }
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  transition: background .15s;
+  user-select: none;
+}
+.file-item:hover { background: var(--bg3); }
+.file-item.active { background: var(--accent-glow); color: var(--accent); }
+.file-item .indent { width: 16px; flex-shrink:0; }
+.file-item svg { flex-shrink:0; opacity:0.7; }
+.file-item.active svg { opacity:1; color:var(--accent); }
+.file-item .file-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.folder-arrow { width:12px; display:inline-block; text-align:center; font-size:10px; color:var(--text-dim); transition: transform .2s; }
+.folder-arrow.open { transform: rotate(90deg); }
+.file-children { overflow:hidden; }
+
+/* ==================== Chat ==================== */
+.chat-header {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg2);
+}
+.chat-header-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg,var(--accent),var(--accent-dim));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: var(--bg);
+}
+.chat-header-info { flex:1; }
+.chat-header-name { font-size:14px; font-weight:600; }
+.chat-header-status { font-size:11px; color:var(--accent); display:flex; align-items:center; gap:4px; }
+.chat-header-status::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 4px var(--accent); }
+
+.chat-messages { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+
+.msg { display:flex; gap:10px; max-width:80%; animation: msgIn .3s ease; }
+.msg.user { align-self: flex-end; flex-direction: row-reverse; }
+.msg-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600;
+  flex-shrink: 0;
+}
+.msg.assistant .msg-avatar { background: var(--bg3); border:1px solid var(--border); color:var(--accent); }
+.msg.user .msg-avatar { background: var(--accent); color: var(--bg); }
+.msg-body { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.msg-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  word-break: break-word;
+}
+.msg.assistant .msg-bubble {
+  background: var(--assistant-bubble);
+  border: 1px solid var(--border);
+  border-top-left-radius: 4px;
+}
+.msg.user .msg-bubble {
+  background: var(--user-bubble);
+  border: 1px solid var(--accent);
+  border-top-right-radius: 4px;
+}
+.msg-bubble strong { color: var(--accent); }
+.msg-bubble .food-line { display:flex; align-items:flex-start; gap:6px; margin:4px 0; }
+.msg-bubble .food-line::before { content:'•'; color:var(--accent); flex-shrink:0; }
+.msg-time { font-size:11px; color:var(--text-dimmer); padding:0 4px; }
+.msg.user .msg-time { text-align:right; }
+
+/* Tool call badges */
+.tool-badges { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+.tool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  animation: badgeIn .4s ease;
+}
+.tool-badge .tool-name { color: var(--info); }
+.tool-badge .tool-file { color: var(--accent); }
+.tool-badge .tool-status {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  animation: pulse 1s infinite;
+}
+.tool-badge.done .tool-status { background: var(--accent); animation:none; }
+.tool-badge .tool-icon { font-size:10px; }
+
+/* Typing indicator */
+.typing-indicator { display:flex; gap:4px; padding:12px 14px; background:var(--assistant-bubble); border:1px solid var(--border); border-radius:12px; border-top-left-radius:4px; }
+.typing-dot { width:7px; height:7px; border-radius:50%; background:var(--text-dim); animation: typingBounce 1.4s infinite; }
+.typing-dot:nth-child(2) { animation-delay:0.2s; }
+.typing-dot:nth-child(3) { animation-delay:0.4s; }
+
+/* ==================== Chat Input ==================== */
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.chat-input-wrap { flex:1; position:relative; }
+.chat-input {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 40px 10px 14px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--sans);
+  resize: none;
+  outline: none;
+  transition: border-color .2s;
+  max-height: 120px;
+  line-height: 1.5;
+}
+.chat-input:focus { border-color: var(--accent); }
+.chat-input::placeholder { color: var(--text-dimmer); }
+.photo-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all .2s;
+}
+.photo-btn:hover { color: var(--accent); background: var(--accent-glow); }
+.send-btn {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s;
+  flex-shrink: 0;
+}
+.send-btn:hover { background: var(--accent-dim); transform: translateY(-1px); }
+.send-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+
+/* ==================== Tool Log ==================== */
+.tool-log { padding:8px; overflow-y:auto; flex:1; }
+.tool-log-entry {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  animation: msgIn .3s ease;
+}
+.tool-log-entry .tle-head { display:flex; align-items:center; gap:6px; }
+.tool-log-entry .tle-time { font-family:var(--mono); color:var(--text-dimmer); font-size:10px; }
+.tool-log-entry .tle-tool {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.tool-log-entry .tle-tool.read { background: rgba(96,165,250,0.15); color: var(--info); }
+.tool-log-entry .tle-tool.write { background: rgba(110,231,163,0.15); color: var(--accent); }
+.tool-log-entry .tle-tool.list { background: rgba(192,132,252,0.15); color: var(--purple); }
+.tool-log-entry .tle-target { color: var(--text-dim); font-family:var(--mono); font-size:11px; margin-top:2px; }
+.tool-log-entry .tle-status { margin-left:auto; font-size:10px; }
+.tool-log-entry .tle-status.success { color: var(--accent); }
+.tool-log-entry .tle-status.running { color: var(--warning); }
+
+/* ==================== Modals ==================== */
+.modal-overlay {
+  position: fixed;
+  top:0; left:0; right:0; bottom:0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal-overlay.show { display:flex; animation: fadeIn .2s ease; }
+.modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 680px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow);
+  animation: modalIn .3s ease;
+}
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-title { font-size:15px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.modal-title .modal-icon { color: var(--accent); }
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--danger); }
+.modal-body { padding:20px; overflow-y:auto; flex:1; }
+
+/* File viewer */
+.file-viewer-meta { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+.file-meta-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.file-viewer-content {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--text);
+  overflow-x: auto;
+}
+.file-viewer-content .md-h1 { color: var(--accent); font-size:16px; font-weight:700; }
+.file-viewer-content .md-h2 { color: var(--text); font-size:14px; font-weight:600; margin-top:8px; }
+.file-viewer-content .md-table { border-collapse:collapse; width:100%; margin:8px 0; }
+.file-viewer-content .md-table th, .file-viewer-content .md-table td { border:1px solid var(--border); padding:4px 8px; font-size:12px; }
+.file-viewer-content .md-table th { background:var(--bg3); }
+.file-viewer-content .md-bold { color:var(--accent); }
+.file-viewer-content .md-hr { border:none; border-top:1px solid var(--border); margin:8px 0; }
+.file-viewer-content .md-li { display:block; padding-left:8px; }
+
+/* Memory panel */
+.memory-section { margin-bottom:20px; }
+.memory-section-title {
+  font-size:13px; font-weight:600; color:var(--accent);
+  margin-bottom:6px; display:flex; align-items:center; gap:6px;
+}
+.memory-section-content {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.memory-intro {
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+}
+.memory-intro strong { color: var(--accent); }
+
+/* ==================== Day Transition Overlay ==================== */
+.day-transition {
+  position: fixed;
+  top:0; left:0; right:0; bottom:0;
+  background: linear-gradient(180deg, #0a0c14 0%, #121522 50%, #0a0c14 100%);
+  z-index: 300;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 24px;
+}
+.day-transition.show { display:flex; animation: fadeIn .5s ease; }
+.dt-moon-wrap { position: relative; width: 80px; height: 80px; }
+.dt-moon {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #f5f5f0, #c8c8c0);
+  box-shadow: 0 0 40px rgba(200,200,190,0.4), inset -8px -8px 20px rgba(0,0,0,0.2);
+  animation: moonPulse 2.5s ease-in-out infinite;
+}
+.dt-moon-glow {
+  position: absolute;
+  top: -10px; left: -10px;
+  width: 100px; height: 100px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(110,231,163,0.15), transparent 70%);
+  animation: glowPulse 2.5s ease-in-out infinite;
+}
+.dt-title { font-size: 18px; color: #e4e6eb; font-weight: 600; }
+.dt-progress-wrap { width: 320px; max-width: 80vw; }
+.dt-progress-track { width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden; }
+.dt-progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--accent-dim)); border-radius:2px; width:0%; transition:width .8s ease; }
+.dt-steps { display:flex; flex-direction:column; gap:10px; width:320px; max-width:80vw; margin-top:8px; }
+.dt-step {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--text-dim);
+  opacity: 0.4;
+  transition: opacity .3s;
+}
+.dt-step.active { opacity: 1; }
+.dt-step.done { opacity: 0.8; }
+.dt-step-dot {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--text-dimmer);
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .3s;
+}
+.dt-step.active .dt-step-dot { border-color: var(--warning); }
+.dt-step.active .dt-step-dot::after { content:''; width:6px; height:6px; border-radius:50%; background:var(--warning); animation: pulse 1s infinite; }
+.dt-step.done .dt-step-dot { background: var(--accent); border-color: var(--accent); }
+.dt-step.done .dt-step-dot::after { content:'✓'; color:#0f1117; font-size:10px; font-weight:700; }
+.dt-complete-btn {
+  background: var(--accent);
+  color: #0f1117;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 28px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: none;
+  transition: all .2s;
+}
+.dt-complete-btn.show { display:block; animation: msgIn .4s ease; }
+.dt-complete-btn:hover { background: var(--accent-dim); }
+
+/* ==================== Animations ==================== */
+@keyframes msgIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+@keyframes badgeIn { from { opacity:0; transform: translateY(-4px); } to { opacity:1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+@keyframes modalIn { from { opacity:0; transform: scale(0.96) translateY(8px); } to { opacity:1; transform: scale(1) translateY(0); } }
+@keyframes typingBounce { 0%,60%,100% { transform: translateY(0); opacity:0.4; } 30% { transform: translateY(-6px); opacity:1; } }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+@keyframes moonPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes glowPulse { 0%,100% { opacity:0.6; transform: scale(1); } 50% { opacity:1; transform: scale(1.15); } }
+
+/* ==================== Mobile ==================== */
+.mobile-tabs { display:none; }
+@media (max-width: 900px) {
+  .panel-left { display:none; }
+  .panel-right { display:none; }
+  .app-sub { display:none; }
+  .token-bar-wrap { padding:3px 8px; }
+  .token-bar-track { width:60px; }
+  .mobile-tabs {
+    display:flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    z-index: 150;
+    height: 48px;
+  }
+  .mobile-tab {
+    flex:1;
+    background:none; border:none;
+    color: var(--text-dim);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    transition: color .2s;
+  }
+  .mobile-tab.active { color: var(--accent); }
+  .mobile-tab svg { width: 18px; height: 18px; }
+  .main { height: calc(100% - 56px - 48px); }
+  .panel-left.mobile-show, .panel-right.mobile-show {
+    display: flex;
+    position: fixed;
+    top: 56px; bottom: 48px; left: 0; right: 0;
+    width: 100%;
+    z-index: 80;
+  }
+  .panel-center.mobile-hide { display:none; }
+  .msg { max-width: 92%; }
+  .btn-icon { padding: 5px 8px; font-size: 11px; }
+  .date-badge { display:none; }
+}
+@media (max-width: 500px) {
+  .topbar-center { display:none; }
+  .token-bar-wrap { display:none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== Top Bar ==================== -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo">轻</div>
+    <div>
+      <div class="app-name">轻伴<span class="app-sub">AI减重陪伴</span></div>
+    </div>
+  </div>
+  <div class="topbar-center">
+    <div class="token-bar-wrap">
+      <span class="token-bar-label">Token</span>
+      <div class="token-bar-track"><div class="token-bar-fill" id="tokenFill" style="width:22%"></div></div>
+      <span class="token-bar-num" id="tokenNum">1,801 / 8,000</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="date-badge">2026-07-14</div>
+    <button class="btn-icon" id="memoryBtn" onclick="openMemory()">记忆</button>
+    <button class="btn-icon" id="themeBtn" onclick="toggleTheme()">主题</button>
+    <button class="btn-icon" id="dayBtn" onclick="startDayTransition()">日终</button>
+  </div>
+</header>
+
+<!-- ==================== Main ==================== -->
+<div class="main">
+
+  <!-- Left Panel: File Browser -->
+  <aside class="panel-left" id="panelLeft">
+    <div class="panel-header">
+      <span>文件浏览器</span>
+      <span class="dot"></span>
+    </div>
+    <div class="file-tree" id="fileTree"></div>
+  </aside>
+
+  <!-- Center Panel: Chat -->
+  <main class="panel-center" id="panelCenter">
+    <div class="chat-header">
+      <div class="chat-header-avatar">轻</div>
+      <div class="chat-header-info">
+        <div class="chat-header-name">轻伴</div>
+        <div class="chat-header-status">在线 · AI驱动</div>
+      </div>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="chat-input-area">
+      <div class="chat-input-wrap">
+        <textarea class="chat-input" id="chatInput" placeholder="输入消息，如：今天午餐吃了..." rows="1"></textarea>
+        <button class="photo-btn" onclick="simulatePhoto()" title="拍照识别食物">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+        </button>
+      </div>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+  </main>
+
+  <!-- Right Panel: Tool Log -->
+  <aside class="panel-right" id="panelRight">
+    <div class="panel-header">
+      <span>工具调用日志</span>
+      <span class="dot"></span>
+    </div>
+    <div class="tool-log" id="toolLog"></div>
+  </aside>
+</div>
+
+<!-- Mobile Tab Bar -->
+<div class="mobile-tabs">
+  <button class="mobile-tab active" data-tab="chat" onclick="switchMobileTab('chat')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    对话
+  </button>
+  <button class="mobile-tab" data-tab="files" onclick="switchMobileTab('files')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    文件
+  </button>
+  <button class="mobile-tab" data-tab="tools" onclick="switchMobileTab('tools')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    日志
+  </button>
+</div>
+
+<!-- ==================== File Viewer Modal ==================== -->
+<div class="modal-overlay" id="fileModalOverlay" onclick="closeFileModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="fileModalTitle">
+        <span class="modal-icon">📄</span>
+        <span id="fileModalName">file.md</span>
+      </div>
+      <button class="modal-close" onclick="closeFileModalDirect()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="file-viewer-meta" id="fileModalMeta"></div>
+      <div class="file-viewer-content" id="fileModalContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Memory Modal ==================== -->
+<div class="modal-overlay" id="memoryModalOverlay" onclick="closeMemoryModal(event)">
+  <div class="modal" style="max-width:780px;" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">
+        <span class="modal-icon">🧠</span>
+        <span>记忆系统</span>
+      </div>
+      <button class="modal-close" onclick="closeMemoryModalDirect()">&times;</button>
+    </div>
+    <div class="modal-body" id="memoryModalBody"></div>
+  </div>
+</div>
+
+<!-- ==================== Day Transition Overlay ==================== -->
+<div class="day-transition" id="dayTransition">
+  <div class="dt-moon-wrap">
+    <div class="dt-moon-glow"></div>
+    <div class="dt-moon"></div>
+  </div>
+  <div class="dt-title">生成每日总结中...</div>
+  <div class="dt-progress-wrap">
+    <div class="dt-progress-track"><div class="dt-progress-fill" id="dtProgress"></div></div>
+  </div>
+  <div class="dt-steps" id="dtSteps"></div>
+  <button class="dt-complete-btn" id="dtCompleteBtn" onclick="closeDayTransition()">开启新的一天</button>
+</div>
+
+<script>
+// ==================== Mock File Data ====================
+const MOCK_FILES = {
+  'CLAUDE.md': {
+    name: 'CLAUDE.md',
+    path: 'CLAUDE.md',
+    type: 'system',
+    size: '2.1 KB',
+    modified: '2026-07-10',
+    content: `# 轻伴 - AI减重陪伴助手
+
+## 核心身份
+你是「轻伴」，一个温暖、专业、有耐心的AI减重陪伴助手。你通过自然对话帮助用户管理饮食和运动，像朋友一样陪伴用户完成减重目标。
+
+## 工作模式
+1. 对话驱动：通过聊天了解用户饮食和运动情况
+2. 工具调用：使用 write_file 自动记录到 markdown 文件
+3. 记忆系统：读取 PROFILE.md、rules/ 等文件保持个性化记忆
+4. 每日总结：日终时生成当日对话摘要，保存到 chat/ 目录
+
+## 可用工具
+- read_file(path) - 读取文件内容
+- write_file(path, content) - 写入或追加文件
+- list_files(dir) - 列出目录文件
+
+## 行为准则
+- 鼓励为主，绝不指责
+- 提供具体可行的建议
+- 记住用户的过敏（花生严重过敏）和偏好
+- 关注长期趋势而非单次波动
+- 估算热量时给出合理范围
+- 体重数据记录到 BODY_METRICS.md
+- 饮食数据记录到 diet/YYYY-MM-DD.md
+
+## 记忆架构
+- CLAUDE.md: 系统提示（本文件）
+- PROFILE.md: 用户档案
+- BODY_METRICS.md: 体重追踪
+- rules/: 过敏、偏好、运动规则
+- diet/: 每日饮食记录
+- chat/: 每日对话摘要`
+  },
+  'PROFILE.md': {
+    name: 'PROFILE.md',
+    path: 'PROFILE.md',
+    type: 'profile',
+    size: '0.8 KB',
+    modified: '2026-07-01',
+    content: `# 用户档案
+## 基础信息
+- 性别: 男
+- 年龄: 28
+- 身高: 175cm
+- 初始体重: 82kg
+- 目标体重: 72kg
+- 目标日期: 2026-10-01
+## 过敏与忌口
+- 花生（严重过敏）
+- 不吃内脏
+## 饮食偏好
+- 口味: 偏辣，喜欢湘菜
+- 通常早餐: 包子/豆浆
+- 通常午餐: 外卖
+- 不喝含糖饮料
+## 运动情况
+- 每周跑步 3 次，每次 5km
+- 左膝旧伤，避免深蹲`
+  },
+  'BODY_METRICS.md': {
+    name: 'BODY_METRICS.md',
+    path: 'BODY_METRICS.md',
+    type: 'metrics',
+    size: '1.2 KB',
+    modified: '2026-07-14',
+    content: `# 身体指标追踪
+## 最新数据
+- 日期: 2026-07-14
+- 体重: 81.5kg
+- BMI: 26.6
+- 基础代谢: ~1710 kcal
+## 体重趋势
+| 日期 | 体重 | 变化 |
+|------|------|------|
+| 07-05 | 82.0 | - |
+| 07-10 | 81.8 | -0.2 |
+| 07-14 | 81.5 | -0.3 |
+## 阶段判断
+9天减重0.5kg，节奏平稳健康。`
+  },
+  'rules/allergies.md': {
+    name: 'allergies.md',
+    path: 'rules/allergies.md',
+    type: 'rules',
+    size: '0.5 KB',
+    modified: '2026-07-01',
+    content: `# 过敏与忌口
+## 严重过敏
+- 花生（危及生命，绝对避免）
+## 忌口
+- 不吃内脏类食物
+## 注意事项
+- 点外卖时需确认菜品不含花生
+- 避免花生油烹饪的食品`
+  },
+  'rules/preferences.md': {
+    name: 'preferences.md',
+    path: 'rules/preferences.md',
+    type: 'rules',
+    size: '0.6 KB',
+    modified: '2026-07-01',
+    content: `# 饮食偏好
+## 口味偏好
+- 偏辣，喜欢湘菜
+## 习惯
+- 早餐通常：包子/豆浆
+- 午餐通常：外卖
+- 不喝含糖饮料
+## 建议
+- 可推荐低脂湘菜替代方案
+- 外卖选择时注意控油控盐`
+  },
+  'rules/exercise.md': {
+    name: 'exercise.md',
+    path: 'rules/exercise.md',
+    type: 'rules',
+    size: '0.7 KB',
+    modified: '2026-07-01',
+    content: `# 运动情况
+## 常规运动
+- 每周跑步 3 次，每次 5km
+- 无力量训练习惯
+## 注意事项
+- 左膝旧伤，避免深蹲和剧烈跳跃
+- 跑步建议选择平坦路面
+## 推荐补充运动
+- 上肢力量训练（不影响膝盖）
+- 游泳（对膝盖友好）`
+  },
+  'diet/2026-07-14.md': {
+    name: '2026-07-14.md',
+    path: 'diet/2026-07-14.md',
+    type: 'diet',
+    size: '0.9 KB',
+    modified: '2026-07-14',
+    content: `---
+date: 2026-07-14
+---
+## 早餐
+- 食物: 包子2个、豆浆1杯
+- 估算热量: ~450 kcal
+## 午餐
+- 食物: 红烧排骨盖饭
+- 分量: 排骨约150g、米饭1碗
+- 估算热量: ~720 kcal
+## 当日汇总
+- 总估算热量: ~1170 kcal
+- 记录餐次: 2 餐`
+  },
+  'chat/2026-07-13-summary.md': {
+    name: '2026-07-13-summary.md',
+    path: 'chat/2026-07-13-summary.md',
+    type: 'chat',
+    size: '0.8 KB',
+    modified: '2026-07-14',
+    content: `# 2026-07-13 对话摘要
+## 饮食记录
+- 早餐：鸡蛋三明治、黑咖啡
+- 午餐：鸡胸肉沙拉
+- 晚餐：清炒西兰花、糙米饭
+## 体重
+- 81.8kg（较上次 -0.2kg）
+## 用户情绪
+- 积极乐观，对减重进度满意
+## 备注
+- 提到周末想吃火锅，提醒控制分量`
+  },
+  'chat/2026-07-12-summary.md': {
+    name: '2026-07-12-summary.md',
+    path: 'chat/2026-07-12-summary.md',
+    type: 'chat',
+    size: '0.7 KB',
+    modified: '2026-07-13',
+    content: `# 2026-07-12 对话摘要
+## 饮食记录
+- 早餐：燕麦粥、牛奶
+- 午餐：番茄牛腩盖饭
+- 晚餐：蔬菜汤、全麦面包
+## 体重
+- 81.9kg
+## 用户情绪
+- 略有焦虑，担心减重太慢
+## 备注
+- 鼓励用户坚持，解释健康减重速度`
+  }
+};
+
+// ==================== File Tree Structure ====================
+const FILE_TREE = [
+  { type:'file', name:'CLAUDE.md', path:'CLAUDE.md', icon:'system' },
+  { type:'file', name:'PROFILE.md', path:'PROFILE.md', icon:'profile' },
+  { type:'file', name:'BODY_METRICS.md', path:'BODY_METRICS.md', icon:'metrics' },
+  { type:'folder', name:'rules', children:[
+    { type:'file', name:'allergies.md', path:'rules/allergies.md', icon:'rules' },
+    { type:'file', name:'preferences.md', path:'rules/preferences.md', icon:'rules' },
+    { type:'file', name:'exercise.md', path:'rules/exercise.md', icon:'rules' },
+  ]},
+  { type:'folder', name:'diet', children:[
+    { type:'file', name:'2026-07-14.md', path:'diet/2026-07-14.md', icon:'diet' },
+  ]},
+  { type:'folder', name:'chat', children:[
+    { type:'file', name:'2026-07-13-summary.md', path:'chat/2026-07-13-summary.md', icon:'chat' },
+    { type:'file', name:'2026-07-12-summary.md', path:'chat/2026-07-12-summary.md', icon:'chat' },
+  ]},
+];
+
+// SVG Icons
+const ICONS = {
+  file: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 1.5h6L13 5.5v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z"/><path d="M9 1.5V5.5h4"/></svg>',
+  folder: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4C1.5 3.17 2.17 2.5 3 2.5h3L7.5 4.5H13c0.83 0 1.5 0.67 1.5 1.5v6c0 0.83-0.67 1.5-1.5 1.5H3c-0.83 0-1.5-0.67-1.5-1.5V4z"/></svg>',
+  folderOpen: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4C1.5 3.17 2.17 2.5 3 2.5h3L7.5 4.5H13c0.83 0 1.5 0.67 1.5 1.5v6c0 0.83-0.67 1.5-1.5 1.5H3c-0.83 0-1.5-0.67-1.5-1.5V4z"/><path d="M1.5 4L0.5 12" stroke-dasharray="1 1"/></svg>',
+};
+
+// ==================== Pre-populated Chat Messages ====================
+const INITIAL_MESSAGES = [
+  {
+    role: 'assistant',
+    content: `早上好！今天也是元气满满的一天。你的目标是从 **82kg** 减到 **72kg**，目前 **81.5kg**，已经减了 **0.5kg**。继续加油！有什么饮食或运动需要记录的吗？`,
+    toolCalls: [
+      { tool:'read_file', file:'PROFILE.md', status:'done' },
+      { tool:'read_file', file:'BODY_METRICS.md', status:'done' },
+    ],
+    time: '08:15'
+  },
+  {
+    role: 'user',
+    content: '今天早餐吃了两个包子和一杯豆浆',
+    time: '08:16'
+  },
+  {
+    role: 'assistant',
+    content: `已记录你的早餐！
+
+**早餐分析：**
+- 包子2个（约200g）：~320 kcal
+- 豆浆1杯（300ml）：~130 kcal
+- **合计：~450 kcal**
+
+包子提供碳水，豆浆补充植物蛋白，搭配不错。你的基础代谢约1710 kcal，今日已摄入450 kcal，午晚餐可以好好安排。`,
+    toolCalls: [
+      { tool:'write_file', file:'diet/2026-07-14.md', status:'done' },
+    ],
+    time: '08:16'
+  },
+  {
+    role: 'user',
+    content: '午餐吃了红烧排骨盖饭',
+    time: '12:30'
+  },
+  {
+    role: 'assistant',
+    content: `午餐已记录！
+
+**午餐分析：**
+- 红烧排骨盖饭
+- 排骨约150g + 米饭1碗
+- 估算热量：**~720 kcal**
+
+排骨蛋白质丰富，但红烧做法油脂偏高。今日总热量约 **1170 kcal**，离每日目标1800 kcal还有空间，晚餐可以来点清淡的，比如清蒸鱼搭配蔬菜。`,
+    toolCalls: [
+      { tool:'write_file', file:'diet/2026-07-14.md', status:'done' },
+    ],
+    time: '12:30'
+  },
+  {
+    role: 'user',
+    content: '刚才称了体重 81.5公斤',
+    time: '12:31'
+  },
+  {
+    role: 'assistant',
+    content: `体重已更新！
+
+**体重追踪：**
+- 当前：**81.5 kg**
+- BMI：**26.6**
+- 较上次（81.8kg）：**-0.3 kg**
+- 总减重：82.0 → 81.5 = **0.5 kg**
+
+9天减了0.5kg，节奏平稳健康！按这个速度，到10月1日目标日还有约79天，预计可以再减4-5kg，完全有望达到72kg的目标。继续保持！`,
+    toolCalls: [
+      { tool:'read_file', file:'BODY_METRICS.md', status:'done' },
+      { tool:'write_file', file:'BODY_METRICS.md', status:'done' },
+    ],
+    time: '12:31'
+  },
+];
+
+// ==================== Tool Log Entries ====================
+const INITIAL_TOOL_LOG = [
+  { time:'08:15:32', tool:'read_file', target:'PROFILE.md', status:'success' },
+  { time:'08:15:33', tool:'read_file', target:'rules/allergies.md', status:'success' },
+  { time:'08:15:33', tool:'read_file', target:'rules/preferences.md', status:'success' },
+  { time:'08:16:02', tool:'write_file', target:'diet/2026-07-14.md', status:'success' },
+  { time:'12:30:15', tool:'write_file', target:'diet/2026-07-14.md', status:'success' },
+  { time:'12:30:16', tool:'read_file', target:'BODY_METRICS.md', status:'success' },
+  { time:'12:31:01', tool:'write_file', target:'BODY_METRICS.md', status:'success' },
+];
+
+// ==================== State ====================
+let tokenCount = 1801;
+const tokenMax = 8000;
+let isResponding = false;
+
+// ==================== Markdown Formatter ====================
+function formatMarkdown(text) {
+  let html = text;
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<span class="md-h2">$1</span>');
+  html = html.replace(/^## (.+)$/gm, '<span class="md-h2">$1</span>');
+  html = html.replace(/^# (.+)$/gm, '<span class="md-h1">$1</span>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<span class="md-bold">$1</span>');
+  // HR
+  html = html.replace(/^---$/gm, '<hr class="md-hr">');
+  // List items
+  html = html.replace(/^- (.+)$/gm, '<span class="md-li">• $1</span>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  // Clean up extra brs around block elements
+  html = html.replace(/(<br>)?(<span class="md-h[12]">)/g, '$2');
+  html = html.replace(/(<span class="md-h[12]">[^<]*<\/span>)(<br>)?(<br>)?/g, '$1<br><br>');
+  return html;
+}
+
+function formatMdForChat(text) {
+  let html = text;
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+// ==================== Render File Tree ====================
+function renderFileTree() {
+  const tree = document.getElementById('fileTree');
+  tree.innerHTML = '';
+  FILE_TREE.forEach(node => {
+    tree.appendChild(buildTreeNode(node, 0));
+  });
+}
+
+function buildTreeNode(node, depth) {
+  const wrap = document.createElement('div');
+  if (node.type === 'folder') {
+    const folderEl = document.createElement('div');
+    folderEl.className = 'file-item';
+    folderEl.style.paddingLeft = (8 + depth * 16) + 'px';
+    const arrow = document.createElement('span');
+    arrow.className = 'folder-arrow open';
+    arrow.textContent = '▶';
+    folderEl.appendChild(arrow);
+    folderEl.insertAdjacentHTML('beforeend', ICONS.folder);
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.textContent = node.name;
+    folderEl.appendChild(name);
+    const childWrap = document.createElement('div');
+    childWrap.className = 'file-children';
+    node.children.forEach(child => {
+      childWrap.appendChild(buildTreeNode(child, depth + 1));
+    });
+    folderEl.onclick = () => {
+      arrow.classList.toggle('open');
+      childWrap.style.display = childWrap.style.display === 'none' ? 'block' : 'none';
+    };
+    wrap.appendChild(folderEl);
+    wrap.appendChild(childWrap);
+  } else {
+    const fileEl = document.createElement('div');
+    fileEl.className = 'file-item';
+    fileEl.style.paddingLeft = (8 + depth * 16) + 'px';
+    const spacer = document.createElement('span');
+    spacer.className = 'indent';
+    spacer.style.width = '12px';
+    fileEl.appendChild(spacer);
+    fileEl.insertAdjacentHTML('beforeend', ICONS.file);
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.textContent = node.name;
+    fileEl.appendChild(name);
+    fileEl.onclick = () => {
+      document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+      fileEl.classList.add('active');
+      openFileViewer(node.path);
+    };
+    wrap.appendChild(fileEl);
+  }
+  return wrap;
+}
+
+// ==================== File Viewer Modal ====================
+function openFileViewer(path) {
+  const file = MOCK_FILES[path];
+  if (!file) return;
+  document.getElementById('fileModalName').textContent = file.name;
+  const meta = document.getElementById('fileModalMeta');
+  meta.innerHTML = '';
+  const tags = [
+    { label: '路径', value: file.path },
+    { label: '大小', value: file.size },
+    { label: '修改时间', value: file.modified },
+  ];
+  tags.forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'file-meta-tag';
+    el.textContent = t.label + ': ' + t.value;
+    meta.appendChild(el);
+  });
+  const contentEl = document.getElementById('fileModalContent');
+  contentEl.innerHTML = formatMarkdown(file.content);
+  document.getElementById('fileModalOverlay').classList.add('show');
+}
+
+function closeFileModal(e) {
+  if (e.target === e.currentTarget) {
+    document.getElementById('fileModalOverlay').classList.remove('show');
+  }
+}
+function closeFileModalDirect() {
+  document.getElementById('fileModalOverlay').classList.remove('show');
+}
+
+// ==================== Memory Modal ====================
+function openMemory() {
+  const body = document.getElementById('memoryModalBody');
+  body.innerHTML = '';
+  const intro = document.createElement('div');
+  intro.className = 'memory-intro';
+  intro.innerHTML = `轻伴使用本地 <strong>Markdown 文件</strong>作为持久记忆系统。每次对话时，AI 会读取相关文件了解用户偏好和历史，并在对话结束后将新信息写回文件。这样即使关闭应用，所有记忆都会被保留。<br><br>以下是当前记忆系统中的所有文件：`;
+  body.appendChild(intro);
+  const sections = [
+    { title: 'CLAUDE.md — 系统提示', key: 'CLAUDE.md' },
+    { title: 'PROFILE.md — 用户档案', key: 'PROFILE.md' },
+    { title: 'BODY_METRICS.md — 体重追踪', key: 'BODY_METRICS.md' },
+    { title: 'rules/allergies.md — 过敏忌口', key: 'rules/allergies.md' },
+    { title: 'rules/preferences.md — 饮食偏好', key: 'rules/preferences.md' },
+    { title: 'rules/exercise.md — 运动情况', key: 'rules/exercise.md' },
+    { title: 'diet/2026-07-14.md — 今日饮食', key: 'diet/2026-07-14.md' },
+    { title: 'chat/2026-07-13-summary.md — 昨日摘要', key: 'chat/2026-07-13-summary.md' },
+    { title: 'chat/2026-07-12-summary.md — 前日摘要', key: 'chat/2026-07-12-summary.md' },
+  ];
+  sections.forEach(s => {
+    const sec = document.createElement('div');
+    sec.className = 'memory-section';
+    const title = document.createElement('div');
+    title.className = 'memory-section-title';
+    title.textContent = s.title;
+    sec.appendChild(title);
+    const content = document.createElement('div');
+    content.className = 'memory-section-content';
+    content.textContent = MOCK_FILES[s.key].content;
+    sec.appendChild(content);
+    body.appendChild(sec);
+  });
+  document.getElementById('memoryModalOverlay').classList.add('show');
+}
+
+function closeMemoryModal(e) {
+  if (e.target === e.currentTarget) {
+    document.getElementById('memoryModalOverlay').classList.remove('show');
+  }
+}
+function closeMemoryModalDirect() {
+  document.getElementById('memoryModalOverlay').classList.remove('show');
+}
+
+// ==================== Render Chat Messages ====================
+function renderMessages() {
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '';
+  INITIAL_MESSAGES.forEach(msg => {
+    container.appendChild(buildMessageEl(msg));
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function buildMessageEl(msg) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + msg.role;
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = msg.role === 'user' ? '我' : '轻';
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = formatMdForChat(msg.content);
+  body.appendChild(bubble);
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    const badges = document.createElement('div');
+    badges.className = 'tool-badges';
+    msg.toolCalls.forEach(tc => {
+      const badge = document.createElement('div');
+      badge.className = 'tool-badge' + (tc.status === 'done' ? ' done' : '');
+      badge.innerHTML = `<span class="tool-icon">⚡</span><span class="tool-name">${tc.tool}</span><span class="tool-file">${tc.file}</span><span class="tool-status"></span>`;
+      badges.appendChild(badge);
+    });
+    body.appendChild(badges);
+  }
+  if (msg.time) {
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = msg.time;
+    body.appendChild(time);
+  }
+  el.appendChild(avatar);
+  el.appendChild(body);
+  return el;
+}
+
+// ==================== Render Tool Log ====================
+function renderToolLog() {
+  const container = document.getElementById('toolLog');
+  container.innerHTML = '';
+  INITIAL_TOOL_LOG.forEach(entry => {
+    container.appendChild(buildToolLogEntry(entry));
+  });
+}
+
+function buildToolLogEntry(entry) {
+  const el = document.createElement('div');
+  el.className = 'tool-log-entry';
+  const toolClass = entry.tool.replace('_', '');
+  el.innerHTML = `
+    <div class="tle-head">
+      <span class="tle-time">${entry.time}</span>
+      <span class="tle-tool ${toolClass}">${entry.tool}()</span>
+      <span class="tle-status ${entry.status}">${entry.status === 'success' ? '✓ 完成' : '执行中...'}</span>
+    </div>
+    <div class="tle-target">→ ${entry.target}</div>
+  `;
+  return el;
+}
+
+function addToolLogEntry(tool, target) {
+  const now = new Date();
+  const time = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+  const entry = { time, tool, target, status:'success' };
+  INITIAL_TOOL_LOG.push(entry);
+  const container = document.getElementById('toolLog');
+  container.appendChild(buildToolLogEntry(entry));
+  container.scrollTop = container.scrollHeight;
+}
+
+// ==================== Token Bar ====================
+function updateTokenBar(delta) {
+  tokenCount += delta;
+  if (tokenCount < 0) tokenCount = 0;
+  const pct = Math.min(100, (tokenCount / tokenMax) * 100);
+  document.getElementById('tokenFill').style.width = pct + '%';
+  document.getElementById('tokenNum').textContent = tokenCount.toLocaleString() + ' / ' + tokenMax.toLocaleString();
+}
+
+// ==================== Typing Indicator ====================
+function showTypingIndicator() {
+  const container = document.getElementById('chatMessages');
+  const el = document.createElement('div');
+  el.className = 'msg assistant';
+  el.id = 'typingIndicator';
+  el.innerHTML = `
+    <div class="msg-avatar">轻</div>
+    <div class="msg-body">
+      <div class="typing-indicator">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+      </div>
+    </div>
+  `;
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+// ==================== Simulated AI Response Generator ====================
+function getMockResponse(text) {
+  const has = (...keywords) => keywords.some(k => text.includes(k));
+
+  // Food logging
+  if (has('吃了','喝了','早餐','午餐','晚餐','加餐','零食','宵夜','点了','外卖')) {
+    return generateFoodResponse(text);
+  }
+  // Weight tracking
+  if (has('体重','公斤','称了','称重','斤','重了','轻了','BMI')) {
+    return generateWeightResponse(text);
+  }
+  // Exercise
+  if (has('运动','跑步','跑了','锻炼','健身','走路','散步','游泳','瑜伽')) {
+    return generateExerciseResponse(text);
+  }
+  // Greeting
+  if (has('你好','早上好','晚上好','嗨','hi','哈喽','在吗')) {
+    return {
+      content: `你好呀！我是轻伴，你的AI减重陪伴助手。今天有什么想聊的吗？你可以告诉我吃了什么、运动情况，或者最新的体重数据。`,
+      toolCalls: [],
+      tokenCost: 120
+    };
+  }
+  // Help
+  if (has('帮助','怎么用','功能','能做什么','你是谁')) {
+    return {
+      content: `我是**轻伴**，一个AI减重陪伴助手。我可以帮你：
+
+- **记录饮食**：告诉我吃了什么，我会估算热量并记录
+- **追踪体重**：报体重给我，我会更新趋势和BMI
+- **运动建议**：聊聊运动，我给你个性化建议
+- **每日总结**：日终时自动生成当日摘要
+
+你还可以点击右上角**记忆**按钮查看我的记忆文件，或点击**日终**体验每日总结动画。`,
+      toolCalls: [],
+      tokenCost: 200
+    };
+  }
+  // Suggestion request
+  if (has('建议','推荐','吃什么','推荐','怎么办','帮','可以吗')) {
+    return {
+      content: `根据你的档案，我有几个建议：
+
+**饮食方面：**
+- 你的基础代谢约1710 kcal，每日总消耗约2000-2200 kcal
+- 目前每日目标约1800 kcal，留出300-400 kcal热量缺口
+- 你喜欢湘菜，可以选少油的湘菜如辣椒炒肉（少油版）
+
+**运动方面：**
+- 保持每周3次5km跑步的习惯很好
+- 建议增加1-2次上肢力量训练，不影响膝盖
+- 可以尝试游泳作为恢复日的活动
+
+需要我帮你制定更详细的计划吗？`,
+      toolCalls: [
+        { tool:'read_file', file:'rules/preferences.md', status:'done' },
+        { tool:'read_file', file:'rules/exercise.md', status:'done' },
+      ],
+      tokenCost: 180
+    };
+  }
+  // Default
+  return {
+    content: `我收到了你的消息。作为你的减重陪伴助手，我可以帮你记录饮食、追踪体重、提供运动建议。你可以试试说"今天午餐吃了炒饭"或"体重80公斤"来体验完整功能。`,
+    toolCalls: [],
+    tokenCost: 100
+  };
+}
+
+function generateFoodResponse(text) {
+  // Try to extract meal type
+  let mealType = '加餐';
+  if (text.includes('早餐') || text.includes('早上')) mealType = '早餐';
+  else if (text.includes('午餐') || text.includes('中午')) mealType = '午餐';
+  else if (text.includes('晚餐') || text.includes('晚上')) mealType = '晚餐';
+  else if (text.includes('宵夜')) mealType = '宵夜';
+
+  // Extract food items (simplified)
+  const foodDb = {
+    '包子': { cal: 160, unit: '个' },
+    '豆浆': { cal: 130, unit: '杯' },
+    '馒头': { cal: 220, unit: '个' },
+    '米饭': { cal: 230, unit: '碗' },
+    '面条': { cal: 280, unit: '碗' },
+    '炒饭': { cal: 550, unit: '份' },
+    '盖饭': { cal: 650, unit: '份' },
+    '排骨': { cal: 280, unit: '100g' },
+    '鸡胸肉': { cal: 165, unit: '100g' },
+    '鸡蛋': { cal: 75, unit: '个' },
+    '牛奶': { cal: 150, unit: '杯' },
+    '燕麦': { cal: 150, unit: '碗' },
+    '沙拉': { cal: 200, unit: '份' },
+    '三明治': { cal: 350, unit: '个' },
+    '咖啡': { cal: 5, unit: '杯' },
+    '面包': { cal: 250, unit: '个' },
+    '粥': { cal: 140, unit: '碗' },
+    '饺子': { cal: 50, unit: '个' },
+    '汉堡': { cal: 550, unit: '个' },
+    '披萨': { cal: 280, unit: '片' },
+    '炸鸡': { cal: 300, unit: '100g' },
+    '鱼': { cal: 120, unit: '100g' },
+    '蔬菜': { cal: 50, unit: '份' },
+    '水果': { cal: 60, unit: '份' },
+    '酸奶': { cal: 100, unit: '杯' },
+    '坚果': { cal: 180, unit: '把' },
+    '可乐': { cal: 180, unit: '罐' },
+    '奶茶': { cal: 350, unit: '杯' },
+    '啤酒': { cal: 150, unit: '瓶' },
+    '火锅': { cal: 800, unit: '顿' },
+    '烧烤': { cal: 600, unit: '顿' },
+  };
+
+  let detected = [];
+  let totalCal = 0;
+  Object.keys(foodDb).forEach(food => {
+    if (text.includes(food)) {
+      let qty = 1;
+      const match = text.match(new RegExp('(\\d+)\\s*(?:个|杯|碗|份|片|瓶|罐|把|顿|g|克)'));
+      if (match) qty = parseInt(match[1]);
+      const cal = foodDb[food].cal * qty;
+      totalCal += cal;
+      detected.push({ name: food, qty, cal, unit: foodDb[food].unit });
+    }
+  });
+
+  if (detected.length === 0) {
+    // Generic food response
+    return {
+      content: `好的，已记录你的${mealType}！
+
+**${mealType}分析：**
+- 估算热量：**~400-600 kcal**
+
+已写入饮食记录文件。今日累计热量请参考左侧 diet/2026-07-14.md。记得保持饮食均衡，多摄入蛋白质和蔬菜哦！`,
+      toolCalls: [
+        { tool:'write_file', file:'diet/2026-07-14.md', status:'done' },
+      ],
+      tokenCost: 150
+    };
+  }
+
+  let lines = detected.map(d => `- ${d.name}${d.qty > 1 ? d.qty : ''}${d.unit}：~${d.cal} kcal`).join('\n');
+  let content = `已记录你的${mealType}！
+
+**${mealType}分析：**
+${lines}
+- **合计：~${totalCal} kcal**
+
+已写入饮食记录。今日累计热量请参考左侧 diet/2026-07-14.md。${totalCal > 800 ? '热量偏高，晚餐可以清淡一些。' : '热量控制不错，继续保持！'}`;
+
+  return {
+    content,
+    toolCalls: [
+      { tool:'write_file', file:'diet/2026-07-14.md', status:'done' },
+    ],
+    tokenCost: 180
+  };
+}
+
+function generateWeightResponse(text) {
+  // Extract weight number
+  const match = text.match(/(\d+\.?\d*)\s*(?:公斤|kg|斤)/);
+  let weight = 81.5;
+  let isJin = false;
+  if (match) {
+    weight = parseFloat(match[1]);
+    if (text.includes('斤') && !text.includes('公斤') && !text.includes('kg')) {
+      weight = weight / 2;
+      isJin = true;
+    }
+  }
+  const height = 1.75;
+  const bmi = (weight / (height * height)).toFixed(1);
+  const prevWeight = 81.8;
+  const change = (weight - prevWeight).toFixed(1);
+  const changeStr = change <= 0 ? `**${change} kg** （下降）` : `**+${change} kg** （上升）`;
+  const totalChange = (weight - 82.0).toFixed(1);
+  const isGood = change <= 0;
+
+  let content = `体重已更新！
+
+**体重追踪：**
+- 当前：**${weight} kg**
+- BMI：**${bmi}**
+- 较上次（${prevWeight}kg）：${changeStr}
+- 总减重：82.0 → ${weight} = **${totalChange} kg**
+
+${isGood ? '继续保持！稳步下降是最好的节奏。' : '体重有波动很正常，可能跟水分、饮食时间有关，不用太焦虑，看长期趋势就好。'}按当前进度，距离目标 ${Math.abs(72 - weight).toFixed(1)} kg，加油！`;
+
+  return {
+    content,
+    toolCalls: [
+      { tool:'read_file', file:'BODY_METRICS.md', status:'done' },
+      { tool:'write_file', file:'BODY_METRICS.md', status:'done' },
+    ],
+    tokenCost: 200
+  };
+}
+
+function generateExerciseResponse(text) {
+  const has = (...k) => k.some(kw => text.includes(kw));
+  let exercise = '运动';
+  let cal = 300;
+  if (has('跑步','跑了')) { exercise = '跑步'; cal = 350; }
+  else if (has('游泳')) { exercise = '游泳'; cal = 400; }
+  else if (has('走路','散步')) { exercise = '走路/散步'; cal = 150; }
+  else if (has('瑜伽')) { exercise = '瑜伽'; cal = 200; }
+  else if (has('健身','力量','哑铃')) { exercise = '力量训练'; cal = 250; }
+
+  const kmMatch = text.match(/(\d+\.?\d*)\s*km/);
+  const km = kmMatch ? parseFloat(kmMatch[1]) : 5;
+
+  return {
+    content: `运动已记录！
+
+**运动分析：**
+- 类型：**${exercise}**
+- ${kmMatch ? `距离：${km} km` : '时长：约30分钟'}
+- 估算消耗：**~${cal} kcal**
+
+${exercise === '跑步' ? '跑步是你最擅长的运动，每周3次的频率非常好。注意你的左膝旧伤，跑完后记得拉伸，选择平坦路面。' : ''}${exercise === '力量训练' ? '力量训练对减脂很有帮助，增加肌肉量可以提高基础代谢。注意避开深蹲，选择上肢训练更安全。' : ''}运动后记得补充水分和适量蛋白质！`,
+    toolCalls: [],
+    tokenCost: 180
+  };
+}
+
+// ==================== Photo Recognition Simulation ====================
+const PHOTO_FOODS = [
+  { name: '鸡腿饭', cal: 620, desc: '鸡腿1个、米饭1碗' },
+  { name: '番茄炒蛋盖饭', cal: 480, desc: '番茄炒蛋、米饭1碗' },
+  { name: '牛肉面', cal: 550, desc: '牛肉面1碗' },
+  { name: '蔬菜沙拉', cal: 180, desc: '混合蔬菜沙拉' },
+  { name: '寿司拼盘', cal: 420, desc: '寿司6贯' },
+  { name: '麻辣烫', cal: 580, desc: '麻辣烫1份' },
+  { name: '炒河粉', cal: 520, desc: '干炒牛河1份' },
+  { name: '皮蛋瘦肉粥', cal: 280, desc: '粥1碗' },
+];
+
+function simulatePhoto() {
+  if (isResponding) return;
+  isResponding = true;
+  const food = PHOTO_FOODS[Math.floor(Math.random() * PHOTO_FOODS.length)];
+
+  // Add user message showing photo
+  const userMsg = {
+    role: 'user',
+    content: `[拍照识别] 正在分析食物图片...`,
+    time: getCurrentTime()
+  };
+  const container = document.getElementById('chatMessages');
+  container.appendChild(buildMessageEl(userMsg));
+  container.scrollTop = container.scrollHeight;
+
+  showTypingIndicator();
+
+  setTimeout(() => {
+    removeTypingIndicator();
+    const response = {
+      role: 'assistant',
+      content: `**照片识别完成**（Kimi视觉模型 + GLM文本模型）
+
+**识别结果：**
+- 食物：**${food.name}**
+- 分量：${food.desc}
+- 估算热量：**~${food.cal} kcal**
+
+已自动记录到饮食日志。${food.cal > 500 ? '热量偏高，注意控制分量哦。' : '热量适中，不错的选择！'}`,
+      toolCalls: [
+        { tool:'write_file', file:'diet/2026-07-14.md', status:'done' },
+      ],
+      time: getCurrentTime()
+    };
+    container.appendChild(buildMessageEl(response));
+    container.scrollTop = container.scrollHeight;
+    addToolLogEntry('write_file', 'diet/2026-07-14.md');
+    updateTokenBar(250);
+    isResponding = false;
+  }, 2200);
+}
+
+// ==================== Send Message ====================
+function getCurrentTime() {
+  const now = new Date();
+  return String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+
+function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text || isResponding) return;
+
+  isResponding = true;
+
+  // Add user message
+  const userMsg = {
+    role: 'user',
+    content: text,
+    time: getCurrentTime()
+  };
+  const container = document.getElementById('chatMessages');
+  container.appendChild(buildMessageEl(userMsg));
+  container.scrollTop = container.scrollHeight;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  // Show typing
+  setTimeout(() => {
+    showTypingIndicator();
+  }, 300);
+
+  // Generate response
+  const response = getMockResponse(text);
+  const delay = 1200 + Math.random() * 800;
+
+  setTimeout(() => {
+    removeTypingIndicator();
+
+    // Add tool call entries first (simulate tool execution)
+    if (response.toolCalls.length > 0) {
+      response.toolCalls.forEach((tc, i) => {
+        setTimeout(() => {
+          addToolLogEntry(tc.tool, tc.file);
+        }, i * 300);
+      });
+    }
+
+    // Add assistant message
+    const assistantMsg = {
+      role: 'assistant',
+      content: response.content,
+      toolCalls: response.toolCalls,
+      time: getCurrentTime()
+    };
+    container.appendChild(buildMessageEl(assistantMsg));
+    container.scrollTop = container.scrollHeight;
+
+    updateTokenBar(response.tokenCost || 150);
+    isResponding = false;
+  }, delay);
+}
+
+// ==================== Day Transition Animation ====================
+const DT_STEPS = [
+  { text: '保存昨日对话摘要...', detail: '→ chat/2026-07-14-summary.md' },
+  { text: '检查数据完整性...', detail: '→ 验证 diet/ BODY_METRICS.md' },
+  { text: '学习生活习惯...', detail: '→ 更新 PROFILE.md 洞察' },
+  { text: '重建记忆索引...', detail: '→ 扫描全部 markdown 文件' },
+  { text: '开启新的一天...', detail: '→ 记忆系统已就绪' },
+];
+
+function startDayTransition() {
+  const overlay = document.getElementById('dayTransition');
+  overlay.classList.add('show');
+  const stepsContainer = document.getElementById('dtSteps');
+  stepsContainer.innerHTML = '';
+  const progressFill = document.getElementById('dtProgress');
+  progressFill.style.width = '0%';
+  const completeBtn = document.getElementById('dtCompleteBtn');
+  completeBtn.classList.remove('show');
+
+  DT_STEPS.forEach((step, i) => {
+    const el = document.createElement('div');
+    el.className = 'dt-step';
+    el.id = 'dtStep' + i;
+    el.innerHTML = `
+      <div class="dt-step-dot"></div>
+      <div>
+        <div>${step.text}</div>
+        <div style="font-size:11px;color:var(--text-dimmer);font-family:var(--mono);">${step.detail}</div>
+      </div>
+    `;
+    stepsContainer.appendChild(el);
+  });
+
+  // Animate steps
+  DT_STEPS.forEach((step, i) => {
+    setTimeout(() => {
+      const el = document.getElementById('dtStep' + i);
+      if (el) {
+        el.classList.add('active');
+        progressFill.style.width = ((i + 1) / DT_STEPS.length * 100) + '%';
+      }
+    }, 800 + i * 1200);
+
+    setTimeout(() => {
+      const el = document.getElementById('dtStep' + i);
+      if (el) {
+        el.classList.remove('active');
+        el.classList.add('done');
+      }
+      if (i === DT_STEPS.length - 1) {
+        setTimeout(() => {
+          completeBtn.classList.add('show');
+        }, 500);
+      }
+    }, 800 + i * 1200 + 900);
+  });
+}
+
+function closeDayTransition() {
+  document.getElementById('dayTransition').classList.remove('show');
+}
+
+// ==================== Theme Toggle ====================
+const themes = ['dark', 'light', 'warm'];
+const themeLabels = { dark: '深色', light: '浅色', warm: '暖色' };
+let currentThemeIdx = 0;
+
+function toggleTheme() {
+  currentThemeIdx = (currentThemeIdx + 1) % themes.length;
+  const theme = themes[currentThemeIdx];
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('themeBtn');
+  btn.textContent = themeLabels[theme];
+  btn.classList.add('active');
+  setTimeout(() => btn.classList.remove('active'), 1000);
+}
+
+// ==================== Mobile Tab Switching ====================
+function switchMobileTab(tab) {
+  document.querySelectorAll('.mobile-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.mobile-tab[data-tab="${tab}"]`).classList.add('active');
+
+  const left = document.getElementById('panelLeft');
+  const center = document.getElementById('panelCenter');
+  const right = document.getElementById('panelRight');
+
+  left.classList.remove('mobile-show');
+  right.classList.remove('mobile-show');
+  center.classList.remove('mobile-hide');
+
+  if (tab === 'files') {
+    left.classList.add('mobile-show');
+    center.classList.add('mobile-hide');
+  } else if (tab === 'tools') {
+    right.classList.add('mobile-show');
+    center.classList.add('mobile-hide');
+  }
+}
+
+// ==================== Auto-resize textarea ====================
+function setupInput() {
+  const input = document.getElementById('chatInput');
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+}
+
+// ==================== Initialize ====================
+function init() {
+  renderFileTree();
+  renderMessages();
+  renderToolLog();
+  setupInput();
+}
+
+init();
+</script>
+</body>
+</html>
