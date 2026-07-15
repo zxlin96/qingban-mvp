@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.1';
 const APP_VERSION_DATE = '2026-07-15';
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
@@ -2038,6 +2038,12 @@ updated: ${profile.startDate}
   // 显示更新日志
   showChangelog() {
     const log = [
+      {
+        ver: '2.2.1', date: '2026-07-15',
+        items: [
+          '移除：图片下方折叠分析区（与回复内容重复）'
+        ]
+      },
       {
         ver: '2.1.0', date: '2026-07-15',
         items: [
