@@ -5,7 +5,7 @@ export class LLMService {
   constructor(fileManager, mockLLM) {
     this.fm = fileManager;
     this.llm = mockLLM;
-    this.maxToolRounds = 5;
+    this.maxToolRounds = (window.QINGBAN_SETTINGS?.maxToolRounds) || 5;
     this.toolCallLog = [];
   }
 
@@ -14,6 +14,7 @@ export class LLMService {
     const pad = (n) => String(n).padStart(2, '0');
     const base = baseDate ? new Date(baseDate) : new Date();
     const results = [];
+    const truncate = window.QINGBAN_SETTINGS?.fileTruncate || 800;
 
     for (let i = 0; i < days; i++) {
       const d = new Date(base);
@@ -22,9 +23,9 @@ export class LLMService {
       const path = `${prefix}${dateStr}.md`;
       const content = await this.fm.readFile(path);
       if (content) {
-        // 每个文件最多保留 800 字，避免 token 爆炸
-        const trimmed = content.length > 800
-          ? content.substring(0, 800) + '\n...(内容过长已截断)'
+        // 每个文件最多保留 truncate 字，避免 token 爆炸
+        const trimmed = content.length > truncate
+          ? content.substring(0, truncate) + '\n...(内容过长已截断)'
           : content;
         results.push({ date: dateStr, content: trimmed });
       }
@@ -77,9 +78,10 @@ export class LLMService {
     // 模拟日期
     const simDate = context?.currentDate || dateStr;
 
-    // 读取近 7 天的饮食记录和对话摘要
-    const recentDiet = await this._readRecentFiles('diet/', 7, simDate);
-    const recentChat = await this._readRecentFiles('chat/', 7, simDate);
+    // 读取近 N 天的饮食记录和对话摘要
+    const histDays = window.QINGBAN_SETTINGS?.historyDays ?? 7;
+    const recentDiet = await this._readRecentFiles('diet/', histDays, simDate);
+    const recentChat = await this._readRecentFiles('chat/', histDays, simDate);
 
     // 格式化近 7 天饮食记录
     let dietSection = '';

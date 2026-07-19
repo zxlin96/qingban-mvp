@@ -101,10 +101,17 @@ export class SparkLLM {
     this.callCount++;
     const payload = { messages, tools: tools || undefined };
     if (this.apkMode) {
-      // 有图片用 xopkimik26，纯文本用 xopglm52
+      // 有图片用视觉模型，纯文本用对话模型
       const hasImages = this._hasImages(messages);
-      payload.model = hasImages ? 'xopkimik26' : 'xopglm52';
-      console.log(`[LLM] 使用模型: ${payload.model} (图片: ${hasImages ? '是' : '否'})`);
+      const settings = window.QINGBAN_SETTINGS || {};
+      const visionModel = settings.visionModel || 'xopkimik26';
+      const chatModel = settings.chatModel || 'xopglm52';
+      payload.model = hasImages ? visionModel : chatModel;
+      // 温度
+      if (settings.temperature != null) {
+        payload.temperature = settings.temperature;
+      }
+      console.log(`[LLM] 使用模型: ${payload.model} (图片: ${hasImages ? '是' : '否'}) 温度: ${payload.temperature ?? '默认'}`);
     }
 
     let data;
@@ -147,7 +154,13 @@ export class SparkLLM {
       { role: 'system', content: sysPrompt },
       { role: 'user', content: userContent }
     ] };
-    if (this.apkMode) payload.model = 'xopglm52'; // 摘要纯文本，用轻量模型
+    if (this.apkMode) {
+      const settings = window.QINGBAN_SETTINGS || {};
+      payload.model = settings.summaryModel || 'xopglm52'; // 摘要纯文本，用轻量模型
+      if (settings.temperature != null) {
+        payload.temperature = settings.temperature;
+      }
+    }
 
     try {
       const data = await this._request(payload);

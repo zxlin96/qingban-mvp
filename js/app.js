@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.4.0';
 const APP_VERSION_DATE = '2026-07-15';
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
@@ -898,6 +898,25 @@ ${habits}
     document.addEventListener('click', () => {
       document.getElementById('fontPopover').classList.remove('show');
     });
+
+    // 菜单项 — 模型设置
+    document.getElementById('menuSettings').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showSettings();
+    });
+    document.getElementById('closeSettings').addEventListener('click', () => {
+      document.getElementById('settingsOverlay').style.display = 'none';
+    });
+    document.getElementById('settingsOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'settingsOverlay') {
+        document.getElementById('settingsOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('setTemperature').addEventListener('input', (e) => {
+      document.getElementById('setTemperatureVal').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+    document.getElementById('settingsSave').addEventListener('click', () => this._saveSettings());
+    document.getElementById('settingsReset').addEventListener('click', () => this._resetSettings());
 
     // 菜单项 — Token 用量
     document.getElementById('menuToken').addEventListener('click', () => {
@@ -2222,6 +2241,18 @@ updated: ${profile.startDate}
   showChangelog() {
     const log = [
       {
+        ver: '2.4.0', date: '2026-07-19',
+        items: [
+          '新增：模型设置功能 — 可配置视觉/对话/摘要模型',
+          '新增：温度参数（0-1 滑块）控制回复创造性',
+          '新增：最大工具调用轮数可配置（1-20）',
+          '新增：历史注入天数可配置（0-30 天）',
+          '新增：单文件截断字数可配置（100-5000）',
+          '新增：设置持久化到 localStorage，恢复默认按钮',
+          '优化：重建索引/重置数据/模拟次日增加二次确认'
+        ]
+      },
+      {
         ver: '2.3.2', date: '2026-07-15',
         items: [
           '新增：Token 用量移入功能菜单',
@@ -2304,6 +2335,57 @@ updated: ${profile.startDate}
 
     document.getElementById('changelogContent').innerHTML = html;
     document.getElementById('changelogOverlay').style.display = 'flex';
+  }
+
+  // ===== 模型设置 =====
+
+  showSettings() {
+    const s = window.QINGBAN_SETTINGS || {};
+    document.getElementById('setVisionModel').value = s.visionModel || 'xopkimik26';
+    document.getElementById('setChatModel').value = s.chatModel || 'xopglm52';
+    document.getElementById('setSummaryModel').value = s.summaryModel || 'xopglm52';
+    document.getElementById('setTemperature').value = s.temperature ?? 0.7;
+    document.getElementById('setTemperatureVal').textContent = parseFloat(s.temperature ?? 0.7).toFixed(1);
+    document.getElementById('setMaxToolRounds').value = s.maxToolRounds || 5;
+    document.getElementById('setHistoryDays').value = s.historyDays ?? 7;
+    document.getElementById('setFileTruncate').value = s.fileTruncate || 800;
+    document.getElementById('settingsOverlay').style.display = 'flex';
+  }
+
+  _saveSettings() {
+    const settings = {
+      visionModel: document.getElementById('setVisionModel').value.trim() || 'xopkimik26',
+      chatModel: document.getElementById('setChatModel').value.trim() || 'xopglm52',
+      summaryModel: document.getElementById('setSummaryModel').value.trim() || 'xopglm52',
+      temperature: parseFloat(document.getElementById('setTemperature').value),
+      maxToolRounds: parseInt(document.getElementById('setMaxToolRounds').value) || 5,
+      historyDays: parseInt(document.getElementById('setHistoryDays').value) ?? 7,
+      fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800
+    };
+
+    // 限制范围
+    settings.temperature = Math.max(0, Math.min(1, settings.temperature));
+    settings.maxToolRounds = Math.max(1, Math.min(20, settings.maxToolRounds));
+    settings.historyDays = Math.max(0, Math.min(30, settings.historyDays));
+    settings.fileTruncate = Math.max(100, Math.min(5000, settings.fileTruncate));
+
+    window.QINGBAN_SETTINGS = settings;
+    saveSettings(settings);
+
+    // 应用到 LLMService
+    if (this.llm) {
+      this.llm.maxToolRounds = settings.maxToolRounds;
+    }
+
+    document.getElementById('settingsOverlay').style.display = 'none';
+    this.addMessage('assistant', `设置已保存并生效 ✓\n\n- 视觉模型: \`${settings.visionModel}\`\n- 对话模型: \`${settings.chatModel}\`\n- 摘要模型: \`${settings.summaryModel}\`\n- 温度: ${settings.temperature}\n- 工具轮数: ${settings.maxToolRounds}\n- 历史天数: ${settings.historyDays}\n- 截断字数: ${settings.fileTruncate}`);
+  }
+
+  _resetSettings() {
+    if (!confirm('确定恢复所有设置到默认值吗？')) return;
+    localStorage.removeItem('qingban_settings');
+    window.QINGBAN_SETTINGS = loadSettings();
+    this.showSettings(); // 重新加载显示
   }
 
   // 更新 Token 用量条
