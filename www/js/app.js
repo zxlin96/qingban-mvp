@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.4.0';
-const APP_VERSION_DATE = '2026-07-15';
+const APP_VERSION = '2.5.0';
+const APP_VERSION_DATE = '2026-07-23';
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
 //          false=模拟模型(离线,零配置)
@@ -899,6 +899,20 @@ ${habits}
       document.getElementById('fontPopover').classList.remove('show');
     });
 
+    // 菜单项 — 查看上下文
+    document.getElementById('menuContext').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showContext();
+    });
+    document.getElementById('closeContext').addEventListener('click', () => {
+      document.getElementById('contextOverlay').style.display = 'none';
+    });
+    document.getElementById('contextOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'contextOverlay') {
+        document.getElementById('contextOverlay').style.display = 'none';
+      }
+    });
+
     // 菜单项 — 模型设置
     document.getElementById('menuSettings').addEventListener('click', () => {
       document.getElementById('menuDropdown').style.display = 'none';
@@ -917,6 +931,7 @@ ${habits}
     });
     document.getElementById('settingsSave').addEventListener('click', () => this._saveSettings());
     document.getElementById('settingsReset').addEventListener('click', () => this._resetSettings());
+    document.getElementById('presetK3').addEventListener('click', () => this._applyPresetK3());
 
     // 菜单项 — Token 用量
     document.getElementById('menuToken').addEventListener('click', () => {
@@ -2241,6 +2256,24 @@ updated: ${profile.startDate}
   showChangelog() {
     const log = [
       {
+        ver: '2.5.0', date: '2026-07-23',
+        items: [
+          '新增：Kimi K3 全量预配置 — 一键切换所有模型到 K3',
+          '新增：单次回复最大 Token 可配置（1024-32768）',
+          '新增：推理强度可配置（low/medium/high/max）',
+          '新增：上下文窗口大小从配置读取（支持 1M tokens）',
+          '优化：模型设置 UI 更新，placeholder 统一为 K3 模型名',
+          '优化：Anthropic API max_tokens 从配置动态读取'
+        ]
+      },
+      {
+        ver: '2.4.1', date: '2026-07-19',
+        items: [
+          '新增：查看上下文功能 — 可查看当前发给大模型的完整上下文',
+          '包含：系统提示词、对话历史、工具定义、Token 估算'
+        ]
+      },
+      {
         ver: '2.4.0', date: '2026-07-19',
         items: [
           '新增：模型设置功能 — 可配置视觉/对话/摘要模型',
@@ -2337,16 +2370,106 @@ updated: ${profile.startDate}
     document.getElementById('changelogOverlay').style.display = 'flex';
   }
 
+  // ===== 查看上下文 =====
+
+  async showContext() {
+    document.getElementById('contextOverlay').style.display = 'flex';
+    document.getElementById('contextContent').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;">加载中...</div>';
+
+    try {
+      // 构建系统提示词（与实际发送的一致）
+      const systemPrompt = await this.llmService.buildSystemPrompt({
+        currentDate: this.chatManager.currentDate
+      });
+
+      // 获取对话历史
+      const history = this.chatManager.getHistory();
+
+      // 获取工具定义
+      const tools = this.llmService.getToolDefinitions();
+
+      // 组装完整上下文预览
+      let html = '';
+
+      // 1. 系统提示词
+      html += `<div style="margin-bottom:16px;">`;
+      html += `<div style="font-size:13px;color:var(--accent);font-weight:700;margin-bottom:6px;">📋 系统提示词 (system) — ${systemPrompt.length} 字</div>`;
+      html += `<div style="background:var(--bg3);border-radius:8px;padding:10px;max-height:300px;overflow-y:auto;border:1px solid var(--rule);">${this.formatMarkdown(systemPrompt)}</div>`;
+      html += `</div>`;
+
+      // 2. 对话历史
+      html += `<div style="margin-bottom:16px;">`;
+      html += `<div style="font-size:13px;color:var(--accent);font-weight:700;margin-bottom:6px;">💬 对话历史 (${history.length} 条)</div>`;
+      if (history.length === 0) {
+        html += `<div style="color:var(--muted);padding:8px;font-size:12px;">（当天暂无对话历史）</div>`;
+      } else {
+        history.forEach((msg, i) => {
+          const role = msg.role === 'user' ? '👤 user' : '🤖 assistant';
+          let content = msg.content;
+          if (Array.isArray(content)) {
+            content = content.map(c => c.type === 'text' ? c.text : `[图片]`).join(' + ');
+          }
+          html += `<div style="background:var(--bg3);border-radius:6px;padding:8px 10px;margin-bottom:4px;font-size:11px;border-left:3px solid ${msg.role === 'user' ? 'var(--accent)' : 'var(--rule)'};">`;
+          html += `<div style="color:var(--muted2);margin-bottom:2px;">${role}</div>`;
+          html += `<div style="color:var(--text);white-space:pre-wrap;">${this._escapeHtml(String(content).substring(0, 500))}${content.length > 500 ? '...' : ''}</div>`;
+          html += `</div>`;
+        });
+      }
+      html += `</div>`;
+
+      // 3. 工具定义
+      html += `<div style="margin-bottom:16px;">`;
+      html += `<div style="font-size:13px;color:var(--accent);font-weight:700;margin-bottom:6px;">🔧 工具定义 (${tools.length} 个)</div>`;
+      tools.forEach(tool => {
+        const fn = tool.function;
+        html += `<div style="background:var(--bg3);border-radius:6px;padding:8px 10px;margin-bottom:4px;font-size:11px;">`;
+        html += `<div style="color:var(--text);font-weight:600;">${fn.name}</div>`;
+        html += `<div style="color:var(--muted);margin-top:2px;">${fn.description || ''}</div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+
+      // 4. 统计摘要
+      const historyChars = history.reduce((sum, m) => {
+        const c = Array.isArray(m.content) ? JSON.stringify(m.content) : m.content;
+        return sum + String(c || '').length;
+      }, 0);
+      const totalChars = systemPrompt.length + historyChars;
+      const estTokens = Math.round(totalChars / 1.5);
+
+      html += `<div style="background:var(--bg2);border-radius:8px;padding:10px;font-size:12px;border:1px solid var(--rule);">`;
+      html += `<div style="color:var(--accent);font-weight:700;margin-bottom:6px;">📊 统计</div>`;
+      html += `<div style="color:var(--muted);">系统提示词: <span style="color:var(--text);">${systemPrompt.length} 字</span></div>`;
+      html += `<div style="color:var(--muted);">对话历史: <span style="color:var(--text);">${historyChars} 字 (${history.length} 条)</span></div>`;
+      html += `<div style="color:var(--muted);">工具定义: <span style="color:var(--text);">${tools.length} 个</span></div>`;
+      html += `<div style="color:var(--muted);margin-top:4px;border-top:1px solid var(--rule);padding-top:4px;">预估总 Token: <span style="color:var(--accent);font-weight:700;">~${estTokens}</span></div>`;
+      html += `</div>`;
+
+      document.getElementById('contextContent').innerHTML = html;
+    } catch (e) {
+      document.getElementById('contextContent').innerHTML = `<div style="color:var(--danger);padding:20px;">加载失败: ${e.message}</div>`;
+      console.error('[查看上下文] 失败:', e);
+    }
+  }
+
+  _escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   // ===== 模型设置 =====
 
   showSettings() {
     const s = window.QINGBAN_SETTINGS || {};
-    document.getElementById('setVisionModel').value = s.visionModel || 'xopkimik26';
-    document.getElementById('setChatModel').value = s.chatModel || 'xopglm52';
-    document.getElementById('setSummaryModel').value = s.summaryModel || 'xopglm52';
+    document.getElementById('setVisionModel').value = s.visionModel || 'k3';
+    document.getElementById('setChatModel').value = s.chatModel || 'k3';
+    document.getElementById('setSummaryModel').value = s.summaryModel || 'k3';
     document.getElementById('setTemperature').value = s.temperature ?? 0.7;
     document.getElementById('setTemperatureVal').textContent = parseFloat(s.temperature ?? 0.7).toFixed(1);
     document.getElementById('setMaxToolRounds').value = s.maxToolRounds || 5;
+    document.getElementById('setMaxOutputTokens').value = s.maxOutputTokens || 8192;
+    document.getElementById('setEffortLevel').value = s.effortLevel || 'max';
     document.getElementById('setHistoryDays').value = s.historyDays ?? 7;
     document.getElementById('setFileTruncate').value = s.fileTruncate || 800;
     document.getElementById('settingsOverlay').style.display = 'flex';
@@ -2354,11 +2477,13 @@ updated: ${profile.startDate}
 
   _saveSettings() {
     const settings = {
-      visionModel: document.getElementById('setVisionModel').value.trim() || 'xopkimik26',
-      chatModel: document.getElementById('setChatModel').value.trim() || 'xopglm52',
-      summaryModel: document.getElementById('setSummaryModel').value.trim() || 'xopglm52',
+      visionModel: document.getElementById('setVisionModel').value.trim() || 'k3',
+      chatModel: document.getElementById('setChatModel').value.trim() || 'k3',
+      summaryModel: document.getElementById('setSummaryModel').value.trim() || 'k3',
       temperature: parseFloat(document.getElementById('setTemperature').value),
       maxToolRounds: parseInt(document.getElementById('setMaxToolRounds').value) || 5,
+      maxOutputTokens: parseInt(document.getElementById('setMaxOutputTokens').value) || 8192,
+      effortLevel: document.getElementById('setEffortLevel').value || 'max',
       historyDays: parseInt(document.getElementById('setHistoryDays').value) ?? 7,
       fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800
     };
@@ -2366,6 +2491,7 @@ updated: ${profile.startDate}
     // 限制范围
     settings.temperature = Math.max(0, Math.min(1, settings.temperature));
     settings.maxToolRounds = Math.max(1, Math.min(20, settings.maxToolRounds));
+    settings.maxOutputTokens = Math.max(1024, Math.min(32768, settings.maxOutputTokens));
     settings.historyDays = Math.max(0, Math.min(30, settings.historyDays));
     settings.fileTruncate = Math.max(100, Math.min(5000, settings.fileTruncate));
 
@@ -2378,7 +2504,7 @@ updated: ${profile.startDate}
     }
 
     document.getElementById('settingsOverlay').style.display = 'none';
-    this.addMessage('assistant', `设置已保存并生效 ✓\n\n- 视觉模型: \`${settings.visionModel}\`\n- 对话模型: \`${settings.chatModel}\`\n- 摘要模型: \`${settings.summaryModel}\`\n- 温度: ${settings.temperature}\n- 工具轮数: ${settings.maxToolRounds}\n- 历史天数: ${settings.historyDays}\n- 截断字数: ${settings.fileTruncate}`);
+    this.addMessage('assistant', `设置已保存并生效 ✓\n\n- 视觉模型: \`${settings.visionModel}\`\n- 对话模型: \`${settings.chatModel}\`\n- 摘要模型: \`${settings.summaryModel}\`\n- 温度: ${settings.temperature}\n- 工具轮数: ${settings.maxToolRounds}\n- 输出上限: ${settings.maxOutputTokens} tokens\n- 推理强度: ${settings.effortLevel}\n- 历史天数: ${settings.historyDays}\n- 截断字数: ${settings.fileTruncate}`);
   }
 
   _resetSettings() {
@@ -2388,11 +2514,50 @@ updated: ${profile.startDate}
     this.showSettings(); // 重新加载显示
   }
 
+  // 应用 Kimi K3 全量预配置
+  _applyPresetK3() {
+    // 填充 UI
+    document.getElementById('setVisionModel').value = 'k3[1M]';
+    document.getElementById('setChatModel').value = 'k3[1M]';
+    document.getElementById('setSummaryModel').value = 'k3';
+    document.getElementById('setTemperature').value = 0.7;
+    document.getElementById('setTemperatureVal').textContent = '0.7';
+    document.getElementById('setMaxToolRounds').value = 5;
+    document.getElementById('setMaxOutputTokens').value = 8192;
+    document.getElementById('setEffortLevel').value = 'max';
+    document.getElementById('setHistoryDays').value = 7;
+    document.getElementById('setFileTruncate').value = 800;
+
+    // 直接保存
+    const settings = {
+      visionModel: 'k3',
+      chatModel: 'k3',
+      summaryModel: 'k3',
+      temperature: 0.7,
+      maxToolRounds: 5,
+      maxOutputTokens: 8192,
+      maxContextTokens: 1048576,
+      effortLevel: 'max',
+      historyDays: 7,
+      fileTruncate: 800
+    };
+
+    window.QINGBAN_SETTINGS = settings;
+    saveSettings(settings);
+
+    if (this.llm) {
+      this.llm.maxToolRounds = settings.maxToolRounds;
+    }
+
+    document.getElementById('settingsOverlay').style.display = 'none';
+    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 8192 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800`);
+  }
+
   // 更新 Token 用量条
   updateTokenBar() {
     const u = this.chatManager.getTokenUsageInfo();
     const ctx = this.chatManager.getContextInfo();
-    const maxCtx = 12000; // 上下文窗口大小（估算）
+    const maxCtx = window.QINGBAN_SETTINGS?.maxContextTokens || window.QINGBAN_CONFIG?.maxContextTokens || 12000;
     const pct = Math.min(100, Math.round(ctx.estimatedTokens / maxCtx * 100));
     const barColor = pct < 60 ? 'var(--accent)' : pct < 85 ? '#e8a838' : '#e85c5c';
 

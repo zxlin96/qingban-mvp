@@ -3,15 +3,18 @@
 
 const STORAGE_KEY = 'qingban_settings';
 
-// 默认值
+// 默认值 — 全部使用 Kimi K3 模型
 const DEFAULT_SETTINGS = {
-  visionModel: 'xopkimik26',   // 视觉模型（图片识别）
-  chatModel: 'xopglm52',        // 对话模型（纯文本）
-  summaryModel: 'xopglm52',     // 摘要模型（跨天总结/日终分析）
-  temperature: 0.7,             // 温度（0=严谨, 1=创意）
-  maxToolRounds: 5,             // 最大工具调用轮数
-  historyDays: 7,               // 近 N 天历史注入天数
-  fileTruncate: 800             // 单文件截断字数
+  visionModel: 'k3',              // 视觉模型（图片识别）
+  chatModel: 'k3',                // 对话模型（纯文本）
+  summaryModel: 'k3',             // 摘要模型（跨天总结/日终分析）
+  temperature: 0.7,               // 温度（0=严谨, 1=创意）
+  maxToolRounds: 5,               // 最大工具调用轮数
+  historyDays: 7,                 // 近 N 天历史注入天数
+  fileTruncate: 800,              // 单文件截断字数
+  maxOutputTokens: 8192,          // 单次回复最大输出 token 数
+  maxContextTokens: 1048576,      // 上下文窗口大小（1M）
+  effortLevel: 'max'              // 推理强度（max=最高质量）
 };
 
 // 加载设置（合并默认值）

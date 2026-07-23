@@ -124,6 +124,7 @@
       <div class="menu-item" id="menuTheme"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-moon"/></svg><span>切换主题</span></div>
       <div class="menu-item" id="menuFont"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-font"/></svg><span>字体大小</span></div>
       <div class="menu-item" id="menuToken"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-chart"/></svg><span>Token 用量</span></div>
+      <div class="menu-item" id="menuContext"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-eye"/></svg><span>查看上下文</span></div>
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
       <div class="menu-item" id="menuRebuild"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>重建索引</span></div>
@@ -295,6 +296,19 @@
   </div>
 </div>
 
+<!-- Context Viewer Modal (查看上下文) -->
+<div class="file-viewer" id="contextOverlay" style="display:none;">
+  <div class="modal" style="max-width:720px;">
+    <div class="modal-header">
+      <span class="title">当前发送给大模型的上下文</span>
+      <button class="btn" id="closeContext">关闭</button>
+    </div>
+    <div class="modal-body" style="padding:12px;max-height:75vh;overflow-y:auto;">
+      <div id="contextContent" style="font-size:12px;line-height:1.6;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal (模型设置) -->
 <div class="file-viewer" id="settingsOverlay" style="display:none;">
   <div class="modal" style="max-width:480px;">
@@ -304,18 +318,25 @@
     </div>
     <div class="modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
       <div class="settings-group">
+        <div class="settings-group-title">预设配置</div>
+        <div class="settings-row">
+          <button class="btn accent" id="presetK3" style="width:100%;padding:10px;font-size:14px;">Kimi K3 全量配置（1M 上下文）</button>
+        </div>
+      </div>
+
+      <div class="settings-group">
         <div class="settings-group-title">模型选择</div>
         <div class="settings-row">
           <label>视觉模型（图片识别）</label>
-          <input type="text" id="setVisionModel" class="settings-input" placeholder="xopkimik26">
+          <input type="text" id="setVisionModel" class="settings-input" placeholder="k3">
         </div>
         <div class="settings-row">
           <label>对话模型（纯文本）</label>
-          <input type="text" id="setChatModel" class="settings-input" placeholder="xopglm52">
+          <input type="text" id="setChatModel" class="settings-input" placeholder="k3">
         </div>
         <div class="settings-row">
           <label>摘要模型（跨天总结）</label>
-          <input type="text" id="setSummaryModel" class="settings-input" placeholder="xopglm52">
+          <input type="text" id="setSummaryModel" class="settings-input" placeholder="k3">
         </div>
       </div>
 
@@ -331,6 +352,19 @@
         <div class="settings-row">
           <label>最大工具调用轮数</label>
           <input type="number" id="setMaxToolRounds" class="settings-input" min="1" max="20" value="5">
+        </div>
+        <div class="settings-row">
+          <label>单次回复最大 Token <span class="settings-hint">(输出上限)</span></label>
+          <input type="number" id="setMaxOutputTokens" class="settings-input" min="1024" max="32768" step="1024" value="8192">
+        </div>
+        <div class="settings-row">
+          <label>推理强度 <span class="settings-hint">(max=最高质量)</span></label>
+          <select id="setEffortLevel" class="settings-input">
+            <option value="low">low — 快速响应</option>
+            <option value="medium">medium — 平衡</option>
+            <option value="high">high — 高质量</option>
+            <option value="max" selected>max — 最高质量</option>
+          </select>
         </div>
       </div>
 
