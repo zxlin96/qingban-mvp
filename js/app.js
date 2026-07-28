@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.5.0';
-const APP_VERSION_DATE = '2026-07-23';
+const APP_VERSION = '2.7.0';
+const APP_VERSION_DATE = '2026-07-29';
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
 //          false=模拟模型(离线,零配置)
@@ -32,6 +32,7 @@ class App {
     this.profileLearner = new ProfileLearner(this.fm, this.llm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
+    this._askUserResolve = null; // ask_user 工具的 Promise resolve
     this.sampleFoods = [
       { label: '午餐', icon: 'icon-sun', text: '这是今天的午餐', color: '#f0a070' },
       { label: '早餐', icon: 'icon-sun', text: '拍了今天的早餐', color: '#6ee7a3' },
@@ -46,6 +47,7 @@ class App {
     this.initTheme();       // 初始化主题(从 localStorage 恢复)
     this.initFontScale();   // 初始化字体大小(从 localStorage 恢复)
     this.bindEvents();
+    this._registerAskUserCallback(); // 注册 ask_user 工具回调
     await this.renderFileTree();
     this.updateContextInfo();
 
@@ -335,15 +337,16 @@ class App {
       if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
     }
 
-    // 步骤 3: 学习用户习惯
-    if (this._dtAddStep) this._dtAddStep('正在学习你的生活习惯...');
+    // 步骤 3: 刷新习惯总结（基于近 21 天对话摘要全量分析）
+    if (this._dtAddStep) this._dtAddStep('正在刷新习惯总结（近 21 天）...');
     const stepHabit = this._dtStepIndex - 1;
-    if (this.profileLearner && yesterdayHistory.length > 0) {
+    if (this.profileLearner) {
       try {
-        await this.profileLearner.learnFromDate(yesterdayDate, yesterdayHistory);
+        const refreshResult = await this.profileLearner.refreshHabits(21);
+        console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
         if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
       } catch (e) {
-        console.error('[DayRollover] 学习失败:', e.message);
+        console.error('[DayRollover] 习惯刷新失败:', e.message);
         if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'error');
       }
     } else {
@@ -530,7 +533,7 @@ ${summaries.join('\n\n---\n\n')}
       // 同时更新 learned-habits.md — 把周度总结中的稳定习惯合并进去
       if (prevWeekly) {
         // 有上次的周度总结 → 用新的覆盖旧的 insights 文件即可
-        // learned-habits.md 已经在步骤3被 ProfileLearner 更新过了，不需要重复
+        // learned-habits.md 已经在步骤3被 refreshHabits 全量刷新过了，不需要重复
       }
     } catch (e) {
       console.error('[周度总结] LLM 调用失败:', e.message);
@@ -933,6 +936,16 @@ ${habits}
     document.getElementById('settingsReset').addEventListener('click', () => this._resetSettings());
     document.getElementById('presetK3').addEventListener('click', () => this._applyPresetK3());
 
+    // ===== Ask User 弹窗事件 =====
+    document.getElementById('askUserClose').addEventListener('click', () => this._resolveAskUser(null));
+    document.getElementById('askUserSubmit').addEventListener('click', () => this._submitAskUserCustom());
+    document.getElementById('askUserInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this._submitAskUserCustom();
+      }
+    });
+
     // 菜单项 — Token 用量
     document.getElementById('menuToken').addEventListener('click', () => {
       document.getElementById('menuDropdown').style.display = 'none';
@@ -959,6 +972,14 @@ ${habits}
       document.getElementById('menuDropdown').style.display = 'none';
       if (confirm('确定要重建 INDEX.md 索引文件吗？\n\n这会重新扫描所有 MD 文件并更新索引，不会删除任何数据。')) {
         this.rebuildIndex();
+      }
+    });
+
+    // 菜单项 — 刷新习惯总结
+    document.getElementById('menuRefreshHabits').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      if (confirm('确定要刷新习惯总结吗？\n\n这将读取近 21 天的对话记录，让 AI 重新分析并更新你的习惯档案。\n已有习惯档案会被覆盖更新。')) {
+        this.refreshHabits();
       }
     });
 
@@ -1703,6 +1724,34 @@ ${habits}
     }
   }
 
+  // ===== 刷新习惯总结 =====
+  async refreshHabits() {
+    if (this.isProcessing) return;
+
+    this.setProcessing(true);
+    this.showProgress('正在刷新习惯总结', '读取近 21 天对话记录...');
+
+    try {
+      const result = await this.profileLearner.refreshHabits(21);
+
+      if (result.success) {
+        this.updateProgress(`已分析 ${result.daysAnalyzed} 天对话，正在生成习惯档案...`);
+        this.addMessage('assistant', `**习惯档案已刷新**\n\n- 分析天数: ${result.daysAnalyzed} 天\n- ${result.summary}\n\nAI 已基于近 ${result.daysAnalyzed} 天的对话记录重新分析了你的生活习惯，包括饮食规律、运动模式、作息时间等。每个习惯条目都标注了出现频率和趋势变化。`);
+        await this.renderFileTree();
+        this.showToast('习惯档案已刷新', `基于近 ${result.daysAnalyzed} 天对话重新分析`, 'success');
+      } else {
+        this.addMessage('assistant', `**刷新失败**\n\n${result.summary}`);
+        this.showToast('刷新失败', result.summary, 'error');
+      }
+    } catch (err) {
+      this.addMessage('assistant', `刷新习惯总结出错：${err.message}`);
+      this.showToast('刷新出错', err.message, 'error');
+    }
+
+    this.hideProgress();
+    this.setProcessing(false);
+  }
+
   // ===== 自动上下文压缩 =====
   async _autoCompact() {
     try {
@@ -2256,6 +2305,24 @@ updated: ${profile.startDate}
   showChangelog() {
     const log = [
       {
+        ver: '2.7.0', date: '2026-07-29',
+        items: [
+          '新增：刷新习惯总结 — 基于近 21 天对话重新分析并更新习惯档案',
+          '优化：LLM 全量分析饮食、运动、作息等模式，标注频率和趋势',
+          '优化：自动清理过时习惯条目，保留永久性信息（过敏等）',
+          '修复：CLAUDE.md 版本号未更新导致 ask_user 指令不生效'
+        ]
+      },
+      {
+        ver: '2.6.0', date: '2026-07-23',
+        items: [
+          '新增：ask_user 工具 — 大模型可向用户提问并提供选项',
+          '新增：底部弹窗交互 — 用户可点击选项或自行输入回答',
+          '新增：支持跳过问题（×按钮）和自定义输入（回车提交）',
+          '优化：弹窗从底部滑入，带动画效果，支持深色模式'
+        ]
+      },
+      {
         ver: '2.5.0', date: '2026-07-23',
         items: [
           '新增：Kimi K3 全量预配置 — 一键切换所有模型到 K3',
@@ -2553,6 +2620,75 @@ updated: ${profile.startDate}
     this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 8192 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800`);
   }
 
+  // ===== Ask User 底部弹窗 =====
+
+  // 注册 ask_user 工具回调到 LLMService
+  _registerAskUserCallback() {
+    this.llmService.onAskUser = async (question, options, allowCustom) => {
+      return this._showAskUser(question, options, allowCustom);
+    };
+  }
+
+  // 显示底部弹窗，返回 Promise<string>
+  _showAskUser(question, options, allowCustom) {
+    return new Promise((resolve) => {
+      this._askUserResolve = resolve;
+
+      // 设置问题文本
+      document.getElementById('askUserQuestion').textContent = question;
+
+      // 生成选项按钮
+      const optionsContainer = document.getElementById('askUserOptions');
+      optionsContainer.innerHTML = '';
+      for (const opt of options) {
+        const btn = document.createElement('button');
+        btn.className = 'ask-user-option';
+        btn.innerHTML = `<span class="ask-user-option-bullet"></span><span class="ask-user-option-text">${this._escapeHtml(opt)}</span>`;
+        btn.addEventListener('click', () => this._resolveAskUser(opt));
+        optionsContainer.appendChild(btn);
+      }
+
+      // 控制自定义输入区域
+      const customArea = document.getElementById('askUserCustom');
+      customArea.style.display = allowCustom ? 'flex' : 'none';
+
+      // 清空输入框
+      document.getElementById('askUserInput').value = '';
+
+      // 显示弹窗
+      document.getElementById('askUserOverlay').style.display = 'flex';
+
+      // 如果允许自定义输入，自动聚焦
+      if (allowCustom) {
+        setTimeout(() => document.getElementById('askUserInput').focus(), 300);
+      }
+    });
+  }
+
+  // 提交自定义输入
+  _submitAskUserCustom() {
+    const input = document.getElementById('askUserInput');
+    const value = input.value.trim();
+    if (!value) return;
+    this._resolveAskUser(value);
+  }
+
+  // 统一 resolve — 处理用户选择、自定义输入、跳过
+  _resolveAskUser(value) {
+    document.getElementById('askUserOverlay').style.display = 'none';
+    if (this._askUserResolve) {
+      this._askUserResolve(value || '（用户跳过了此问题）');
+      this._askUserResolve = null;
+    }
+  }
+
+  // HTML 转义
+  _escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   // 更新 Token 用量条
   updateTokenBar() {
     const u = this.chatManager.getTokenUsageInfo();
@@ -2612,6 +2748,48 @@ updated: ${profile.startDate}
       input.removeAttribute('data-processing');
       input.focus();
     }
+  }
+
+  // 显示进度遮罩
+  showProgress(title, status = '') {
+    document.getElementById('taskProgressTitle').textContent = title;
+    document.getElementById('taskProgressStatus').textContent = status;
+    document.getElementById('taskProgressOverlay').style.display = 'flex';
+  }
+
+  // 更新进度状态文字
+  updateProgress(status) {
+    document.getElementById('taskProgressStatus').textContent = status;
+  }
+
+  // 隐藏进度遮罩
+  hideProgress() {
+    document.getElementById('taskProgressOverlay').style.display = 'none';
+  }
+
+  // 显示 Toast 通知（3 秒后自动消失）
+  showToast(title, msg = '', type = 'success') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+
+    const icons = { success: '✓', error: '✕', info: 'ℹ' };
+    const icon = icons[type] || icons.info;
+
+    toast.innerHTML = `
+      <div class="toast-icon">${icon}</div>
+      <div class="toast-body">
+        <div class="toast-title">${title}</div>
+        ${msg ? `<div class="toast-msg">${msg}</div>` : ''}
+      </div>
+    `;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('toast-out');
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
   }
 
   autoResize(textarea) {

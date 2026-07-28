@@ -7,6 +7,8 @@ export class LLMService {
     this.llm = mockLLM;
     this.maxToolRounds = (window.QINGBAN_SETTINGS?.maxToolRounds) || 5;
     this.toolCallLog = [];
+    // ask_user 回调 — 由 App 层注入，返回 Promise<string>
+    this.onAskUser = null;
   }
 
   // 读取近 N 天的日期文件（diet/ 或 chat/）
@@ -210,6 +212,26 @@ ${chatSection}`;
             required: ['path', 'content']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ask_user',
+          description: '向用户提出问题并提供可选选项。当需要用户确认、选择或补充信息时使用。会在底部弹出选择面板，用户可以点击预设选项或自行输入。适用于：需要确认饮食细节、询问运动情况、让用户选择建议方案等场景。',
+          parameters: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: '要问用户的问题文本' },
+              options: {
+                type: 'array',
+                items: { type: 'string' },
+                description: '可选项列表，如 ["选项A", "选项B", "选项C"]'
+              },
+              allowCustom: { type: 'boolean', description: '是否允许用户自行输入答案，默认 true' }
+            },
+            required: ['question', 'options']
+          }
+        }
       }
     ];
   }
@@ -245,6 +267,16 @@ ${chatSection}`;
         case 'append_file':
           result = await this.fm.appendFile(args.path, args.content);
           displayName = `append_file("${args.path}", ${args.content.length} chars)`;
+          break;
+
+        case 'ask_user':
+          // 通过回调向用户提问，等待用户选择或输入
+          if (this.onAskUser) {
+            result = await this.onAskUser(args.question, args.options || [], args.allowCustom !== false);
+          } else {
+            result = '用户交互回调未注册';
+          }
+          displayName = `ask_user("${args.question.substring(0, 30)}...")`;
           break;
 
         default:

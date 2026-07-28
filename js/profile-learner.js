@@ -241,4 +241,117 @@ ${profile}
     const q = lines.map(h => `今天${h}了吗?`).join(' 还有,');
     return `新的一天!${q}`;
   }
+
+  // ===== 刷新习惯总结：基于近 N 天对话重新分析用户习惯 =====
+  // 读取 chat/*.md 摘要文件，让 LLM 全量分析后生成全新的习惯档案
+  // 返回 { success: bool, summary: string, daysAnalyzed: number }
+  async refreshHabits(days = 21) {
+    // 1. 读取近 N 天的对话摘要
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const chatEntries = [];
+    const truncate = window.QINGBAN_SETTINGS?.fileTruncate || 800;
+
+    for (let i = 0; i < days; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const content = await this.fm.readFile(`chat/${dateStr}.md`);
+      if (content) {
+        const trimmed = content.length > truncate
+          ? content.substring(0, truncate) + '\n...(截断)'
+          : content;
+        chatEntries.push({ date: dateStr, content: trimmed });
+      }
+    }
+
+    if (chatEntries.length === 0) {
+      return { success: false, summary: `近 ${days} 天没有对话记录，无法分析`, daysAnalyzed: 0 };
+    }
+
+    // 2. 读取现有习惯档案
+    const existingProfile = await this.fm.readFile(this.profilePath) || this._emptyProfile();
+
+    // 3. 拼接对话摘要文本
+    const dialogueText = chatEntries
+      .map(e => `### ${e.date}\n${e.content}`)
+      .join('\n\n---\n\n');
+
+    // 4. 调用 LLM 全量分析
+    let updatedProfile = null;
+    try {
+      updatedProfile = await this._llmRefreshHabits(existingProfile, dialogueText, chatEntries.length, days);
+    } catch (err) {
+      console.error('[ProfileLearner] 刷新习惯失败:', err.message);
+      return { success: false, summary: `LLM 分析失败: ${err.message}`, daysAnalyzed: chatEntries.length };
+    }
+
+    if (!updatedProfile || !updatedProfile.trim()) {
+      return { success: false, summary: 'LLM 返回为空', daysAnalyzed: chatEntries.length };
+    }
+
+    // 5. 确保输出是完整的档案格式
+    if (!updatedProfile.trimStart().startsWith('# AI 学习到的用户习惯')) {
+      updatedProfile = `# AI 学习到的用户习惯\n\n${updatedProfile}`;
+    }
+
+    // 6. 写入更新后的档案
+    await this.fm.writeFile(this.profilePath, updatedProfile);
+
+    return {
+      success: true,
+      summary: `已基于近 ${chatEntries.length} 天对话重新分析并更新习惯档案`,
+      daysAnalyzed: chatEntries.length
+    };
+  }
+
+  // LLM 全量分析：输入近 N 天对话 + 现有档案，输出全新的习惯档案
+  async _llmRefreshHabits(existingProfile, dialogueText, actualDays, targetDays) {
+    if (!this.llm || !this.llm.chat) {
+      throw new Error('LLM 不可用');
+    }
+
+    const sysPrompt = `你是"轻伴"的用户习惯分析模块。你将收到用户近 ${actualDays} 天的对话摘要和现有习惯档案。
+你的任务是：基于这些对话记录，重新分析并生成一份全新的用户习惯档案。
+
+分析规则：
+1. **基于证据**：只记录对话中【明确提到】或【可合理推断】的行为模式，绝不臆测
+2. **频率标注**：对每个习惯，标注出现频率（如"经常""偶尔""约X次/周"），让用户知道一致性
+3. **去旧换新**：如果现有档案中的条目在近 ${actualDays} 天对话中完全没出现，且不是永久性信息（如过敏），可以移除或标注"近期未观察到"
+4. **保留永久信息**：过敏、身体限制等永久性信息必须保留
+5. **发现新规律**：从对话中识别饮食习惯、用餐时间偏好、运动规律、作息模式、工作环境、情绪触发因素等
+6. **趋势分析**：如果某个行为在前期频繁出现但近期减少（或反之），标注趋势变化
+
+输出格式要求：
+- 以 "# AI 学习到的用户习惯" 开头
+- 保持以下分段：
+  ## 饮食习惯 / ## 常去用餐场所 / ## 生活作息 / ## 运动规律 / ## 工作与生活环境 / ## 情绪与压力 / ## 其他观察 / ## 更新日志
+- 每个条目格式：- 内容（频率/趋势标注）
+- 更新日志末尾追加：- ${new Date().toISOString().substring(0, 10)}: 基于近${actualDays}天对话全量刷新
+
+直接输出完整的更新后档案，不要加任何解释或前言。`;
+
+    const userContent = `## 现有习惯档案（供参考，可能已过时）
+${existingProfile}
+
+---
+
+## 近 ${actualDays} 天对话记录（共 ${actualDays} 天有记录，目标 ${targetDays} 天）
+${dialogueText}
+
+---
+
+请基于以上对话记录，重新分析并生成全新的用户习惯档案：`;
+
+    const resp = await this.llm.chat(
+      [
+        { role: 'system', content: sysPrompt },
+        { role: 'user', content: userContent }
+      ],
+      null,
+      { task: 'habit_refresh' }
+    );
+
+    return resp.content || '';
+  }
 }

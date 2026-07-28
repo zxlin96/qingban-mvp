@@ -267,19 +267,20 @@ export class ChatManager {
   }
 
   // 模拟次日（推进虚拟日期）
-  // profileLearner 可选:传入则在学习后再清空历史
+  // profileLearner 可选:传入则在保存摘要后刷新习惯档案
   async advanceDay(profileLearner) {
     // 先保存当前日期的对话摘要
     await this.saveDailySummary();
 
-    // 在清空历史前,让学习模块从当日对话中提取习惯
-    if (profileLearner && this.history.length > 0) {
+    // 保存完摘要后，刷新习惯档案（基于近 21 天对话摘要全量分析）
+    if (profileLearner) {
       try {
-        const result = await profileLearner.learnFromDate(this.currentDate, [...this.history]);
+        const result = await profileLearner.refreshHabits(21);
         this._lastLearnResult = result;
+        console.log('[advanceDay] 习惯刷新:', result.summary);
       } catch (err) {
-        console.error('[ProfileLearner] 学习失败:', err.message);
-        this._lastLearnResult = { learned: false, summary: '学习失败: ' + err.message };
+        console.error('[ProfileLearner] 习惯刷新失败:', err.message);
+        this._lastLearnResult = { learned: false, summary: '习惯刷新失败: ' + err.message };
       }
     }
 

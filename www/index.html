@@ -128,6 +128,7 @@
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
       <div class="menu-item" id="menuRebuild"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>重建索引</span></div>
+      <div class="menu-item" id="menuRefreshHabits"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>刷新习惯总结</span></div>
       <div class="menu-item" id="menuReset"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-warn"/></svg><span>重置数据</span></div>
       <div class="menu-item" id="menuNextDay"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-sun"/></svg><span>模拟次日</span></div>
     </div>
@@ -392,6 +393,39 @@
 <script src="js/app-config.js"></script>
 <script src="js/settings.js"></script>
 <script type="module" src="js/app.js"></script>
+
+<!-- Ask User 底部弹窗 — 大模型通过 ask_user 工具触发 -->
+<div class="ask-user-overlay" id="askUserOverlay" style="display:none;">
+  <div class="ask-user-panel" id="askUserPanel">
+    <div class="ask-user-header">
+      <span class="ask-user-icon">💬</span>
+      <span class="ask-user-title" id="askUserQuestion">问题加载中...</span>
+      <button class="ask-user-close" id="askUserClose" title="跳过">×</button>
+    </div>
+    <div class="ask-user-options" id="askUserOptions">
+      <!-- 选项按钮动态生成 -->
+    </div>
+    <div class="ask-user-custom" id="askUserCustom">
+      <input type="text" id="askUserInput" class="ask-user-input" placeholder="以上选项都不合适？输入你的回答...">
+      <button class="btn accent ask-user-submit" id="askUserSubmit">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通用进度遮罩 — 长时间操作时显示 -->
+<div class="task-progress-overlay" id="taskProgressOverlay" style="display:none;">
+  <div class="task-progress-modal">
+    <div class="task-progress-icon" id="taskProgressIcon">
+      <svg class="ico"><use href="#icon-refresh"/></svg>
+    </div>
+    <h2 class="task-progress-title" id="taskProgressTitle">处理中...</h2>
+    <div class="task-progress-loader"></div>
+    <div class="task-progress-status" id="taskProgressStatus"></div>
+  </div>
+</div>
+
+<!-- Toast 通知 — 操作完成后右上角弹出 -->
+<div class="toast-container" id="toastContainer"></div>
 
 </body>
 </html>
