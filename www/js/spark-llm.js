@@ -16,6 +16,7 @@ export class SparkLLM {
       this.apiFormat = cfg.apiFormat || 'openai'; // 'openai' or 'anthropic'
     } else {
       this.endpoint = '/api/chat';
+      this.streamEndpoint = '/api/chat/stream';
       this.apiFormat = 'openai';
     }
   }
@@ -191,7 +192,7 @@ export class SparkLLM {
 
   // 将 OpenAI tools 转为 Anthropic tools 格式
   _convertToAnthropicTools(tools) {
-    if (!tools) return undefined;
+    if (!tools || !Array.isArray(tools)) return undefined;
     return tools.map(t => ({
       name: t.function.name,
       description: t.function.description,
@@ -333,6 +334,257 @@ export class SparkLLM {
         }
       };
     }
+  }
+
+  // ===== 流式请求 — SSE 解析 =====
+
+  // 流式版 chat — onChunk(text) 在每个文本增量时回调
+  // onThinkingChunk(text) 在思考增量时回调（可选）
+  // 返回格式与 chat() 一致: { content, tool_calls, model, usage }
+  async chatStream(messages, tools, context, onChunk, onThinkingChunk) {
+    this.callCount++;
+    const settings = window.QINGBAN_SETTINGS || {};
+    const hasImages = this._hasImages(messages);
+    const visionModel = settings.visionModel || 'k3';
+    const chatModel = settings.chatModel || 'k3';
+    const modelName = hasImages ? visionModel : chatModel;
+    const temperature = settings.temperature ?? 0.7;
+
+    console.log(`[LLM Stream] 模型: ${modelName} 图片: ${hasImages} 格式: ${this.apiFormat}`);
+
+    if (this.apkMode && this.apiFormat === 'anthropic') {
+      return await this._streamAnthropic(messages, tools, modelName, temperature, settings, onChunk, onThinkingChunk);
+    } else if (this.apkMode) {
+      return await this._streamOpenAI(messages, tools, modelName, temperature, settings, onChunk, false);
+    } else {
+      return await this._streamOpenAI(messages, tools, modelName, temperature, settings, onChunk, true);
+    }
+  }
+
+  // OpenAI 格式流式（APK 直连或代理）
+  async _streamOpenAI(messages, tools, modelName, temperature, settings, onChunk, isProxy) {
+    const payload = isProxy
+      ? { messages, tools: tools || undefined }
+      : { messages, tools: tools || undefined, model: modelName, temperature, stream: true };
+
+    const url = isProxy ? this.streamEndpoint : `${this.baseURL}/chat/completions`;
+    const headers = isProxy
+      ? { 'Content-Type': 'application/json' }
+      : { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' };
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      let msg = text;
+      try { msg = JSON.parse(text).error?.message || text; } catch (_) {}
+      throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let toolCalls = [];
+    let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // 保留最后不完整的行
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+
+        // 兼容 "data: {...}" 和 "data:{...}" 两种格式
+        const data = trimmed.slice(5).trimStart();
+        if (data === '[DONE]') continue;
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta;
+
+          if (delta) {
+            // 文本增量
+            if (delta.content) {
+              content += delta.content;
+              if (onChunk) onChunk(delta.content);
+            }
+            // 工具调用增量
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index || 0;
+                if (!toolCalls[idx]) {
+                  toolCalls[idx] = {
+                    id: tc.id || `call-${idx}`,
+                    type: 'function',
+                    function: { name: '', arguments: '' }
+                  };
+                }
+                if (tc.function?.name) toolCalls[idx].function.name = tc.function.name;
+                if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+              }
+            }
+          }
+
+          // usage 可能在最后一个 chunk
+          if (json.usage) {
+            usage = {
+              prompt_tokens: json.usage.prompt_tokens || 0,
+              completion_tokens: json.usage.completion_tokens || 0,
+              total_tokens: json.usage.total_tokens || 0
+            };
+          }
+        } catch (_) {
+          // 忽略解析错误的行
+        }
+      }
+    }
+
+    // 清理 buffer 中剩余数据
+    if (buffer.trim().startsWith('data:')) {
+      const data = buffer.trim().slice(5).trimStart();
+      if (data !== '[DONE]') {
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) {
+            content += delta.content;
+            if (onChunk) onChunk(delta.content);
+          }
+          if (json.usage) {
+            usage = {
+              prompt_tokens: json.usage.prompt_tokens || 0,
+              completion_tokens: json.usage.completion_tokens || 0,
+              total_tokens: json.usage.total_tokens || 0
+            };
+          }
+        } catch (_) {}
+      }
+    }
+
+    return {
+      role: 'assistant',
+      content,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
+      model: modelName,
+      usage
+    };
+  }
+
+  // Anthropic 格式流式
+  async _streamAnthropic(messages, tools, modelName, temperature, settings, onChunk, onThinkingChunk) {
+    const { system, messages: anthropicMessages } = this._convertToAnthropicMessages(messages);
+    const anthropicTools = this._convertToAnthropicTools(tools);
+    const maxTokens = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
+
+    const payload = {
+      model: modelName,
+      max_tokens: maxTokens,
+      system: system || undefined,
+      messages: anthropicMessages,
+      temperature,
+      tools: anthropicTools,
+      stream: true
+    };
+
+    const resp = await fetch(`${this.baseURL}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      let msg = text;
+      try { msg = JSON.parse(text).error?.message || text; } catch (_) {}
+      throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let toolCalls = [];
+    let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    let currentToolIdx = -1;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+
+        // 兼容 "data: {...}" 和 "data:{...}" 两种格式
+        const data = trimmed.slice(5).trimStart();
+        if (!data) continue;
+
+        try {
+          const json = JSON.parse(data);
+
+          if (json.type === 'content_block_start') {
+            if (json.content_block?.type === 'tool_use') {
+              currentToolIdx++;
+              toolCalls.push({
+                id: json.content_block.id,
+                type: 'function',
+                function: {
+                  name: json.content_block.name,
+                  arguments: ''
+                }
+              });
+            }
+          } else if (json.type === 'content_block_delta') {
+            const delta = json.delta;
+            if (delta?.type === 'text_delta') {
+              content += delta.text;
+              if (onChunk) onChunk(delta.text);
+            } else if (delta?.type === 'thinking_delta') {
+              // 思考增量 — 通过 onThinkingChunk 回调传出
+              if (onThinkingChunk) onThinkingChunk(delta.thinking);
+            } else if (delta?.type === 'input_json_delta') {
+              if (currentToolIdx >= 0) {
+                toolCalls[currentToolIdx].function.arguments += delta.partial_json;
+              }
+            }
+          } else if (json.type === 'message_delta') {
+            if (json.usage) {
+              usage.completion_tokens = json.usage.output_tokens || 0;
+              usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
+            }
+          } else if (json.type === 'message_start' && json.message?.usage) {
+            usage.prompt_tokens = json.message.usage.input_tokens || 0;
+            usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
+          }
+        } catch (_) {}
+      }
+    }
+
+    return {
+      role: 'assistant',
+      content,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
+      model: modelName,
+      usage
+    };
   }
 
   // 供 ChatManager.compactHistory() 调用 — 生成对话摘要

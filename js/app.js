@@ -3,8 +3,147 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.7.0';
-const APP_VERSION_DATE = '2026-07-29';
+const APP_VERSION = '2.9.0';
+const APP_VERSION_DATE = '2026-08-01';
+
+const CHANGELOG = [
+  {
+    ver: '2.9.0', date: '2026-08-01',
+    items: [
+      '新增：流式输出 — LLM 回复逐字涌现，打字机效果带闪烁光标',
+      '新增：思考过程展示 — 实时显示 K3 推理思考，可折叠查看',
+      '新增：工具执行提示 — Function Calling 时显示⚙️执行状态',
+      '新增：server.js 流式代理端点 /api/chat/stream（SSE 透传）',
+      '修复：SSE 解析兼容 data: 和 data: 两种格式',
+      '修复：Kimi K3 thinking_delta 块未正确处理'
+    ]
+  },
+  {
+    ver: '2.8.0', date: '2026-07-29',
+    items: [
+      '新增：send_notification 工具 — 大模型可发送提醒通知（喝水/吃饭/运动/称重/睡眠）',
+      '新增：通知横幅 — 从顶部滑入，带图标和颜色区分类型，8秒自动关闭',
+      '新增：延迟通知 — 支持 0-任意分钟延迟，重启后自动恢复待发通知',
+      '新增：系统级通知 — 尝试调用浏览器 Notification API',
+      '新增：通用进度遮罩和 Toast 通知组件'
+    ]
+  },
+  {
+    ver: '2.7.0', date: '2026-07-29',
+    items: [
+      '新增：刷新习惯总结 — 基于近 21 天对话重新分析并更新习惯档案',
+      '优化：LLM 全量分析饮食、运动、作息等模式，标注频率和趋势',
+      '优化：自动清理过时习惯条目，保留永久性信息（过敏等）',
+      '修复：CLAUDE.md 版本号未更新导致 ask_user 指令不生效'
+    ]
+  },
+  {
+    ver: '2.6.0', date: '2026-07-23',
+    items: [
+      '新增：ask_user 工具 — 大模型可向用户提问并提供选项',
+      '新增：底部弹窗交互 — 用户可点击选项或自行输入回答',
+      '新增：支持跳过问题（×按钮）和自定义输入（回车提交）',
+      '优化：弹窗从底部滑入，带动画效果，支持深色模式'
+    ]
+  },
+  {
+    ver: '2.5.0', date: '2026-07-23',
+    items: [
+      '新增：Kimi K3 全量预配置 — 一键切换所有模型到 K3',
+      '新增：单次回复最大 Token 可配置（1024-32768）',
+      '新增：推理强度可配置（low/medium/high/max）',
+      '新增：上下文窗口大小从配置读取（支持 1M tokens）',
+      '优化：模型设置 UI 更新，placeholder 统一为 K3 模型名',
+      '优化：Anthropic API max_tokens 从配置动态读取'
+    ]
+  },
+  {
+    ver: '2.4.1', date: '2026-07-19',
+    items: [
+      '新增：查看上下文功能 — 可查看当前发给大模型的完整上下文',
+      '包含：系统提示词、对话历史、工具定义、Token 估算'
+    ]
+  },
+  {
+    ver: '2.4.0', date: '2026-07-19',
+    items: [
+      '新增：模型设置功能 — 可配置视觉/对话/摘要模型',
+      '新增：温度参数（0-1 滑块）控制回复创造性',
+      '新增：最大工具调用轮数可配置（1-20）',
+      '新增：历史注入天数可配置（0-30 天）',
+      '新增：单文件截断字数可配置（100-5000）',
+      '新增：设置持久化到 localStorage，恢复默认按钮',
+      '优化：重建索引/重置数据/模拟次日增加二次确认'
+    ]
+  },
+  {
+    ver: '2.3.2', date: '2026-07-15',
+    items: [
+      '新增：Token 用量移入功能菜单',
+      '调整：重建索引/重置数据/模拟次日取消隐藏，全部显示'
+    ]
+  },
+  {
+    ver: '2.3.1', date: '2026-07-15',
+    items: [
+      '修复：功能菜单按钮移到最左边，下拉菜单正常显示',
+      '修复：日历月份切换箭头图标渲染'
+    ]
+  },
+  {
+    ver: '2.3.0', date: '2026-07-15',
+    items: [
+      '新增：左上角功能菜单（汉堡按钮），收纳主题/字体/更新日志/重置等功能',
+      '新增：日期徽章可点击打开日历，查看历史聊天记录',
+      '新增：日历支持月份切换，有记录的日期显示彩色圆点',
+      '新增：点击日期查看当天的饮食记录和对话摘要',
+      '优化：顶栏精简为 日期 + 记忆 + Auto Dream 三个按钮'
+    ]
+  },
+  {
+    ver: '2.2.1', date: '2026-07-15',
+    items: [
+      '移除：图片下方折叠分析区（与回复内容重复）'
+    ]
+  },
+  {
+    ver: '2.1.0', date: '2026-07-15',
+    items: [
+      '新增：新一天问候包含昨日总结 + 今日建议（LLM 生成）',
+      '新增：系统提示词注入近 7 天饮食记录和对话摘要',
+      '新增：系统提示词注入过敏、饮食偏好、运动情况文件',
+      '新增：版本号显示，点击可查看更新日志',
+      '修复：时区 Bug — 昨日日期计算改用本地时间',
+      '修复：showNewDayWelcome 未 await 导致遮罩提前关闭'
+    ]
+  },
+  {
+    ver: '2.0.0', date: '2026-07-14',
+    items: [
+      '新增：每日总结机制 — 跨天自动 5 步流程',
+      '新增：数据完整性检查 — LLM 审查对话遗漏',
+      '新增：习惯学习 — 从对话提取作息/饮食/运动习惯',
+      '新增：周度习惯总结（每 7 天自动触发）',
+      '新增：跨天动效遮罩 — 月亮脉冲 + 步骤清单',
+      '新增：近 7 天饮食/对话摘要动态注入系统提示词',
+      '新增：图片消息双格式分离（UI 显示图片 / LLM 交互用纯文本）',
+      '新增：双模型选择 — 图片用 kimi，文本用 glm'
+    ]
+  },
+  {
+    ver: '1.0.0', date: '2026-07-10',
+    items: [
+      '初始版本',
+      '三栏布局：文件浏览器 / 聊天 / 工具日志',
+      'Function Calling — read_file / write_file / search_files',
+      'CLAUDE.md 系统提示词 v7',
+      '本地文件记忆系统（IndexedDB 持久化）',
+      '拍照识别食物 + 饮食记录',
+      '体重追踪 + BMI 计算',
+      '三种主题：深色 / 浅色 / 暖色'
+    ]
+  }
+];
 
 // 模型开关:true=真实大模型(讯飞 Coding Plan,需启动 node server.js)
 //          false=模拟模型(离线,零配置)
@@ -18,6 +157,7 @@ import { ChatManager } from './chat-manager.js';
 import { ProfileLearner } from './profile-learner.js';
 import { DietRecorder } from './diet-recorder.js';
 import { AutoDream } from './auto-dream.js';
+import { NotificationManager } from './notification-manager.js';
 import { IndexManager } from './index-manager.js';
 
 class App {
@@ -30,6 +170,7 @@ class App {
     this.autoDream = new AutoDream(this.fm, this.llm);
     this.indexManager = new IndexManager(this.fm);
     this.profileLearner = new ProfileLearner(this.fm, this.llm);
+    this.notificationManager = new NotificationManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -48,6 +189,8 @@ class App {
     this.initFontScale();   // 初始化字体大小(从 localStorage 恢复)
     this.bindEvents();
     this._registerAskUserCallback(); // 注册 ask_user 工具回调
+    this._registerNotificationCallback(); // 注册 send_notification 工具回调
+    await this.notificationManager.init(); // 初始化通知管理（恢复待发通知）
     await this.renderFileTree();
     this.updateContextInfo();
 
@@ -623,6 +766,7 @@ ${currentExercise}
     try {
       const result = await this.llm.chat(
         [{ role: 'user', content: prompt }],
+        null,
         { currentDate: date }
       );
 
@@ -736,6 +880,7 @@ ${habits}
 
       const result = await this.llm.chat(
         [{ role: 'user', content: prompt }],
+        null,
         { currentDate: today }
       );
 
@@ -1085,25 +1230,86 @@ ${habits}
     // 同一天内不压缩上下文，避免单天对话产生遗忘感
     // 上下文压缩改为仅在跨天(advanceDay)时通过存档+清空来处理
 
-    // 显示 typing 指示器
+    // 显示 typing 指示器（在第一个文本块到达前显示）
     this.showTyping();
 
-    try {
-      // 调用 LLM 服务（包含 Function Calling 循环）
-      const context = { currentDate: this.chatManager.currentDate };
-      const result = await this.llmService.chat(userContent, this.chatManager.getHistory(), context);
+    // 流式消息元素（文本块到达后替换 typing）
+    let streamDiv = null;
+    let streamText = '';
+    let thinkingText = '';
 
-      // 移除 typing 指示器
+    try {
+      // 调用流式 LLM 服务
+      const context = { currentDate: this.chatManager.currentDate };
+      const result = await this.llmService.chatStream(
+        userContent,
+        this.chatManager.getHistory(),
+        context,
+        // onTextChunk: 实时更新流式消息
+        (chunk, fullText) => {
+          // 第一个 chunk 到达时，移除 typing，创建流式消息
+          if (!streamDiv) {
+            this.hideTyping();
+            streamDiv = this._createStreamingMessage();
+          }
+          streamText = fullText;
+          this._updateStreamingMessage(streamDiv, streamText, thinkingText);
+          this._scrollToBottom();
+        },
+        // onToolStart: 工具执行时显示状态
+        (toolName) => {
+          if (!streamDiv) {
+            this.hideTyping();
+            streamDiv = this._createStreamingMessage();
+          }
+          // 在工具执行时追加一个小提示（不替换已有文本）
+          const existing = streamDiv.innerHTML;
+          const toolHint = `<div class="stream-tool-hint">⚙️ 执行: ${toolName}...</div>`;
+          if (!existing.includes('stream-tool-hint')) {
+            streamDiv.innerHTML = existing + toolHint;
+            this._scrollToBottom();
+          }
+        },
+        // onThinkingChunk: 实时显示思考过程
+        (chunk, fullThinking) => {
+          if (!streamDiv) {
+            this.hideTyping();
+            streamDiv = this._createStreamingMessage();
+          }
+          thinkingText = fullThinking;
+          this._updateStreamingMessage(streamDiv, streamText, thinkingText);
+          this._scrollToBottom();
+        }
+      );
+
+      // 移除 typing（如果还在）
       this.hideTyping();
 
-      // 显示助手回复
-      this.addMessage('assistant', result.content, null, result.toolCalls);
+      // 最终化流式消息：更新内容 + 添加工具徽章
+      if (streamDiv) {
+        // 保留思考区域（如果有），更新正文
+        this._updateStreamingMessage(streamDiv, result.content, thinkingText, true);
+        if (result.toolCalls && result.toolCalls.length > 0) {
+          const badges = document.createElement('div');
+          badges.className = 'tool-badges';
+          result.toolCalls.forEach(tc => {
+            const badge = document.createElement('span');
+            const toolType = tc.tool || '';
+            badge.className = `tool-badge ${toolType}`;
+            badge.innerHTML = `${this.getToolIcon(tc.tool)} ${tc.displayName || tc.tool}`;
+            badges.appendChild(badge);
+          });
+          streamDiv.appendChild(badges);
+        }
+      } else {
+        // 没有收到任何文本块（纯工具调用场景）
+        this.addMessage('assistant', result.content, null, result.toolCalls);
+      }
 
       // 记录到对话历史
       this.chatManager.addAssistantMessage(result.content);
 
       // 如果之前发了图片，把历史中的图片消息替换为文本摘要
-      // 这样后续对话不再包含图片数据，自动使用纯文本模型(xopglm52)
       if (sentPhotos.length > 0) {
         this.chatManager.replaceLastPhotoMessage(result.content);
       }
@@ -1126,11 +1332,58 @@ ${habits}
       await this.renderFileTree();
     } catch (err) {
       this.hideTyping();
-      this.addMessage('assistant', `出错了：${err.message}`);
+      if (streamDiv) {
+        streamDiv.innerHTML = this.formatMarkdown(streamText + `\n\n⚠️ 出错了：${err.message}`);
+      } else {
+        this.addMessage('assistant', `出错了：${err.message}`);
+      }
     }
 
     this.setProcessing(false);
     this.updateContextInfo();
+  }
+
+  // 创建流式消息容器
+  _createStreamingMessage() {
+    const container = document.getElementById('chatMessages');
+    const empty = container.querySelector('.empty-chat');
+    if (empty) empty.remove();
+
+    const div = document.createElement('div');
+    div.className = 'message assistant streaming';
+    div.innerHTML = '<span class="stream-cursor">▋</span>';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+  }
+
+  // 更新流式消息内容（思考区域 + 正文）
+  _updateStreamingMessage(div, text, thinking, isFinal = false) {
+    let html = '';
+    // 思考区域（折叠式）
+    if (thinking && thinking.trim()) {
+      const isCollapsed = isFinal ? '' : '';
+      const toggleLabel = isFinal ? '💭 思考过程（点击展开/折叠）' : '💭 思考中...';
+      html += `<details class="thinking-block"${isFinal ? ' open' : ''}>`;
+      html += `<summary class="thinking-toggle">${toggleLabel}</summary>`;
+      html += `<div class="thinking-content">${this.formatMarkdown(thinking)}</div>`;
+      html += `</details>`;
+    }
+    // 正文
+    if (text && text.trim()) {
+      html += this.formatMarkdown(text);
+    }
+    // 流式光标（非最终状态）
+    if (!isFinal) {
+      html += '<span class="stream-cursor">▋</span>';
+    }
+    div.innerHTML = html;
+  }
+
+  // 滚动到底部
+  _scrollToBottom() {
+    const container = document.getElementById('chatMessages');
+    container.scrollTop = container.scrollHeight;
   }
 
   // ===== 拍照菜单（拍照 / 从相册选择）=====
@@ -2303,125 +2556,7 @@ updated: ${profile.startDate}
 
   // 显示更新日志
   showChangelog() {
-    const log = [
-      {
-        ver: '2.7.0', date: '2026-07-29',
-        items: [
-          '新增：刷新习惯总结 — 基于近 21 天对话重新分析并更新习惯档案',
-          '优化：LLM 全量分析饮食、运动、作息等模式，标注频率和趋势',
-          '优化：自动清理过时习惯条目，保留永久性信息（过敏等）',
-          '修复：CLAUDE.md 版本号未更新导致 ask_user 指令不生效'
-        ]
-      },
-      {
-        ver: '2.6.0', date: '2026-07-23',
-        items: [
-          '新增：ask_user 工具 — 大模型可向用户提问并提供选项',
-          '新增：底部弹窗交互 — 用户可点击选项或自行输入回答',
-          '新增：支持跳过问题（×按钮）和自定义输入（回车提交）',
-          '优化：弹窗从底部滑入，带动画效果，支持深色模式'
-        ]
-      },
-      {
-        ver: '2.5.0', date: '2026-07-23',
-        items: [
-          '新增：Kimi K3 全量预配置 — 一键切换所有模型到 K3',
-          '新增：单次回复最大 Token 可配置（1024-32768）',
-          '新增：推理强度可配置（low/medium/high/max）',
-          '新增：上下文窗口大小从配置读取（支持 1M tokens）',
-          '优化：模型设置 UI 更新，placeholder 统一为 K3 模型名',
-          '优化：Anthropic API max_tokens 从配置动态读取'
-        ]
-      },
-      {
-        ver: '2.4.1', date: '2026-07-19',
-        items: [
-          '新增：查看上下文功能 — 可查看当前发给大模型的完整上下文',
-          '包含：系统提示词、对话历史、工具定义、Token 估算'
-        ]
-      },
-      {
-        ver: '2.4.0', date: '2026-07-19',
-        items: [
-          '新增：模型设置功能 — 可配置视觉/对话/摘要模型',
-          '新增：温度参数（0-1 滑块）控制回复创造性',
-          '新增：最大工具调用轮数可配置（1-20）',
-          '新增：历史注入天数可配置（0-30 天）',
-          '新增：单文件截断字数可配置（100-5000）',
-          '新增：设置持久化到 localStorage，恢复默认按钮',
-          '优化：重建索引/重置数据/模拟次日增加二次确认'
-        ]
-      },
-      {
-        ver: '2.3.2', date: '2026-07-15',
-        items: [
-          '新增：Token 用量移入功能菜单',
-          '调整：重建索引/重置数据/模拟次日取消隐藏，全部显示'
-        ]
-      },
-      {
-        ver: '2.3.1', date: '2026-07-15',
-        items: [
-          '修复：功能菜单按钮移到最左边，下拉菜单正常显示',
-          '修复：日历月份切换箭头图标渲染'
-        ]
-      },
-      {
-        ver: '2.3.0', date: '2026-07-15',
-        items: [
-          '新增：左上角功能菜单（汉堡按钮），收纳主题/字体/更新日志/重置等功能',
-          '新增：日期徽章可点击打开日历，查看历史聊天记录',
-          '新增：日历支持月份切换，有记录的日期显示彩色圆点',
-          '新增：点击日期查看当天的饮食记录和对话摘要',
-          '优化：顶栏精简为 日期 + 记忆 + Auto Dream 三个按钮'
-        ]
-      },
-      {
-        ver: '2.2.1', date: '2026-07-15',
-        items: [
-          '移除：图片下方折叠分析区（与回复内容重复）'
-        ]
-      },
-      {
-        ver: '2.1.0', date: '2026-07-15',
-        items: [
-          '新增：新一天问候包含昨日总结 + 今日建议（LLM 生成）',
-          '新增：系统提示词注入近 7 天饮食记录和对话摘要',
-          '新增：系统提示词注入过敏、饮食偏好、运动情况文件',
-          '新增：版本号显示，点击可查看更新日志',
-          '修复：时区 Bug — 昨日日期计算改用本地时间',
-          '修复：showNewDayWelcome 未 await 导致遮罩提前关闭'
-        ]
-      },
-      {
-        ver: '2.0.0', date: '2026-07-14',
-        items: [
-          '新增：每日总结机制 — 跨天自动 5 步流程',
-          '新增：数据完整性检查 — LLM 审查对话遗漏',
-          '新增：习惯学习 — 从对话提取作息/饮食/运动习惯',
-          '新增：周度习惯总结（每 7 天自动触发）',
-          '新增：跨天动效遮罩 — 月亮脉冲 + 步骤清单',
-          '新增：近 7 天饮食/对话摘要动态注入系统提示词',
-          '新增：图片消息双格式分离（UI 显示图片 / LLM 交互用纯文本）',
-          '新增：双模型选择 — 图片用 kimi，文本用 glm'
-        ]
-      },
-      {
-        ver: '1.0.0', date: '2026-07-10',
-        items: [
-          '初始版本',
-          '三栏布局：文件浏览器 / 聊天 / 工具日志',
-          'Function Calling — read_file / write_file / search_files',
-          'CLAUDE.md 系统提示词 v7',
-          '本地文件记忆系统（IndexedDB 持久化）',
-          '拍照识别食物 + 饮食记录',
-          '体重追踪 + BMI 计算',
-          '三种主题：深色 / 浅色 / 暖色'
-        ]
-      }
-    ];
-
-    const html = log.map(entry => `
+    const html = CHANGELOG.map(entry => `
       <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <span style="font-weight:700;color:var(--accent);">v${entry.ver}</span>
@@ -2627,6 +2762,62 @@ updated: ${profile.startDate}
     this.llmService.onAskUser = async (question, options, allowCustom) => {
       return this._showAskUser(question, options, allowCustom);
     };
+  }
+
+  // 注册 send_notification 工具回调到 LLMService
+  _registerNotificationCallback() {
+    this.llmService.onSendNotification = async (title, message, delayMinutes, type) => {
+      const result = await this.notificationManager.schedule({ title, message, delayMinutes, type });
+      return result;
+    };
+
+    // 通知触发时的 UI 回调
+    this.notificationManager.onFire = (notif) => {
+      this._showNotificationBanner(notif);
+    };
+  }
+
+  // 显示通知横幅
+  _showNotificationBanner(notif) {
+    const container = document.getElementById('notifBannerContainer');
+
+    const icons = {
+      water: '💧',
+      meal: '🍽️',
+      exercise: '🏃',
+      weight: '⚖️',
+      sleep: '😴',
+      custom: '🔔'
+    };
+    const icon = icons[notif.type] || icons.custom;
+
+    const banner = document.createElement('div');
+    banner.className = `notif-banner type-${notif.type || 'custom'}`;
+    banner.innerHTML = `
+      <div class="notif-icon">${icon}</div>
+      <div class="notif-body">
+        <div class="notif-title">${notif.title}</div>
+        <div class="notif-message">${notif.message}</div>
+        <div class="notif-meta">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</div>
+      </div>
+      <button class="notif-close" title="关闭">×</button>
+    `;
+
+    // 关闭按钮
+    banner.querySelector('.notif-close').addEventListener('click', () => {
+      banner.classList.add('notif-out');
+      setTimeout(() => banner.remove(), 300);
+    });
+
+    container.appendChild(banner);
+
+    // 8 秒后自动关闭
+    setTimeout(() => {
+      if (banner.parentNode) {
+        banner.classList.add('notif-out');
+        setTimeout(() => banner.remove(), 300);
+      }
+    }, 8000);
   }
 
   // 显示底部弹窗，返回 Promise<string>

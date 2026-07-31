@@ -95,6 +95,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 流式聊天代理 — SSE 转发
+  if (req.url === '/api/chat/stream' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const payload = JSON.parse(raw);
+      payload.model = XF_MODEL;
+      payload.messages = cleanMessages(payload.messages);
+      payload.stream = true;
+      if (payload.tools && payload.tools.length === 0) delete payload.tools;
+
+      const upstream = await fetch(`${XF_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${XF_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!upstream.ok) {
+        const text = await upstream.text();
+        res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: true, status: upstream.status, body: text }));
+        console.error(`[讯飞流式 ${upstream.status}] ${text.slice(0, 400)}`);
+        return;
+      }
+
+      // 透传 SSE 流
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+
+      const reader = upstream.body.getReader();
+      const pump = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+        res.end();
+      };
+      pump().catch(e => {
+        console.error('[流式代理错误]', e.message);
+        res.end();
+      });
+
+      console.log(`[STREAM ${new Date().toLocaleTimeString('zh-CN')}] msgs=${payload.messages.length} tools=${payload.tools?.length || 0}`);
+    } catch (e) {
+      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: true, message: '流式代理请求失败: ' + e.message }));
+      console.error('[流式代理错误]', e.message);
+    }
+    return;
+  }
+
   // 聊天代理
   if (req.url === '/api/chat' && req.method === 'POST') {
     try {

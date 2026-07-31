@@ -232,6 +232,23 @@ ${chatSection}`;
             required: ['question', 'options']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'send_notification',
+          description: '向用户发送提醒通知。支持立即发送和延迟发送。通知会以顶部横幅形式弹出，同时尝试发送系统级通知。适用于：喝水提醒、吃饭提醒、运动提醒、称重提醒、睡眠提醒、自定义提醒等。',
+          parameters: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: '通知标题，简短醒目，如"喝水提醒"、"该吃午饭啦"' },
+              message: { type: 'string', description: '通知内容，具体且温暖，如"记得喝一杯水，今天目标2L哦~"' },
+              delay_minutes: { type: 'number', description: '延迟分钟数。0=立即发送，30=30分钟后发送，120=2小时后发送。默认0。' },
+              type: { type: 'string', enum: ['water', 'meal', 'exercise', 'weight', 'sleep', 'custom'], description: '通知类型，决定通知图标和颜色。water=喝水, meal=吃饭, exercise=运动, weight=称重, sleep=睡眠, custom=自定义。默认custom。' }
+            },
+            required: ['title', 'message']
+          }
+        }
       }
     ];
   }
@@ -277,6 +294,22 @@ ${chatSection}`;
             result = '用户交互回调未注册';
           }
           displayName = `ask_user("${args.question.substring(0, 30)}...")`;
+          break;
+
+        case 'send_notification':
+          // 通过回调发送通知
+          if (this.onSendNotification) {
+            const notifResult = await this.onSendNotification(
+              args.title,
+              args.message,
+              args.delay_minutes || 0,
+              args.type || 'custom'
+            );
+            result = JSON.stringify(notifResult);
+          } else {
+            result = '通知回调未注册';
+          }
+          displayName = `send_notification("${args.title}", delay=${args.delay_minutes || 0}min)`;
           break;
 
         default:
@@ -361,6 +394,84 @@ ${chatSection}`;
     }
 
     // 超过最大轮次，返回默认回复
+    return {
+      content: '抱歉，处理超时了，请重试。',
+      toolCalls: this.toolCallLog
+    };
+  }
+
+  // 流式版 chat — 支持 onTextChunk 回调实时输出文本
+  // onTextChunk(chunk, fullText) 在每个文本增量时调用
+  // onToolStart(toolName) 在工具执行前调用（可选）
+  // onThinkingChunk(chunk, fullText) 在思考增量时调用（可选）
+  async chatStream(userMessage, conversationHistory, context, onTextChunk, onToolStart, onThinkingChunk) {
+    this.toolCallLog = [];
+    this._lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    this._lastModel = 'unknown';
+
+    const systemPrompt = await this.buildSystemPrompt(context);
+
+    let messages = [
+      { role: 'system', content: systemPrompt },
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    const tools = this.getToolDefinitions();
+    let finalContent = '';
+    let finalThinking = '';
+
+    for (let round = 0; round < this.maxToolRounds; round++) {
+      // 调用流式接口
+      const response = await this.llm.chatStream(messages, tools, context, (chunk) => {
+        finalContent += chunk;
+        if (onTextChunk) onTextChunk(chunk, finalContent);
+      }, (thinkingChunk) => {
+        finalThinking += thinkingChunk;
+        if (onThinkingChunk) onThinkingChunk(thinkingChunk, finalThinking);
+      });
+
+      // 累加 token 用量
+      if (response.usage) {
+        this._lastUsage.prompt_tokens += response.usage.prompt_tokens || 0;
+        this._lastUsage.completion_tokens += response.usage.completion_tokens || 0;
+        this._lastUsage.total_tokens += response.usage.total_tokens || 0;
+      }
+      if (response.model) {
+        this._lastModel = response.model;
+      }
+
+      // 如果没有工具调用，返回最终回复
+      if (!response.tool_calls || response.tool_calls.length === 0) {
+        return {
+          content: finalContent || response.content,
+          toolCalls: this.toolCallLog,
+          model: response.model || this._lastModel || 'unknown',
+          usage: this._lastUsage
+        };
+      }
+
+      // 添加助手消息（包含工具调用）到消息列表
+      messages.push({
+        role: 'assistant',
+        content: response.content,
+        tool_calls: response.tool_calls,
+        _pendingAction: response._pendingAction
+      });
+
+      // 执行每个工具调用
+      for (const toolCall of response.tool_calls) {
+        if (onToolStart) onToolStart(toolCall.function.name);
+        const toolResult = await this.executeTool(toolCall);
+        messages.push(toolResult);
+      }
+
+      // 工具调用后重置 finalContent 和 finalThinking，下一轮会重新累积
+      finalContent = '';
+      finalThinking = '';
+    }
+
+    // 超过最大轮次
     return {
       content: '抱歉，处理超时了，请重试。',
       toolCalls: this.toolCallLog

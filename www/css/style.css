@@ -1498,6 +1498,119 @@ html, body {
 .toast.success { border-left: 3px solid var(--accent); }
 .toast.error { border-left: 3px solid var(--warn); }
 .toast.info { border-left: 3px solid var(--accent3); }
+
+/* ===== 通知横幅（大模型触发的提醒） ===== */
+.notif-banner-container {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11500;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 90%;
+  max-width: 480px;
+  pointer-events: none;
+}
+.notif-banner {
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: auto;
+  animation: notif-slide-down 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  overflow: hidden;
+}
+.notif-banner.notif-out {
+  animation: notif-slide-up 0.3s ease forwards;
+}
+@keyframes notif-slide-down {
+  from { transform: translateY(-120%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes notif-slide-up {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(-120%); opacity: 0; }
+}
+.notif-banner::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+.notif-banner.type-water::before { background: var(--accent3); }
+.notif-banner.type-meal::before { background: var(--accent2); }
+.notif-banner.type-exercise::before { background: var(--accent); }
+.notif-banner.type-weight::before { background: #c084fc; }
+.notif-banner.type-sleep::before { background: #6b7280; }
+.notif-banner.type-custom::before { background: var(--muted2); }
+
+.notif-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.notif-banner.type-water .notif-icon { background: rgba(108, 182, 255, 0.15); }
+.notif-banner.type-meal .notif-icon { background: rgba(240, 160, 112, 0.15); }
+.notif-banner.type-exercise .notif-icon { background: rgba(110, 231, 163, 0.15); }
+.notif-banner.type-weight .notif-icon { background: rgba(192, 132, 252, 0.15); }
+.notif-banner.type-sleep .notif-icon { background: rgba(107, 114, 128, 0.15); }
+.notif-banner.type-custom .notif-icon { background: rgba(138, 141, 150, 0.15); }
+
+.notif-body {
+  flex: 1;
+  min-width: 0;
+}
+.notif-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.notif-message {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.notif-meta {
+  font-size: 11px;
+  color: var(--muted2);
+  margin-top: 6px;
+  font-family: var(--mono);
+}
+.notif-close {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted2);
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+.notif-close:hover {
+  background: var(--bg3);
+  color: var(--ink);
+}
 .font-size-opt.active {
   border-color: var(--accent);
   background: rgba(124,92,252,0.08);
@@ -1513,6 +1626,81 @@ html, body {
 .font-size-opt.active .font-size-label {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* ===== 流式输出样式 ===== */
+.message.assistant.streaming {
+  position: relative;
+}
+.message.assistant.streaming .stream-cursor {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: bold;
+  animation: stream-blink 0.8s steps(2) infinite;
+  margin-left: 1px;
+}
+@keyframes stream-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.stream-tool-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg3);
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-top: 6px;
+  animation: stream-pulse 1.5s ease-in-out infinite;
+}
+@keyframes stream-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* ===== 思考过程区域 ===== */
+.thinking-block {
+  margin-bottom: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--bg2);
+  overflow: hidden;
+}
+.thinking-block summary,
+.thinking-toggle {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s;
+}
+.thinking-block summary::-webkit-details-marker { display: none; }
+.thinking-block[open] > summary {
+  border-bottom: 1px solid var(--rule);
+}
+.thinking-toggle:hover {
+  background: var(--bg3);
+}
+.thinking-content {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.thinking-content p {
+  margin: 4px 0;
+}
+.thinking-content strong {
+  color: var(--ink);
 }
 .font-size-preview-box {
   border: 1px solid var(--rule);
