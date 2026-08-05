@@ -167,11 +167,13 @@
     </div>
     <div class="chat-messages" id="chatMessages">
     </div>
-    <div class="chat-input">
-      <button class="photo-btn" id="photoBtn" title="上传食物照片"><svg class="ico"><use href="#icon-camera"/></svg></button>
-      <div id="photoPreview" style="display:flex;gap:4px;align-items:center;"></div>
-      <textarea id="messageInput" placeholder="输入消息，或上传食物照片..." rows="1"></textarea>
-      <button class="send-btn" id="sendBtn"><svg class="ico ico-sm"><use href="#icon-send"/></svg></button>
+    <div class="chat-input-wrapper">
+      <div id="photoPreview" class="photo-preview-bar"></div>
+      <div class="chat-input">
+        <button class="photo-btn" id="photoBtn" title="上传食物照片"><svg class="ico"><use href="#icon-camera"/></svg></button>
+        <textarea id="messageInput" placeholder="输入消息，或上传食物照片..." rows="1"></textarea>
+        <button class="send-btn" id="sendBtn"><svg class="ico ico-sm"><use href="#icon-send"/></svg></button>
+      </div>
     </div>
     <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
   </main>
@@ -356,7 +358,7 @@
         </div>
         <div class="settings-row">
           <label>单次回复最大 Token <span class="settings-hint">(输出上限)</span></label>
-          <input type="number" id="setMaxOutputTokens" class="settings-input" min="1024" max="32768" step="1024" value="8192">
+          <input type="number" id="setMaxOutputTokens" class="settings-input" min="1024" max="32768" step="1024" value="32768">
         </div>
         <div class="settings-row">
           <label>推理强度 <span class="settings-hint">(max=最高质量)</span></label>

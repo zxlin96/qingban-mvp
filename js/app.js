@@ -3,10 +3,39 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.9.0';
-const APP_VERSION_DATE = '2026-08-01';
+const APP_VERSION = '2.9.4';
+const APP_VERSION_DATE = '2026-08-05';
 
 const CHANGELOG = [
+  {
+    ver: '2.9.4', date: '2026-08-05',
+    items: [
+      '修复：settings.js 默认 maxOutputTokens 未同步更新（仍为 8192）',
+      '新增：设置加载时自动升级旧 maxOutputTokens < 32768 到 32768',
+      '修复：模型设置 UI、K3 预配置、重置默认中所有硬编码 8192 统一为 32768'
+    ]
+  },
+  {
+    ver: '2.9.3', date: '2026-08-05',
+    items: [
+      '优化：maxOutputTokens 16384 → 32768（32K），彻底避免 K3 thinking 模式下工具调用参数被截断'
+    ]
+  },
+  {
+    ver: '2.9.2', date: '2026-08-05',
+    items: [
+      '修复：上传图片后工具调用 JSON 解析失败 — K3 thinking 消耗过多 token 导致参数截断',
+      '优化：maxOutputTokens 8192 → 16384，适配 K3 thinking 模式',
+      '新增：stop_reason 检测 — max_tokens 截断时安全跳过工具执行，提示重试',
+      '新增：executeTool JSON.parse 容错 — 参数解析失败不再崩溃，返回错误信息给 LLM'
+    ]
+  },
+  {
+    ver: '2.9.1', date: '2026-08-02',
+    items: [
+      '修复：多张图片上传时压缩输入栏导致无法发送 — 图片预览移至输入栏上方独立区域，支持换行和滚动'
+    ]
+  },
   {
     ver: '2.9.0', date: '2026-08-01',
     items: [
@@ -2670,7 +2699,7 @@ updated: ${profile.startDate}
     document.getElementById('setTemperature').value = s.temperature ?? 0.7;
     document.getElementById('setTemperatureVal').textContent = parseFloat(s.temperature ?? 0.7).toFixed(1);
     document.getElementById('setMaxToolRounds').value = s.maxToolRounds || 5;
-    document.getElementById('setMaxOutputTokens').value = s.maxOutputTokens || 8192;
+    document.getElementById('setMaxOutputTokens').value = s.maxOutputTokens || 32768;
     document.getElementById('setEffortLevel').value = s.effortLevel || 'max';
     document.getElementById('setHistoryDays').value = s.historyDays ?? 7;
     document.getElementById('setFileTruncate').value = s.fileTruncate || 800;
@@ -2684,7 +2713,7 @@ updated: ${profile.startDate}
       summaryModel: document.getElementById('setSummaryModel').value.trim() || 'k3',
       temperature: parseFloat(document.getElementById('setTemperature').value),
       maxToolRounds: parseInt(document.getElementById('setMaxToolRounds').value) || 5,
-      maxOutputTokens: parseInt(document.getElementById('setMaxOutputTokens').value) || 8192,
+      maxOutputTokens: parseInt(document.getElementById('setMaxOutputTokens').value) || 32768,
       effortLevel: document.getElementById('setEffortLevel').value || 'max',
       historyDays: parseInt(document.getElementById('setHistoryDays').value) ?? 7,
       fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800
@@ -2725,7 +2754,7 @@ updated: ${profile.startDate}
     document.getElementById('setTemperature').value = 0.7;
     document.getElementById('setTemperatureVal').textContent = '0.7';
     document.getElementById('setMaxToolRounds').value = 5;
-    document.getElementById('setMaxOutputTokens').value = 8192;
+    document.getElementById('setMaxOutputTokens').value = 32768;
     document.getElementById('setEffortLevel').value = 'max';
     document.getElementById('setHistoryDays').value = 7;
     document.getElementById('setFileTruncate').value = 800;
@@ -2737,7 +2766,7 @@ updated: ${profile.startDate}
       summaryModel: 'k3',
       temperature: 0.7,
       maxToolRounds: 5,
-      maxOutputTokens: 8192,
+      maxOutputTokens: 32768,
       maxContextTokens: 1048576,
       effortLevel: 'max',
       historyDays: 7,
@@ -2752,7 +2781,7 @@ updated: ${profile.startDate}
     }
 
     document.getElementById('settingsOverlay').style.display = 'none';
-    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 8192 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800`);
+    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 32768 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800`);
   }
 
   // ===== Ask User 底部弹窗 =====

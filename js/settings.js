@@ -2,6 +2,7 @@
 // 用户可通过功能菜单的「模型设置」修改这些参数
 
 const STORAGE_KEY = 'qingban_settings';
+const SETTINGS_VERSION = 2; // 递增此版本号可强制升级旧设置
 
 // 默认值 — 全部使用 Kimi K3 模型
 const DEFAULT_SETTINGS = {
@@ -12,17 +13,23 @@ const DEFAULT_SETTINGS = {
   maxToolRounds: 5,               // 最大工具调用轮数
   historyDays: 7,                 // 近 N 天历史注入天数
   fileTruncate: 800,              // 单文件截断字数
-  maxOutputTokens: 8192,          // 单次回复最大输出 token 数
+  maxOutputTokens: 32768,         // 单次回复最大输出 token 数（32K，适配 K3 thinking）
   maxContextTokens: 1048576,      // 上下文窗口大小（1M）
   effortLevel: 'max'              // 推理强度（max=最高质量）
 };
 
-// 加载设置（合并默认值）
+// 加载设置（合并默认值 + 版本升级）
 function loadSettings() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      const parsed = JSON.parse(saved);
+      // 版本升级：旧设置中 maxOutputTokens < 32768 时自动提升到 32768
+      if (parsed.maxOutputTokens && parsed.maxOutputTokens < 32768) {
+        console.warn(`[Settings] 升级 maxOutputTokens: ${parsed.maxOutputTokens} → 32768`);
+        parsed.maxOutputTokens = 32768;
+      }
+      return { ...DEFAULT_SETTINGS, ...parsed };
     }
   } catch (e) {
     console.warn('[Settings] 加载失败，使用默认值:', e.message);

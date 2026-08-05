@@ -10,7 +10,7 @@ window.QINGBAN_CONFIG = {
 
   // 上下文与输出限制
   maxContextTokens: 1048576,       // 1M 上下文窗口
-  maxOutputTokens: 8192,           // 单次回复最大输出
+  maxOutputTokens: 32768,          // 单次回复最大输出（K3 thinking 模式需要更多 token）
   autoCompactWindow: 1048576,      // 自动压缩阈值（与上下文窗口一致）
 
   // 推理强度

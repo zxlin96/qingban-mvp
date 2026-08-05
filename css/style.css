@@ -739,10 +739,29 @@ html, body {
 }
 
 /* Chat input */
-.chat-input {
-  padding: 12px 16px;
+.chat-input-wrapper {
   border-top: 1px solid var(--rule);
   background: var(--bg2);
+}
+
+.photo-preview-bar {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px 0;
+  max-height: 120px;
+  overflow-y: auto;
+  align-items: center;
+}
+
+.photo-preview-bar:not(:empty) {
+  display: flex;
+}
+
+.chat-input {
+  padding: 12px 16px;
+  border-top: none;
+  background: transparent;
   display: flex;
   gap: 8px;
   align-items: flex-end;

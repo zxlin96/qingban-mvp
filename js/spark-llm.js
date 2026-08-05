@@ -391,6 +391,7 @@ export class SparkLLM {
     let content = '';
     let toolCalls = [];
     let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    let stopReason = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -410,7 +411,8 @@ export class SparkLLM {
 
         try {
           const json = JSON.parse(data);
-          const delta = json.choices?.[0]?.delta;
+          const choice = json.choices?.[0];
+          const delta = choice?.delta;
 
           if (delta) {
             // 文本增量
@@ -442,6 +444,10 @@ export class SparkLLM {
               completion_tokens: json.usage.completion_tokens || 0,
               total_tokens: json.usage.total_tokens || 0
             };
+          }
+          // 捕获 finish_reason（OpenAI 格式的 stop_reason）
+          if (choice?.finish_reason) {
+            stopReason = choice.finish_reason;
           }
         } catch (_) {
           // 忽略解析错误的行
@@ -476,7 +482,8 @@ export class SparkLLM {
       content,
       tool_calls: toolCalls.length > 0 ? toolCalls : null,
       model: modelName,
-      usage
+      usage,
+      stop_reason: stopReason
     };
   }
 
@@ -520,6 +527,7 @@ export class SparkLLM {
     let toolCalls = [];
     let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let currentToolIdx = -1;
+    let stopReason = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -570,6 +578,9 @@ export class SparkLLM {
               usage.completion_tokens = json.usage.output_tokens || 0;
               usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
             }
+            if (json.delta?.stop_reason) {
+              stopReason = json.delta.stop_reason;
+            }
           } else if (json.type === 'message_start' && json.message?.usage) {
             usage.prompt_tokens = json.message.usage.input_tokens || 0;
             usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
@@ -583,7 +594,8 @@ export class SparkLLM {
       content,
       tool_calls: toolCalls.length > 0 ? toolCalls : null,
       model: modelName,
-      usage
+      usage,
+      stop_reason: stopReason
     };
   }
 

@@ -256,7 +256,28 @@ ${chatSection}`;
   // 执行单个工具调用
   async executeTool(toolCall) {
     const name = toolCall.function.name;
-    const args = JSON.parse(toolCall.function.arguments);
+    let args;
+    try {
+      args = JSON.parse(toolCall.function.arguments);
+    } catch (parseErr) {
+      // 工具调用参数 JSON 解析失败（可能因 max_tokens 截断）
+      console.error('[LLMService] 工具参数 JSON 解析失败:', parseErr.message);
+      console.error('[LLMService] 参数前 200 字符:', toolCall.function.arguments?.substring(0, 200));
+      this.toolCallLog.push({
+        tool: name,
+        displayName: `${name}(JSON解析失败)`,
+        args: { raw: toolCall.function.arguments?.substring(0, 500) },
+        result: `Error: 参数 JSON 解析失败: ${parseErr.message}`,
+        resultPreview: `参数 JSON 解析失败`,
+        timestamp: new Date().toISOString()
+      });
+      return {
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        name: name,
+        content: `Error: 参数 JSON 解析失败: ${parseErr.message}。请重试，回答尽量简洁。`
+      };
+    }
 
     let result = '';
     let displayName = name;
@@ -439,6 +460,19 @@ ${chatSection}`;
       }
       if (response.model) {
         this._lastModel = response.model;
+      }
+
+      // 检测 max_tokens 截断：如果有工具调用但 stop_reason 为 max_tokens，
+      // 说明工具参数被截断，不执行工具，直接提示用户重试
+      if (response.stop_reason === 'max_tokens' && response.tool_calls && response.tool_calls.length > 0) {
+        console.warn('[LLMService] 检测到 max_tokens 截断，工具调用可能不完整，跳过执行');
+        if (onTextChunk) onTextChunk('', finalContent + '\n\n⚠️ 回复因 token 上限被截断，请重新发送消息。');
+        return {
+          content: finalContent + '\n\n⚠️ 回复因 token 上限被截断，工具调用未完成。请重新发送消息。',
+          toolCalls: this.toolCallLog,
+          model: response.model || this._lastModel || 'unknown',
+          usage: this._lastUsage
+        };
       }
 
       // 如果没有工具调用，返回最终回复
