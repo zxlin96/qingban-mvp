@@ -21,87 +21,168 @@ export class SparkLLM {
     }
   }
 
-  // 统一的 HTTP 请求 — 带重试机制
-  async _request_openai(payload, retries = 30) {
+  // 统一的 HTTP 请求 — 带重试机制与整体超时保护
+  async _request_openai(payload, retries = 30, timeoutMs = 120000) {
     let lastError = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const resp = await fetch(`${this.baseURL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-        const text = await resp.text();
-        if (!resp.ok) {
-          let msg = text;
-          try { const j = JSON.parse(text); msg = j.error?.message || j.message || text; } catch (_) {}
-          if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const resp = await fetch(`${this.baseURL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          const text = await resp.text();
+          if (!resp.ok) {
+            let msg = text;
+            try { const j = JSON.parse(text); msg = j.error?.message || j.message || text; } catch (_) {}
+            if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
+              const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
+              console.warn(`[LLM] ${resp.status}，${wait}ms 后重试 (${attempt + 1}/${retries})`);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
+          }
+          return JSON.parse(text);
+        } catch (e) {
+          lastError = e;
+          // 整体超时（AbortController.abort）— 直接放弃，不再重试
+          if (e.name === 'AbortError') {
+            throw new Error(`请求超时（${Math.round(timeoutMs / 1000)}s 无响应），已自动取消，请重试`);
+          }
+          const isNetworkError = e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('network');
+          if (isNetworkError && attempt < retries) {
             const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
-            console.warn(`[LLM] ${resp.status}，${wait}ms 后重试 (${attempt + 1}/${retries})`);
+            console.warn(`[LLM] 网络错误，${wait}ms 后重试 (${attempt + 1}/${retries}): ${e.message}`);
             await new Promise(r => setTimeout(r, wait));
             continue;
           }
-          throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
+          throw e;
         }
-        return JSON.parse(text);
-      } catch (e) {
-        lastError = e;
-        const isNetworkError = e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('network');
-        if (isNetworkError && attempt < retries) {
-          const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
-          console.warn(`[LLM] 网络错误，${wait}ms 后重试 (${attempt + 1}/${retries}): ${e.message}`);
-          await new Promise(r => setTimeout(r, wait));
-          continue;
-        }
-        throw e;
       }
+    } finally {
+      clearTimeout(timeoutId);
     }
     throw lastError || new Error('LLM 请求失败（重试耗尽）');
   }
 
   // Anthropic 格式请求
-  async _request_anthropic(payload, retries = 30) {
+  async _request_anthropic(payload, retries = 30, timeoutMs = 120000) {
+    let lastError = null;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const resp = await fetch(`${this.baseURL}/v1/messages`, {
+            method: 'POST',
+            headers: {
+              'x-api-key': this.apiKey,
+              'anthropic-version': '2023-06-01',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          const text = await resp.text();
+          if (!resp.ok) {
+            let msg = text;
+            try { const j = JSON.parse(text); msg = j.error?.message || j.message || text; } catch (_) {}
+            if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
+              const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
+              console.warn(`[LLM] ${resp.status}，${wait}ms 后重试 (${attempt + 1}/${retries})`);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
+          }
+          return JSON.parse(text);
+        } catch (e) {
+          lastError = e;
+          // 整体超时（AbortController.abort）— 直接放弃，不再重试
+          if (e.name === 'AbortError') {
+            throw new Error(`请求超时（${Math.round(timeoutMs / 1000)}s 无响应），已自动取消，请重试`);
+          }
+          const isNetworkError = e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('network');
+          if (isNetworkError && attempt < retries) {
+            const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
+            console.warn(`[LLM] 网络错误，${wait}ms 后重试 (${attempt + 1}/${retries}): ${e.message}`);
+            await new Promise(r => setTimeout(r, wait));
+            continue;
+          }
+          throw e;
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    throw lastError || new Error('LLM 请求失败（重试耗尽）');
+  }
+
+  // 流式请求的 fetch — 带连接超时(30s)和网络错误重试(3次)
+  async _fetchStreamWithRetry(url, options, retries = 3) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const resp = await fetch(`${this.baseURL}/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'x-api-key': this.apiKey,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-        const text = await resp.text();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+        const resp = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timeoutId);
+
         if (!resp.ok) {
+          const text = await resp.text();
           let msg = text;
-          try { const j = JSON.parse(text); msg = j.error?.message || j.message || text; } catch (_) {}
+          try { msg = JSON.parse(text).error?.message || text; } catch (_) {}
+
+          // 429 或 5xx 重试
           if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
             const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
-            console.warn(`[LLM] ${resp.status}，${wait}ms 后重试 (${attempt + 1}/${retries})`);
+            console.warn(`[LLM Stream] ${resp.status}，${wait}ms 后重试 (${attempt + 1}/${retries})`);
             await new Promise(r => setTimeout(r, wait));
             continue;
           }
           throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
         }
-        return JSON.parse(text);
+
+        return resp;
       } catch (e) {
         lastError = e;
-        const isNetworkError = e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('network');
+        const isNetworkError = e.message.includes('Failed to fetch') ||
+                               e.message.includes('NetworkError') ||
+                               e.message.includes('network') ||
+                               e.name === 'AbortError';
+
         if (isNetworkError && attempt < retries) {
           const wait = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 10000);
-          console.warn(`[LLM] 网络错误，${wait}ms 后重试 (${attempt + 1}/${retries}): ${e.message}`);
+          console.warn(`[LLM Stream] 网络错误，${wait}ms 后重试 (${attempt + 1}/${retries}): ${e.message}`);
           await new Promise(r => setTimeout(r, wait));
           continue;
         }
         throw e;
       }
     }
-    throw lastError || new Error('LLM 请求失败（重试耗尽）');
+    throw lastError || new Error('LLM 流式请求失败（重试耗尽）');
+  }
+
+  // 带超时的 reader.read() — 防止流式读取无限挂起
+  async _readWithTimeout(reader, timeoutMs = 90000) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('Stream read timeout')), timeoutMs);
+    });
+    try {
+      return await Promise.race([reader.read(), timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   // 检测 messages 中是否包含图片
@@ -248,13 +329,19 @@ export class SparkLLM {
     console.log(`[LLM] 使用模型: ${modelName} (图片: ${hasImages ? '是' : '否'}) 格式: ${this.apiFormat} 温度: ${temperature}`);
 
     let data;
+    const emitSent = () => {
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        try { window.dispatchEvent(new CustomEvent('qb-llm-stage', { detail: { stage: 'sent', hasImages } })); } catch (_) {}
+      }
+    };
 
     if (this.apkMode && this.apiFormat === 'anthropic') {
       // ===== Anthropic 格式 =====
       const { system, messages: anthropicMessages } = this._convertToAnthropicMessages(messages);
       const anthropicTools = this._convertToAnthropicTools(tools);
 
-      const maxTokens = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
+      const baseMax = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
+      const maxTokens = baseMax;
 
       const payload = {
         model: modelName,
@@ -266,7 +353,8 @@ export class SparkLLM {
       };
 
       try {
-        data = await this._request_anthropic(payload);
+        emitSent();
+        data = await this._request_anthropic(payload, 30, hasImages ? 180000 : 120000);
       } catch (e) {
         throw e;
       }
@@ -275,15 +363,18 @@ export class SparkLLM {
 
     } else if (this.apkMode) {
       // ===== OpenAI 格式（讯飞等） =====
+      const baseMax = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
       const payload = {
         messages,
         tools: tools || undefined,
         model: modelName,
-        temperature: temperature
+        temperature: temperature,
+        max_tokens: baseMax
       };
 
       try {
-        data = await this._request_openai(payload);
+        emitSent();
+        data = await this._request_openai(payload, 30, hasImages ? 180000 : 120000);
       } catch (e) {
         if (!this.apkMode && e.message.includes('Failed to fetch')) {
           throw new Error('无法连接后端代理,请先运行 `node server.js`');
@@ -311,7 +402,8 @@ export class SparkLLM {
       const payload = { messages, tools: tools || undefined };
 
       try {
-        data = await this._request_openai(payload);
+        emitSent();
+        data = await this._request_openai(payload, 30, hasImages ? 180000 : 120000);
       } catch (e) {
         if (e.message.includes('Failed to fetch')) {
           throw new Error('无法连接后端代理,请先运行 `node server.js`(或 npm start)');
@@ -352,6 +444,11 @@ export class SparkLLM {
 
     console.log(`[LLM Stream] 模型: ${modelName} 图片: ${hasImages} 格式: ${this.apiFormat}`);
 
+    // 通知 APP 层：请求已真正发出（状态条从「准备中」切到「等待服务端响应」）
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      try { window.dispatchEvent(new CustomEvent('qb-llm-stage', { detail: { stage: 'sent', hasImages } })); } catch (_) {}
+    }
+
     if (this.apkMode && this.apiFormat === 'anthropic') {
       return await this._streamAnthropic(messages, tools, modelName, temperature, settings, onChunk, onThinkingChunk);
     } else if (this.apkMode) {
@@ -363,27 +460,21 @@ export class SparkLLM {
 
   // OpenAI 格式流式（APK 直连或代理）
   async _streamOpenAI(messages, tools, modelName, temperature, settings, onChunk, isProxy) {
+    const baseMax = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
     const payload = isProxy
-      ? { messages, tools: tools || undefined }
-      : { messages, tools: tools || undefined, model: modelName, temperature, stream: true };
+      ? { messages, tools: tools || undefined, max_tokens: baseMax }
+      : { messages, tools: tools || undefined, model: modelName, temperature, stream: true, max_tokens: baseMax };
 
     const url = isProxy ? this.streamEndpoint : `${this.baseURL}/chat/completions`;
     const headers = isProxy
       ? { 'Content-Type': 'application/json' }
       : { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' };
 
-    const resp = await fetch(url, {
+    const resp = await this._fetchStreamWithRetry(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)
     });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      let msg = text;
-      try { msg = JSON.parse(text).error?.message || text; } catch (_) {}
-      throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
-    }
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -393,8 +484,9 @@ export class SparkLLM {
     let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let stopReason = null;
 
+    try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await this._readWithTimeout(reader);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -454,6 +546,21 @@ export class SparkLLM {
         }
       }
     }
+    } catch (streamErr) {
+      // 流式读取中断（后台切换、网络波动等）— 返回已收到的部分内容
+      console.warn('[LLM Stream] 流式读取中断:', streamErr.message);
+      if (content || toolCalls.length > 0) {
+        return {
+          role: 'assistant',
+          content: content + (content ? '\n\n⚠️ （网络中断，回复可能不完整，可点击重试）' : '⚠️ 网络中断，请重试'),
+          tool_calls: toolCalls.length > 0 ? toolCalls : null,
+          model: modelName,
+          usage,
+          stop_reason: 'error'
+        };
+      }
+      throw streamErr;
+    }
 
     // 清理 buffer 中剩余数据
     if (buffer.trim().startsWith('data:')) {
@@ -477,6 +584,18 @@ export class SparkLLM {
       }
     }
 
+    if (stopReason === 'max_tokens') {
+      console.warn('[LLM Stream] OpenAI max_tokens 截断诊断:', {
+        model: modelName,
+        hasImages: this._hasImages(messages),
+        contentLen: content.length,
+        toolCallsLen: toolCalls.length,
+        tools: toolCalls.map(t => ({ name: t.function.name, argsLen: t.function.arguments.length })),
+        usage,
+        stopReason
+      });
+    }
+
     return {
       role: 'assistant',
       content,
@@ -491,7 +610,9 @@ export class SparkLLM {
   async _streamAnthropic(messages, tools, modelName, temperature, settings, onChunk, onThinkingChunk) {
     const { system, messages: anthropicMessages } = this._convertToAnthropicMessages(messages);
     const anthropicTools = this._convertToAnthropicTools(tools);
-    const maxTokens = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
+    const hasImages = this._hasImages(messages);
+    const baseMax = settings.maxOutputTokens || window.QINGBAN_CONFIG?.maxOutputTokens || 8192;
+    const maxTokens = baseMax;
 
     const payload = {
       model: modelName,
@@ -503,7 +624,7 @@ export class SparkLLM {
       stream: true
     };
 
-    const resp = await fetch(`${this.baseURL}/v1/messages`, {
+    const resp = await this._fetchStreamWithRetry(`${this.baseURL}/v1/messages`, {
       method: 'POST',
       headers: {
         'x-api-key': this.apiKey,
@@ -512,13 +633,6 @@ export class SparkLLM {
       },
       body: JSON.stringify(payload)
     });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      let msg = text;
-      try { msg = JSON.parse(text).error?.message || text; } catch (_) {}
-      throw new Error(`模型请求失败 (${resp.status}): ${String(msg).slice(0, 200)}`);
-    }
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -529,8 +643,9 @@ export class SparkLLM {
     let currentToolIdx = -1;
     let stopReason = null;
 
+    try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await this._readWithTimeout(reader);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -588,6 +703,34 @@ export class SparkLLM {
         } catch (_) {}
       }
     }
+    } catch (streamErr) {
+      // 流式读取中断（后台切换、网络波动等）— 返回已收到的部分内容
+      console.warn('[LLM Stream] Anthropic 流式读取中断:', streamErr.message);
+      if (content || toolCalls.length > 0) {
+        return {
+          role: 'assistant',
+          content: content + (content ? '\n\n⚠️ （网络中断，回复可能不完整，可点击重试）' : '⚠️ 网络中断，请重试'),
+          tool_calls: toolCalls.length > 0 ? toolCalls : null,
+          model: modelName,
+          usage,
+          stop_reason: 'error'
+        };
+      }
+      throw streamErr;
+    }
+
+    if (stopReason === 'max_tokens') {
+      console.warn('[LLM Stream] Anthropic max_tokens 截断诊断:', {
+        model: modelName,
+        hasImages,
+        maxTokens,
+        contentLen: content.length,
+        toolCallsLen: toolCalls.length,
+        tools: toolCalls.map(t => ({ name: t.function.name, argsLen: t.function.arguments.length })),
+        usage,
+        stopReason
+      });
+    }
 
     return {
       role: 'assistant',
@@ -597,6 +740,76 @@ export class SparkLLM {
       usage,
       stop_reason: stopReason
     };
+  }
+
+  // 供 ChatManager.saveDailySummary() 调用 — 生成每日真摘要（300-500字）
+  // 强制保留饮食/体重/打卡/过敏/偏好/运动/图片识别结果等关键事实数据原值
+  // 成功返回摘要文本字符串；失败返回空字符串 ''（由调用方判定空即降级）
+  async generateDailySummary(messages, date) {
+    const sysPrompt = `你是轻伴的每日对话摘要助手。请把以下当日对话压缩成 300-500 字的要点式摘要。
+
+## 强制保留（原值，不得改写或省略）
+1. **饮食记录**：食物名称、份量、估算热量（如"一碗面条 约400千卡"必须原值保留）
+2. **体重数据**：体重数值及单位（如"70.5公斤"必须保留"70.5"）
+3. **打卡记录**：习惯打卡的名称与数量（如"喝水0.5L""跑步30分钟"）
+4. **过敏忌口**：用户陈述的过敏或忌口（如"对花生过敏"必须保留"花生""过敏"）
+5. **饮食偏好**：口味/喜好/不吃的食物（如"不喜欢香菜""偏爱辣"）
+6. **运动情况**：运动类型/时长/能力/限制（如"跑步30分钟""膝盖不能跳"）
+7. **图片识别结果**：AI 识别出的食物种类与估算热量原值
+
+## 可压缩
+- AI 的鼓励语、解释语、建议展开、闲聊 → 仅保留与关键事实数据相关的结论性信息
+- 重复的寒暄、确认语 → 省略
+
+## 约束
+- 内容仅能来自当日对话，不得编造对话中未出现的信息
+- 用要点形式，按 饮食/体重/打卡/偏好/运动/其他 分类组织
+- 字数严格控制在 300-500 字`;
+
+    const userContent = messages.map(m => {
+      const text = typeof m.content === 'string'
+        ? m.content
+        : (Array.isArray(m.content) ? m.content.map(c => c.type === 'text' ? c.text : '[图片]').join(' ') : '');
+      return `[${m.role}] ${text}`;
+    }).join('\n');
+
+    const settings = window.QINGBAN_SETTINGS || {};
+    const summaryModel = settings.summaryModel || 'k3';
+    const temperature = settings.temperature ?? 0.7;
+
+    if (this.apkMode && this.apiFormat === 'anthropic') {
+      const payload = {
+        model: summaryModel,
+        max_tokens: 1024,
+        system: sysPrompt,
+        messages: [{ role: 'user', content: userContent }],
+        temperature: temperature
+      };
+      try {
+        const data = await this._request_anthropic(payload);
+        const textParts = (data.content || []).filter(c => c.type === 'text').map(c => c.text);
+        return textParts.join('').trim();
+      } catch (e) {
+        console.error('[SparkLLM] 每日摘要生成失败:', e.message);
+        return '';
+      }
+    } else {
+      const payload = {
+        messages: [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: userContent }
+        ],
+        model: summaryModel,
+        temperature: temperature
+      };
+      try {
+        const data = await this._request_openai(payload);
+        return (data.choices?.[0]?.message?.content || '').trim();
+      } catch (e) {
+        console.error('[SparkLLM] 每日摘要生成失败:', e.message);
+        return '';
+      }
+    }
   }
 
   // 供 ChatManager.compactHistory() 调用 — 生成对话摘要

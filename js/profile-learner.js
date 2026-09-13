@@ -4,9 +4,10 @@
 // 该文件每次对话固定注入,让 AI 越来越了解用户
 
 export class ProfileLearner {
-  constructor(fileManager, llm) {
+  constructor(fileManager, llm, onDemandLoader) {
     this.fm = fileManager;
     this.llm = llm;
+    this.onDemandLoader = onDemandLoader;
     this.profilePath = 'rules/learned-habits.md';
   }
 
@@ -246,22 +247,41 @@ ${profile}
   // 读取 chat/*.md 摘要文件，让 LLM 全量分析后生成全新的习惯档案
   // 返回 { success: bool, summary: string, daysAnalyzed: number }
   async refreshHabits(days = 21) {
-    // 1. 读取近 N 天的对话摘要
-    const pad = (n) => String(n).padStart(2, '0');
-    const now = new Date();
-    const chatEntries = [];
+    // 1. 读取近 N 天的对话摘要 — 按需加载或盲读
     const truncate = window.QINGBAN_SETTINGS?.fileTruncate || 800;
+    const chatEntries = [];
 
-    for (let i = 0; i < days; i++) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      const content = await this.fm.readFile(`chat/${dateStr}.md`);
-      if (content) {
-        const trimmed = content.length > truncate
-          ? content.substring(0, truncate) + '\n...(截断)'
-          : content;
-        chatEntries.push({ date: dateStr, content: trimmed });
+    if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+      // 按需加载分支：通过索引筛选有记录的日期
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      const currentDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const result = await this.onDemandLoader.loadForSummary({
+        taskType: 'habit_refresh',
+        currentDate,
+        targetDays: days
+      });
+      for (const f of result.files) {
+        const trimmed = f.content.length > truncate
+          ? f.content.substring(0, truncate) + '\n...(截断)'
+          : f.content;
+        chatEntries.push({ date: f.date, content: trimmed });
+      }
+    } else {
+      // 回退分支：原盲读循环
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      for (let i = 0; i < days; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        const content = await this.fm.readFile(`chat/${dateStr}.md`);
+        if (content) {
+          const trimmed = content.length > truncate
+            ? content.substring(0, truncate) + '\n...(截断)'
+            : content;
+          chatEntries.push({ date: dateStr, content: trimmed });
+        }
       }
     }
 

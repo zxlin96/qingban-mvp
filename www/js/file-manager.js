@@ -14,6 +14,17 @@ export class FileManager {
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.dbVersion);
+      let settled = false;
+
+      // 超时兜底：IndexedDB 被锁/损坏/阻塞时，open 可能永远不回调，
+      // 必须避免启动流程被永久挂起（否则界面黑屏卡在「加载中」）
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        console.warn('[FileManager] IndexedDB 打开超时，降级为「存储不可用」模式启动');
+        this._dbBroken = true;
+        resolve();
+      }, 4500);
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
@@ -22,13 +33,30 @@ export class FileManager {
         }
       };
 
+      // 数据库被其他连接阻塞：open 不会完成，只能靠超时兜底
+      request.onblocked = () => {
+        console.warn('[FileManager] IndexedDB 打开被阻塞（onblocked）— 其他连接未关闭');
+      };
+
       request.onsuccess = async (event) => {
         this.db = event.target.result;
-        await this.loadDefaults();
+        if (settled) return;
+        try {
+          await this.loadDefaults();
+        } catch (e) {
+          console.warn('[FileManager] loadDefaults 失败:', e);
+        }
+        clearTimeout(timer);
+        settled = true;
         resolve();
       };
 
-      request.onerror = (event) => reject(event.target.error);
+      request.onerror = (event) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        reject(event.target.error);
+      };
     });
   }
 
@@ -123,7 +151,7 @@ export class FileManager {
 
   _getClaudeMd() {
     return `---
-version: 10
+version: 11
 ---
 
 # 轻伴 AI 角色指令
@@ -257,6 +285,39 @@ rules/learned-habits.md 里记录了用户的日常习惯。对话中请自然�
 - 如果用户偏离了习惯（比如平时不喝含糖饮料今天喝了），温和提醒，不评判
 - 如果用户分享了新的固定行为，更新 habits 文件
 - 不要每次都机械地问所有习惯，挑当次对话相关的 1-2 个自然带出
+
+## 习惯打卡系统（重要）
+你已连接习惯打卡系统，系统提示词中会动态注入今日打卡状态。你可以使用以下 4 个工具帮用户管理打卡：
+
+### checkin_habit — 对话中打卡
+用户提到完成了某个习惯行为时，调用此工具打卡。同一天可多次打卡，数量会累加。
+- 用户说"刚喝了500ml水" → checkin_habit("喝水", 0.5)
+- 用户说"跑了30分钟" → checkin_habit("跑步", 30, "晨跑")
+- 用户说"今天读了20页书" → checkin_habit("阅读", 20)
+- 习惯名称支持模糊匹配，无需完全一致
+- 打卡后告知用户当前进度（如"今天已喝1.5L/2L，还差0.5L"）
+
+### get_habit_status — 查询打卡状态
+用户询问打卡进度时调用。
+- 用户问"我今天打卡了什么" → get_habit_status()
+- 用户问"昨天喝水了吗" → get_habit_status("2026-08-06")
+
+### suggest_habit — 推荐打卡习惯
+用户首次使用打卡功能、或要求推荐习惯时调用。系统会基于 rules/learned-habits.md 自动生成推荐。
+- 用户说"帮我推荐一些打卡习惯" → suggest_habit()
+- 用户说"我想养成好习惯但不知道打什么卡" → suggest_habit()
+
+### add_habit — 添加自定义习惯
+用户在对话中要求添加新习惯时调用。
+- 用户说"我想每天冥想10分钟" → add_habit("冥想", "分钟", 10)
+- 用户说"加一个每天走8000步的习惯" → add_habit("走路", "步", 8000)
+
+**使用原则**：
+1. **自然触发**：用户提到喝水、运动等行为时，主动帮其打卡，不需要用户明确说"帮我打卡"
+2. **进度反馈**：打卡后告知进度和目标完成情况，达标时给予鼓励
+3. **适时推荐**：发现用户还没有打卡习惯时，可以推荐几个适合的习惯
+4. **不过度催促**：不要每次对话都催用户打卡，自然融入对话即可
+5. **跨天总结**：系统会在跨天时自动生成习惯日报，无需你额外处理
 
 ## 健康生活小建议（重要）
 对话中请根据当前语境自然地穿插 1-2 条健康生活小建议，重复提醒有助于帮用户养成好习惯：
@@ -442,7 +503,7 @@ version: 1
 
   _getIndexMd() {
     return `---
-version: 2
+version: 3
 ---
 
 # 轻伴文件索引
@@ -457,6 +518,10 @@ version: 2
 - rules/allergies.md — 过敏与忌口（待记录）
 - rules/preferences.md — 饮食偏好（待记录）
 - rules/exercise.md — 运动情况（待记录）
+
+## 习惯打卡数据
+- .meta/habits.json — 习惯列表（名称、单位、目标、图标）
+- .meta/habit-checkins.json — 打卡记录（习惯ID、日期、数量、备注）
 
 ## 饮食记录
 （暂无）

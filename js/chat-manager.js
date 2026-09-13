@@ -268,9 +268,10 @@ export class ChatManager {
 
   // 模拟次日（推进虚拟日期）
   // profileLearner 可选:传入则在保存摘要后刷新习惯档案
-  async advanceDay(profileLearner) {
+  // llmService 可选:传入则生成真摘要，不传则降级全文拼接
+  async advanceDay(profileLearner, llmService) {
     // 先保存当前日期的对话摘要
-    await this.saveDailySummary();
+    await this.saveDailySummary(llmService);
 
     // 保存完摘要后，刷新习惯档案（基于近 21 天对话摘要全量分析）
     if (profileLearner) {
@@ -296,13 +297,23 @@ export class ChatManager {
     return this.currentDate;
   }
 
-  // 保存当日对话摘要到 chat/YYYY-MM-DD.md
-  async saveDailySummary() {
-    if (this.history.length === 0) return;
+  // 摘要字数截断工具方法 — 在句子边界截断，追加省略号
+  _truncateSummary(text, maxChars) {
+    if (text.length <= maxChars) return text;
+    const boundaryChars = '。！？\n';
+    for (let i = maxChars; i > maxChars - 50 && i > 0; i--) {
+      if (boundaryChars.includes(text[i])) {
+        return text.substring(0, i + 1) + '…';
+      }
+    }
+    return text.substring(0, maxChars) + '…';
+  }
 
-    let summary = `---\ndate: ${this.currentDate}\n---\n\n# ${this.currentDate} 对话摘要\n\n`;
+  // 降级全文拼接方法 — 提取现有 saveDailySummary 的全文拼接逻辑，不截断任何消息
+  _buildFullTextFallback(messages, date) {
+    let summary = `---\ndate: ${date}\n---\n\n# ${date} 对话摘要\n\n`;
 
-    for (const msg of this.history) {
+    for (const msg of messages) {
       if (msg.role === 'user') {
         const text = typeof msg.content === 'string'
           ? msg.content
@@ -313,8 +324,73 @@ export class ChatManager {
       }
     }
 
+    return summary;
+  }
+
+  // 真摘要生成方法 — 调用 LLM 生成 300-500 字摘要，失败返回 null（由调用方降级）
+  async _generateTrueSummary(messages, date, llmService) {
+    if (!llmService || !llmService.llm || !llmService.llm.generateDailySummary) {
+      return null;
+    }
+
+    try {
+      const summaryText = await llmService.llm.generateDailySummary(messages, date);
+
+      // 判定有效性：空字符串、null、undefined 或占位符均视为失败
+      if (!summaryText || !summaryText.trim() ||
+          summaryText.includes('【摘要生成失败】') || summaryText.includes('【摘要为空】')) {
+        return null;
+      }
+
+      // 字数后处理：超过 500 字截断
+      let finalText = summaryText;
+      if (finalText.length > 500) {
+        finalText = this._truncateSummary(finalText, 500);
+      }
+
+      // 组装完整文件内容
+      return `---\ndate: ${date}\n---\n\n# ${date} 对话摘要\n\n${finalText}`;
+    } catch (e) {
+      console.error('[ChatManager] 真摘要生成异常:', e.message);
+      return null;
+    }
+  }
+
+  // 保存当日对话摘要到 chat/YYYY-MM-DD.md
+  // llmService 可选:传入且 LLM 成功时生成 300-500 字真摘要，否则降级全文拼接
+  async saveDailySummary(llmService) {
+    if (this.history.length === 0) return;
+
     const chatPath = `chat/${this.currentDate}.md`;
-    await this.fm.writeFile(chatPath, summary);
+    let content;
+    let mode;
+
+    // 优先尝试真摘要
+    const trueSummary = await this._generateTrueSummary(this.history, this.currentDate, llmService);
+
+    if (trueSummary) {
+      content = trueSummary;
+      mode = 'true_summary';
+      console.log('[ChatManager] 摘要生成:', {
+        date: this.currentDate,
+        mode,
+        inputMessageCount: this.history.length,
+        outputChars: trueSummary.length
+      });
+    } else {
+      // 降级：全文拼接
+      content = this._buildFullTextFallback(this.history, this.currentDate);
+      mode = 'fallback';
+      console.log('[ChatManager] 摘要生成:', {
+        date: this.currentDate,
+        mode,
+        reason: 'llm_unavailable_or_failed',
+        inputMessageCount: this.history.length,
+        outputChars: content.length
+      });
+    }
+
+    await this.fm.writeFile(chatPath, content);
 
     // 更新 INDEX.md
     await this.fm.appendFile('INDEX.md',

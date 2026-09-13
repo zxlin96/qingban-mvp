@@ -722,7 +722,7 @@ html, body {
   gap: 4px;
 }
 
-.typing span {
+.typing span:not(.typing-wait) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -732,6 +732,14 @@ html, body {
 
 .typing span:nth-child(2) { animation-delay: 0.2s; }
 .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+.typing-wait {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+  white-space: nowrap;
+}
 
 @keyframes bounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
@@ -1679,6 +1687,26 @@ html, body {
   50% { opacity: 1; }
 }
 
+/* 重试按钮 */
+.stream-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 13px;
+  padding: 4px 16px;
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--sans);
+  transition: opacity 0.15s;
+}
+.stream-retry-btn:hover {
+  opacity: 0.85;
+}
+
 /* ===== 思考过程区域 ===== */
 .thinking-block {
   margin-bottom: 10px;
@@ -2215,4 +2243,260 @@ html, body {
   color: var(--ink);
   word-break: break-word;
   margin-bottom: 16px;
+}
+
+/* ===== 打卡面板 ===== */
+.habit-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+.habit-overlay.show {
+  display: flex;
+}
+.habit-panel {
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.habit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+.habit-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.habit-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.habit-add-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.habit-overview {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.habit-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#habitDateLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  min-width: 80px;
+  text-align: center;
+}
+.habit-summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+.habit-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 18px;
+}
+.habit-card {
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+}
+.habit-card.completed {
+  border-color: var(--accent);
+}
+.habit-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.habit-card-icon {
+  font-size: 18px;
+}
+.habit-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  flex: 1;
+}
+.habit-card-streak {
+  font-size: 11px;
+  color: var(--accent2);
+  background: var(--accent2)15;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.habit-card-delete {
+  background: none;
+  border: none;
+  color: var(--muted2);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.habit-card-delete:hover {
+  color: var(--warn);
+}
+.habit-card-progress {
+  margin-bottom: 8px;
+}
+.habit-progress-bar {
+  height: 8px;
+  background: var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.habit-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.habit-card.completed .habit-progress-fill {
+  background: var(--accent);
+}
+.habit-progress-text {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.habit-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.habit-quick-checkin {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.habit-quick-checkin:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.habit-card-completed {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-top: 4px;
+}
+.habit-suggest-area {
+  padding: 12px 18px;
+  border-top: 1px solid var(--rule);
+}
+.habit-suggest-title {
+  font-size: 12px;
+  color: var(--muted2);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.habit-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.habit-suggest-icon {
+  font-size: 18px;
+}
+.habit-suggest-info {
+  flex: 1;
+}
+.habit-suggest-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.habit-suggest-reason {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.habit-suggest-adopt {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.habit-empty {
+  padding: 40px 18px;
+  text-align: center;
+}
+.habit-empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.habit-empty-text {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+.habit-icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.habit-icon-option {
+  font-size: 20px;
+  padding: 4px 8px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.habit-icon-option:hover {
+  background: var(--bg3);
+}
+.habit-icon-option.active {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+.habit-suggest-btn {
+  margin-top: 8px;
+}
+[data-theme="dark"] .habit-card {
+  background: var(--bg3);
+}
+[data-theme="dark"] .habit-quick-checkin {
+  background: var(--bg2);
 }

@@ -799,6 +799,102 @@ ${diff < 0 ? '体重下降中，继续保持！' : diff > 0 ? '体重略有上�
     return { role: 'assistant', content: '让我看看数据...' };
   }
 
+  // ===== 每日真摘要生成（300-500字）=====
+  // 供 ChatManager.saveDailySummary() 调用，保留关键事实数据原值
+  async generateDailySummary(messages, date) {
+    await this._delay(400 + Math.random() * 400);
+
+    const dietEntries = [];
+    const weightEntries = [];
+    const checkinEntries = [];
+    const allergyEntries = [];
+    const preferenceEntries = [];
+    const exerciseEntries = [];
+    const otherEntries = [];
+
+    for (const msg of messages) {
+      const text = typeof msg.content === 'string'
+        ? msg.content
+        : (Array.isArray(msg.content) ? msg.content.map(c => c.type === 'text' ? c.text : '[图片]').join(' ') : '');
+
+      if (msg.role === 'user') {
+        if (/吃了|午餐|早餐|晚餐|加餐|喝了|kcal|千卡|卡路里/.test(text)) {
+          dietEntries.push(text.substring(0, 80));
+        }
+        if (/体重|kg|公斤|斤/.test(text)) {
+          weightEntries.push(text.substring(0, 80));
+        }
+        if (/打卡|喝水|跑步|运动|冥想|阅读/.test(text)) {
+          checkinEntries.push(text.substring(0, 80));
+        }
+        if (/过敏|忌口|不能吃/.test(text)) {
+          allergyEntries.push(text.substring(0, 80));
+        }
+        if (/喜欢|不喜欢|爱吃|不爱吃|口味|偏好/.test(text)) {
+          preferenceEntries.push(text.substring(0, 80));
+        }
+        if (/锻炼|健身|瑜伽|游泳|跳|跑/.test(text)) {
+          exerciseEntries.push(text.substring(0, 80));
+        }
+        if (!/吃了|午餐|早餐|晚餐|加餐|喝了|体重|kg|公斤|斤|打卡|喝水|跑步|运动|过敏|忌口|喜欢|锻炼/.test(text)) {
+          otherEntries.push(text.substring(0, 60));
+        }
+      } else if (msg.role === 'assistant' && msg.content) {
+        const calMatch = msg.content.match(/~?(\d+)\s*(?:kcal|千卡|卡路里)/);
+        if (calMatch) dietEntries.push(`AI识别: ~${calMatch[1]}千卡`);
+        const foodMatch = msg.content.match(/识别(?:到|为)[:：]?\s*(.+)/);
+        if (foodMatch) dietEntries.push(`图片识别: ${foodMatch[1].substring(0, 60)}`);
+      }
+    }
+
+    let summary = `# ${date} 对话摘要\n\n`;
+
+    if (dietEntries.length > 0) {
+      summary += `## 饮食记录\n`;
+      dietEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (weightEntries.length > 0) {
+      summary += `## 体重数据\n`;
+      weightEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (checkinEntries.length > 0) {
+      summary += `## 打卡记录\n`;
+      checkinEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (allergyEntries.length > 0) {
+      summary += `## 过敏忌口\n`;
+      allergyEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (preferenceEntries.length > 0) {
+      summary += `## 饮食偏好\n`;
+      preferenceEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (exerciseEntries.length > 0) {
+      summary += `## 运动情况\n`;
+      exerciseEntries.forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+    if (otherEntries.length > 0) {
+      summary += `## 其他\n`;
+      otherEntries.slice(0, 3).forEach(e => summary += `- ${e}\n`);
+      summary += '\n';
+    }
+
+    if (summary.length < 300) {
+      summary += `## 对话概要\n当日共 ${messages.length} 条消息，用户讨论了 ${dietEntries.length + weightEntries.length + checkinEntries.length} 个健康相关话题。\n`;
+    }
+    if (summary.length > 500) {
+      summary = summary.substring(0, 497) + '…';
+    }
+
+    return summary;
+  }
+
   // ===== 上下文压缩摘要生成 =====
   // 供 ChatManager.compactHistory() 调用
   async generateSummary(messages) {

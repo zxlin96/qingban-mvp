@@ -3,10 +3,102 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '2.9.4';
-const APP_VERSION_DATE = '2026-08-05';
+const APP_VERSION = '3.4.7';
+const APP_VERSION_DATE = '2026-08-31';
+// 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
+window.__qbVersion = APP_VERSION;
 
 const CHANGELOG = [
+  {
+    ver: '3.4.7', date: '2026-08-31',
+    items: [
+      '修复：OpenAI 格式 maxOutputTokens 配置不生效 — 非/流式 payload 加 max_tokens: baseMax',
+      '优化：Anthropic 格式 maxTokens 简化为 baseMax — 去掉冗余 Math.min(baseMax, 32768)，消除写死数字'
+    ]
+  },
+  {
+    ver: '3.4.6', date: '2026-08-31',
+    items: [
+      '修复：跨天流程被 30s 超时砍断 — 21天习惯总结及后续步骤丢失，只剩三步；放宽到 5 分钟让 6 步全部跑完'
+    ]
+  },
+  {
+    ver: '3.4.5', date: '2026-08-31',
+    items: [
+      '修复：typing 气泡用时信息不显示 + 跳动周期异常 — .typing-wait 被 .typing span 规则误设为圆点，改为 :not(.typing-wait) 排除'
+    ]
+  },
+  {
+    ver: '3.4.4', date: '2026-08-31',
+    items: [
+      '优化：请求等待秒数从独立浮动黑条移至 typing 指示器气泡内 — 三个跳动点后显示"等待响应 · Xs"，与聊天界面风格统一'
+    ]
+  },
+  {
+    ver: '3.4.3', date: '2026-08-31',
+    items: [
+      '修复：跨天（每日更新）时"启动超时"误报 — 跨天总结调大模型耗时超过 20s 启动看门狗，但实际启动成功；将就绪标记提前到跨天重活之前，跨天总结不再阻塞启动就绪判定'
+    ]
+  },
+  {
+    ver: '3.4.2', date: '2026-08-31',
+    items: [
+      '修复：发送图片时工具调用停止 — Anthropic 格式含图片时 max_tokens 被压到 4096，K3 thinking 消耗完后工具参数未输出完即触发 max_tokens 截断；放宽到 32K',
+      '新增：max_tokens 截断诊断日志 — 请求层与服务层打印 hasImages/thinkingLen/contentLen/各工具 argsLen 等信息，协助判断截断原因'
+    ]
+  },
+  {
+    ver: '3.4.1', date: '2026-08-21',
+    items: [
+      '修复：打卡面板无法显示 — habitOverlay 内联 display:none 优先级高于 .show 类选择器，改为统一内联 style.display 操作'
+    ]
+  },
+  {
+    ver: '3.4.0', date: '2026-08-20',
+    items: [
+      '优化：saveDailySummary 改为 LLM 生成 300-500 字真摘要，强制保留关键事实数据，失败降级全文拼接',
+      '优化：_dataIntegrityCheck 智能过滤，保留 user 消息与图片识别 AI 回复，跳过纯文字聊天 AI 回复'
+    ]
+  },
+  {
+    ver: '3.3.0', date: '2026-08-12',
+    items: [
+      '新增：KV Cache 三层缓存优化 — System Prompt 结构重排，固定内容在前、动态内容在后，提升服务端缓存命中率',
+      '新增：固定前缀内存缓存 — 跳过 7 次 IndexedDB 读取和字符串拼接，每次请求省约 50ms',
+      '新增：客户端响应缓存（LRU+TTL）— 30 秒内相同问题直接返回缓存，跳过 API 调用',
+      '优化：write_file/append_file 修改固定文件时自动失效前缀缓存'
+    ]
+  },
+  {
+    ver: '3.2.0', date: '2026-08-12',
+    items: [
+      '修改：默认使用非流式输出，sendMessage 和 _retryLastMessage 均改用 chat()，等待完整响应后一次性显示',
+      '优化：非流式模式自带 30 次重试，弱网环境下比流式更稳定'
+    ]
+  },
+  {
+    ver: '3.1.0', date: '2026-08-11',
+    items: [
+      '新增：流式请求超时保护（30秒连接超时 + 90秒读取超时），防止请求无限挂起',
+      '新增：流式请求自动重试（3次网络错误重试，指数退避）',
+      '新增：流式中断容错 — 后台切换/网络波动时返回已接收内容而非报错',
+      '新增：网络中断或出错时显示「🔄 重试」按钮',
+      '新增：APP 从后台恢复时检测请求是否被中断'
+    ]
+  },
+  {
+    ver: '3.0.0', date: '2026-08-07',
+    items: [
+      '新增：习惯打卡功能 — 独立面板 + 聊天联动，支持 AI 推荐和用户自定义习惯',
+      '新增：带数量记录的打卡（如喝水2L、跑步30分钟），支持目标设定和达成率统计',
+      '新增：连续打卡天数（streak）和近7天完成率统计',
+      '新增：4 个 LLM 工具 — checkin_habit / get_habit_status / suggest_habit / add_habit',
+      '新增：AI 根据习惯档案推荐打卡习惯，用户可一键采纳',
+      '新增：未完成习惯自动提醒（每2小时检查，与通知系统联动）',
+      '新增：跨天时自动生成昨日打卡报告，注入新一天问候上下文',
+      '新增：系统提示词注入今日打卡状态，AI 对话中可自然提及打卡进度'
+    ]
+  },
   {
     ver: '2.9.4', date: '2026-08-05',
     items: [
@@ -187,19 +279,23 @@ import { ProfileLearner } from './profile-learner.js';
 import { DietRecorder } from './diet-recorder.js';
 import { AutoDream } from './auto-dream.js';
 import { NotificationManager } from './notification-manager.js';
+import { HabitManager } from './habit-manager.js';
 import { IndexManager } from './index-manager.js';
+import { OnDemandLoader } from './on-demand-loader.js';
 
 class App {
   constructor() {
     this.fm = new FileManager();
     this.llm = USE_REAL_LLM ? new SparkLLM() : new MockLLM();
     this.dietRecorder = new DietRecorder();
-    this.llmService = new LLMService(this.fm, this.llm);
-    this.chatManager = new ChatManager(this.fm);
-    this.autoDream = new AutoDream(this.fm, this.llm);
     this.indexManager = new IndexManager(this.fm);
-    this.profileLearner = new ProfileLearner(this.fm, this.llm);
+    this.onDemandLoader = new OnDemandLoader(this.indexManager, this.fm);
+    this.llmService = new LLMService(this.fm, this.llm, this.onDemandLoader);
+    this.chatManager = new ChatManager(this.fm);
+    this.autoDream = new AutoDream(this.fm, this.llm, this.onDemandLoader);
+    this.profileLearner = new ProfileLearner(this.fm, this.llm, this.onDemandLoader);
     this.notificationManager = new NotificationManager(this.fm);
+    this.habitManager = new HabitManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -210,25 +306,68 @@ class App {
     ];
   }
 
+  // 单个初始化步骤的超时保护：避免某一步永久挂起导致整个启动卡死（黑屏 + 一直「加载中」）
+  async _withTimeout(promise, ms, label) {
+    const p = Promise.resolve(promise);
+    p.catch(() => {}); // 超时后原 promise 若再报错，不触发全局未处理 rejection 弹窗
+    let timer = null;
+    const guard = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms);
+    });
+    try {
+      const result = await Promise.race([p, guard]);
+      clearTimeout(timer);
+      return result;
+    } catch (e) {
+      clearTimeout(timer);
+      console.warn('[Init]', e.message);
+      window.__qbInitWarnings = window.__qbInitWarnings || [];
+      window.__qbInitWarnings.push(e.message);
+      this._initWarnings = window.__qbInitWarnings;
+      return null;
+    }
+  }
+
   async init() {
-    await this.fm.init();
+    // ===== 启动阶段追踪：每步打标记，超时横幅可显示「卡在哪一步」 =====
+    window.__qbStage = 'fm.init';
+    // 初始化文件存储：加超时与容错。
+    // IndexedDB 卡死会让整个启动永久挂起（表现为黑屏 + 一直「加载中」），
+    // 因此超时后继续启动并标记存储不可用，让界面正常显示并给出明确提示。
+    try {
+      await this._withTimeout(this.fm.init(), 6000, 'fm.init（IndexedDB）');
+    } catch (e) {
+      console.error('[App] 存储初始化失败:', e);
+      this._storageError = (e && e.message) ? e.message : String(e);
+    }
     const realToday = this.chatManager._getToday();
 
+    window.__qbStage = 'initTheme';
     this.initTheme();       // 初始化主题(从 localStorage 恢复)
+    window.__qbStage = 'initFontScale';
     this.initFontScale();   // 初始化字体大小(从 localStorage 恢复)
+    window.__qbStage = 'bindEvents';
     this.bindEvents();
+    window.__qbStage = 'registerCallbacks';
     this._registerAskUserCallback(); // 注册 ask_user 工具回调
     this._registerNotificationCallback(); // 注册 send_notification 工具回调
-    await this.notificationManager.init(); // 初始化通知管理（恢复待发通知）
-    await this.renderFileTree();
+    this._registerHabitCallbacks(); // 注册习惯打卡工具回调
+    window.__qbStage = 'notificationManager.init';
+    await this._withTimeout(this.notificationManager.init(), 4000, 'notificationManager.init');
+    this._startHabitReminderCheck(); // 启动未完成习惯提醒检查
+    window.__qbStage = 'renderFileTree';
+    await this._withTimeout(this.renderFileTree(), 4000, 'renderFileTree');
     this.updateContextInfo();
 
     // 加载持久化的 token 用量
-    await this.chatManager.loadTokenUsage();
+    window.__qbStage = 'loadTokenUsage';
+    await this._withTimeout(this.chatManager.loadTokenUsage(), 4000, 'loadTokenUsage');
     this.updateTokenBar();
 
     // 尝试恢复上次的对话历史
-    const saved = await this.chatManager.loadHistory();
+    window.__qbStage = 'loadHistory';
+    const saved = await this._withTimeout(this.chatManager.loadHistory(), 4000, 'loadHistory');
+    window.__qbStage = 'dayRollover';
     const savedDate = saved?.date;
 
     // 凌晨 0-4 点不跨天：用户可能熬夜，仍然算前一天
@@ -248,21 +387,28 @@ class App {
 
     // 检测是否跨天：保存的日期早于有效今天
     if (savedDate && savedDate < effectiveToday) {
+      window.__qbStage = 'handleDayRollover';
       // 跨天了 — 恢复历史执行跨天流程
       this.chatManager.currentDate = savedDate;
       this.chatManager.history = (saved.history && saved.history.length > 0) ? saved.history : [];
       // 显示跨天总结动效遮罩
       this._showDayTransition(savedDate, effectiveToday);
-      await this.handleDayRollover();
+      // 跨天总结是增值任务，界面已可用（遮罩仅提示"生成中"）— 先标记就绪，避免 20s 启动看门狗误报"启动超时"
+      this._markAppReady();
+      // 跨天流程含多步大模型调用（昨日摘要 + 21天习惯总结 + 周度总结），单步 20-40s，
+      // 30s 会砍断流程导致后续步骤（习惯总结/重建索引等）丢失。就绪已标记，放宽到 5 分钟
+      await this._withTimeout(this.handleDayRollover(), 300000, 'handleDayRollover');
       // 跨天后 currentDate 已更新为今天，history 已清空
       this.chatManager.currentDate = realToday;
       this.updateDateBadge();
       this.updateContextInfo();
-      await this.renderFileTree();
+      window.__qbStage = 'renderFileTree(rollover)';
+      await this._withTimeout(this.renderFileTree(), 5000, 'renderFileTree(rollover)');
       // 隐藏遮罩
       this._hideDayTransition();
       // 显示新一天的问候（含昨日总结和今日建议）
-      await this.showNewDayWelcome();
+      window.__qbStage = 'showNewDayWelcome';
+      await this._withTimeout(this.showNewDayWelcome(), 15000, 'showNewDayWelcome');
     } else if (saved && saved.history && saved.history.length > 0) {
       // 同一天 — 恢复历史
       this.chatManager.currentDate = saved.date || realToday;
@@ -279,7 +425,9 @@ class App {
     }
 
     // 首次使用 → 弹出引导收集基本信息
-    if (await this.fm.isFirstTime()) {
+    window.__qbStage = 'fm.isFirstTime';
+    const firstTime = await this._withTimeout(this.fm.isFirstTime(), 5000, 'fm.isFirstTime');
+    if (firstTime) {
       this.showOnboarding();
     } else if (!saved || !saved.history || saved.history.length === 0) {
       // 非首次但没有历史 → 显示欢迎语
@@ -299,8 +447,11 @@ class App {
 
     // 方式1：浏览器 visibilitychange 事件
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
+      if (document.hidden) {
+        this._backgroundedAt = Date.now();
+      } else {
         this._checkDayRollover();
+        this._checkBackgroundInterruption();
       }
     });
 
@@ -316,10 +467,14 @@ class App {
         window.Capacitor.Plugins.App?.addListener?.('appStateChange', (state) => {
           if (state.isActive) {
             this._checkDayRollover();
+            this._checkBackgroundInterruption();
+          } else {
+            this._backgroundedAt = Date.now();
           }
         });
         window.Capacitor.Plugins.App?.addListener?.('resume', () => {
           this._checkDayRollover();
+          this._checkBackgroundInterruption();
         });
       } catch (e) {
         console.log('[DayCheck] Capacitor App plugin not available');
@@ -330,6 +485,40 @@ class App {
     this._dayCheckFallback = setInterval(() => {
       this._checkDayRollover();
     }, 300000);
+
+    this._markAppReady();
+  }
+
+  // 标记应用已就绪：置 __qbAppReady、隐藏启动超时横幅、提示存储错误
+  // 跨天流程开始前即可调用 — 跨天总结是增值任务，不应阻塞"启动就绪"判定
+  _markAppReady() {
+    if (window.__qbAppReady) return; // 幂等
+    window.__qbStage = 'done';
+    window.__qbAppReady = true;
+    if (window.__qbHideFatal) window.__qbHideFatal();
+    if (this._storageError) {
+      this.showToast('存储不可用', `数据可能无法读取/保存：${this._storageError}`, 'error');
+    }
+  }
+
+  // 后台恢复后检查请求是否中断
+  _checkBackgroundInterruption() {
+    if (!this.isProcessing || !this._backgroundedAt) return;
+    const bgDuration = Date.now() - this._backgroundedAt;
+    this._backgroundedAt = null;
+
+    // 后台超过 5 秒，请求可能已中断
+    if (bgDuration > 5000) {
+      console.log(`[BG Recovery] 后台 ${bgDuration}ms，检查请求中断`);
+      // 等待 3 秒看请求是否自行恢复
+      setTimeout(() => {
+        if (this.isProcessing) {
+          // 请求仍在进行 — 可能连接还活着，让它继续
+          // _readWithTimeout 会在 90 秒后超时
+          console.log('[BG Recovery] 请求仍在进行，等待超时或完成');
+        }
+      }, 3000);
+    }
   }
 
   async _checkDayRollover() {
@@ -438,6 +627,7 @@ class App {
       '正在保存昨日对话摘要...',
       '正在检查数据完整性...',
       '正在学习你的生活习惯...',
+      '正在保存昨日打卡记录...',
       '正在重建记忆索引...',
       '正在开启新的一天...'
     ];
@@ -488,7 +678,7 @@ class App {
     // 步骤 1: 保存昨日对话摘要
     if (this._dtAddStep) this._dtAddStep('正在保存昨日对话摘要...');
     try {
-      await this.chatManager.saveDailySummary();
+      await this.chatManager.saveDailySummary(this.llm);
       if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
     } catch (e) {
       console.error('[DayRollover] 摘要失败:', e.message);
@@ -525,6 +715,18 @@ class App {
       if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
     }
 
+    // 步骤 3.5: 保存昨日打卡报告
+    if (this._dtAddStep) this._dtAddStep('正在保存昨日打卡记录...');
+    const stepHabitReport = this._dtStepIndex - 1;
+    try {
+      const habitReport = await this.habitManager.generateDailyReport(yesterdayDate);
+      await this.fm.writeFile(`habits/${yesterdayDate}.md`, habitReport);
+      if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
+    } catch (e) {
+      console.error('[DayRollover] 打卡报告失败:', e.message);
+      if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'error');
+    }
+
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
     if (needWeekly) {
@@ -544,6 +746,7 @@ class App {
     const stepIndex = this._dtStepIndex - 1;
     try {
       await this.indexManager.rebuildIndex();
+      this.onDemandLoader?.invalidateIndexCache();
       if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
     } catch (e) {
       console.error('[DayRollover] 重建索引失败:', e.message);
@@ -713,24 +916,76 @@ ${summaries.join('\n\n---\n\n')}
     }
   }
 
-  // 数据完整性检查：审查昨天对话，补充遗漏的饮食记录/体重/过敏/偏好等
-  async _dataIntegrityCheck(date, history) {
-    // 先检查昨天的饮食记录文件是否存在
-    const dietPath = `diet/${date}.md`;
-    const existingDiet = await this.fm.readFile(dietPath);
+  // 判定是否为图片识别消息（满足任一条件即返回 true）
+  _isPhotoMessage(msg) {
+    if (msg.role !== 'user') return false;
+    if (typeof msg.content === 'string' && msg.content.includes('[图片已识别]')) return true;
+    if (Array.isArray(msg._displayPhotos) && msg._displayPhotos.length > 0) return true;
+    return false;
+  }
 
-    // 把对话历史转成纯文本摘要给 LLM 审查
-    const conversationText = history.map(msg => {
+  // 智能过滤对话文本：保留所有 user 消息全文 + 图片识别消息对应的 AI 回复，跳过文字聊天的 AI 回复
+  _buildFilteredConversationText(history) {
+    let lastUserIsPhoto = false;
+    const parts = [];
+    let userMessageCount = 0;
+    let keptAiReplyCount = 0;
+    let skippedAiReplyCount = 0;
+
+    for (const msg of history) {
       if (msg.role === 'user') {
         const text = typeof msg.content === 'string'
           ? msg.content
           : (Array.isArray(msg.content) ? msg.content.find(c => c.type === 'text')?.text || '[图片消息]' : '');
-        return `用户: ${text}`;
+        parts.push(`用户: ${text}`);
+        userMessageCount++;
+        lastUserIsPhoto = this._isPhotoMessage(msg);
       } else if (msg.role === 'assistant') {
-        return `轻伴: ${typeof msg.content === 'string' ? msg.content : ''}`;
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        if (lastUserIsPhoto && content) {
+          parts.push(`轻伴: ${content}`);
+          keptAiReplyCount++;
+        } else {
+          skippedAiReplyCount++;
+        }
       }
-      return '';
-    }).filter(Boolean).join('\n');
+    }
+
+    return {
+      text: parts.join('\n'),
+      userMessageCount,
+      keptAiReplyCount,
+      skippedAiReplyCount
+    };
+  }
+
+  // 数据完整性检查：审查昨天对话，补充遗漏的饮食记录/体重/过敏/偏好等
+  async _dataIntegrityCheck(date, history) {
+    // 先检查昨天的饮食记录文件是否存在 — 按需加载或直读
+    const dietPath = `diet/${date}.md`;
+    let existingDiet;
+    if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+      const result = await this.onDemandLoader.loadForSummary({
+        taskType: 'integrity_check',
+        currentDate: date,
+        exactDate: date
+      });
+      const dietFile = result.files.find(f => f.path === dietPath);
+      existingDiet = dietFile ? dietFile.content : null;
+    } else {
+      existingDiet = await this.fm.readFile(dietPath);
+    }
+
+    // 智能过滤对话文本：保留所有 user 消息 + 图片识别的 AI 回复，跳过文字聊天的 AI 回复
+    const filterResult = this._buildFilteredConversationText(history);
+    const conversationText = filterResult.text;
+
+    console.log('[数据检查] 智能过滤:', {
+      date,
+      userMessageCount: filterResult.userMessageCount,
+      keptAiReplyCount: filterResult.keptAiReplyCount,
+      skippedAiReplyCount: filterResult.skippedAiReplyCount
+    });
 
     if (!conversationText.trim()) return;
 
@@ -859,9 +1114,20 @@ ${currentExercise}
     const yesterdayDate = `${yesterday.getFullYear()}-${yp(yesterday.getMonth() + 1)}-${yp(yesterday.getDate())}`;
 
     try {
-      // 读取昨天的数据
-      const yesterdayChat = await this.fm.readFile(`chat/${yesterdayDate}.md`) || '';
-      const yesterdayDiet = await this.fm.readFile(`diet/${yesterdayDate}.md`) || '';
+      // 读取昨天的数据 — 按需加载或直读
+      let yesterdayChat, yesterdayDiet;
+      if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+        const result = await this.onDemandLoader.loadForSummary({
+          taskType: 'new_day_welcome',
+          currentDate: today,
+          exactDate: yesterdayDate
+        });
+        yesterdayChat = result.files.find(f => f.path === `chat/${yesterdayDate}.md`)?.content || '';
+        yesterdayDiet = result.files.find(f => f.path === `diet/${yesterdayDate}.md`)?.content || '';
+      } else {
+        yesterdayChat = await this.fm.readFile(`chat/${yesterdayDate}.md`) || '';
+        yesterdayDiet = await this.fm.readFile(`diet/${yesterdayDate}.md`) || '';
+      }
       const bodyMetrics = await this.fm.readFile('BODY_METRICS.md') || '';
       const profile = await this.fm.readFile('PROFILE.md') || '';
       const habits = await this.fm.readFile('rules/learned-habits.md') || '';
@@ -1210,6 +1476,47 @@ ${habits}
     // Auto Dream — 生成周报/月报/模式分析
     document.getElementById('autoDreamBtn').addEventListener('click', () => this.runAutoDream());
 
+    // 打卡面板
+    document.getElementById('habitBtn').addEventListener('click', () => this.showHabitPanel());
+    document.getElementById('closeHabit').addEventListener('click', () => {
+      document.getElementById('habitOverlay').style.display = 'none';
+    });
+    document.getElementById('habitOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'habitOverlay') {
+        document.getElementById('habitOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('habitPrevDay').addEventListener('click', () => this._habitNavDay(-1));
+    document.getElementById('habitNextDay').addEventListener('click', () => this._habitNavDay(1));
+    document.getElementById('habitAddBtn').addEventListener('click', () => this._showHabitAddForm());
+    document.getElementById('closeHabitAdd').addEventListener('click', () => {
+      document.getElementById('habitAddOverlay').style.display = 'none';
+    });
+    document.getElementById('habitAddOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'habitAddOverlay') {
+        document.getElementById('habitAddOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('habitAddConfirm').addEventListener('click', () => this._confirmAddHabit());
+    document.getElementById('habitSuggestBtn').addEventListener('click', () => this._loadHabitSuggestions());
+    // 图标选择器
+    document.querySelectorAll('.habit-icon-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        document.querySelectorAll('.habit-icon-option').forEach(o => o.classList.remove('active'));
+        opt.classList.add('active');
+      });
+    });
+    // 自定义打卡弹窗
+    document.getElementById('closeHabitCustomCheckin').addEventListener('click', () => {
+      document.getElementById('habitCustomCheckinOverlay').style.display = 'none';
+    });
+    document.getElementById('habitCustomCheckinOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'habitCustomCheckinOverlay') {
+        document.getElementById('habitCustomCheckinOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('habitCustomConfirm').addEventListener('click', () => this._confirmCustomCheckin());
+
     // 关闭文件查看器
     document.getElementById('closeViewer').addEventListener('click', () => {
       document.getElementById('fileViewer').classList.remove('show');
@@ -1223,26 +1530,33 @@ ${habits}
 
   // ===== 发送消息 =====
   async sendMessage() {
-    if (this.isProcessing) return;
+    if (this.isProcessing) {
+      this.showToast('上一条还在处理中', '请稍候，或等待自动恢复后重试', 'info');
+      return;
+    }
 
     const input = document.getElementById('messageInput');
     const text = input.value.trim();
     const hasPhotos = this.pendingPhotos.length > 0;
+    this._reqIsImg = hasPhotos;
     const sentPhotos = hasPhotos ? [...this.pendingPhotos] : [];
     if (!text && !hasPhotos) return;
 
     // 构建用户消息
     let userContent;
     if (hasPhotos) {
-      // 有图片(支持多张)
-      const parts = [{ type: 'text', text: text || `这是我的饮食（${this.pendingPhotos.length}张照片）` }];
+      // 有图片(支持多张) — 只发图片，无文字时不附加默认文案
+      const parts = [];
+      if (text) {
+        parts.push({ type: 'text', text });
+      }
       for (const photo of this.pendingPhotos) {
         parts.push({ type: 'image_url', image_url: { url: photo } });
       }
       userContent = parts;
       // 显示用户消息（图片+文字）
-      this.addMessage('user', text || `这是我的饮食（${this.pendingPhotos.length}张照片）`, this.pendingPhotos);
-      this.chatManager.addUserPhotoMessage(text || `这是我的饮食（${this.pendingPhotos.length}张照片）`, this.pendingPhotos);
+      this.addMessage('user', text || '', this.pendingPhotos);
+      this.chatManager.addUserPhotoMessage(text || '', this.pendingPhotos);
       this.pendingPhotos = [];
       this.clearPhotoPreview();
     } else {
@@ -1256,84 +1570,18 @@ ${habits}
     this.autoResize(input);
     this.setProcessing(true);
 
+    // 保存上下文用于网络中断后重试
+    this._lastSendContext = { userContent, sentPhotos };
+
     // 同一天内不压缩上下文，避免单天对话产生遗忘感
     // 上下文压缩改为仅在跨天(advanceDay)时通过存档+清空来处理
 
-    // 显示 typing 指示器（在第一个文本块到达前显示）
+    // 显示 typing 指示器（等待完整响应）
     this.showTyping();
 
-    // 流式消息元素（文本块到达后替换 typing）
-    let streamDiv = null;
-    let streamText = '';
-    let thinkingText = '';
-
     try {
-      // 调用流式 LLM 服务
-      const context = { currentDate: this.chatManager.currentDate };
-      const result = await this.llmService.chatStream(
-        userContent,
-        this.chatManager.getHistory(),
-        context,
-        // onTextChunk: 实时更新流式消息
-        (chunk, fullText) => {
-          // 第一个 chunk 到达时，移除 typing，创建流式消息
-          if (!streamDiv) {
-            this.hideTyping();
-            streamDiv = this._createStreamingMessage();
-          }
-          streamText = fullText;
-          this._updateStreamingMessage(streamDiv, streamText, thinkingText);
-          this._scrollToBottom();
-        },
-        // onToolStart: 工具执行时显示状态
-        (toolName) => {
-          if (!streamDiv) {
-            this.hideTyping();
-            streamDiv = this._createStreamingMessage();
-          }
-          // 在工具执行时追加一个小提示（不替换已有文本）
-          const existing = streamDiv.innerHTML;
-          const toolHint = `<div class="stream-tool-hint">⚙️ 执行: ${toolName}...</div>`;
-          if (!existing.includes('stream-tool-hint')) {
-            streamDiv.innerHTML = existing + toolHint;
-            this._scrollToBottom();
-          }
-        },
-        // onThinkingChunk: 实时显示思考过程
-        (chunk, fullThinking) => {
-          if (!streamDiv) {
-            this.hideTyping();
-            streamDiv = this._createStreamingMessage();
-          }
-          thinkingText = fullThinking;
-          this._updateStreamingMessage(streamDiv, streamText, thinkingText);
-          this._scrollToBottom();
-        }
-      );
-
-      // 移除 typing（如果还在）
-      this.hideTyping();
-
-      // 最终化流式消息：更新内容 + 添加工具徽章
-      if (streamDiv) {
-        // 保留思考区域（如果有），更新正文
-        this._updateStreamingMessage(streamDiv, result.content, thinkingText, true);
-        if (result.toolCalls && result.toolCalls.length > 0) {
-          const badges = document.createElement('div');
-          badges.className = 'tool-badges';
-          result.toolCalls.forEach(tc => {
-            const badge = document.createElement('span');
-            const toolType = tc.tool || '';
-            badge.className = `tool-badge ${toolType}`;
-            badge.innerHTML = `${this.getToolIcon(tc.tool)} ${tc.displayName || tc.tool}`;
-            badges.appendChild(badge);
-          });
-          streamDiv.appendChild(badges);
-        }
-      } else {
-        // 没有收到任何文本块（纯工具调用场景）
-        this.addMessage('assistant', result.content, null, result.toolCalls);
-      }
+      // 调用流式 LLM 服务（实时渲染，首字即出；自带重试/中断恢复）
+      const result = await this._streamRender(userContent);
 
       // 记录到对话历史
       this.chatManager.addAssistantMessage(result.content);
@@ -1359,13 +1607,93 @@ ${habits}
 
       // 更新文件树（文件可能已被修改）
       await this.renderFileTree();
+
+      // 网络中断时继续显示重试按钮
+      if (result.content && result.content.includes('网络中断')) {
+        const lastMsg = document.querySelector('#chatMessages .message.assistant:last-child');
+        this._appendRetryButton(lastMsg);
+      }
     } catch (err) {
       this.hideTyping();
-      if (streamDiv) {
-        streamDiv.innerHTML = this.formatMarkdown(streamText + `\n\n⚠️ 出错了：${err.message}`);
+      const lastMsg = document.querySelector('#chatMessages .message.assistant:last-child');
+      if (lastMsg && lastMsg.classList.contains('streaming')) {
+        this._updateStreamingMessage(lastMsg, '出错了：' + err.message, '', true, '');
+        this._appendRetryButton(lastMsg);
       } else {
         this.addMessage('assistant', `出错了：${err.message}`);
+        this._appendRetryButton(null);
       }
+    }
+
+    this.setProcessing(false);
+    this.updateContextInfo();
+  }
+
+  // 添加重试按钮到消息元素
+  _appendRetryButton(target) {
+    if (!target) {
+      target = document.querySelector('#chatMessages .message.assistant:last-child');
+    }
+    if (!target) return;
+    // 避免重复添加
+    if (target.querySelector('.stream-retry-btn')) return;
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'btn accent stream-retry-btn';
+    retryBtn.textContent = '🔄 重试';
+    retryBtn.style.cssText = 'margin-top:8px;font-size:13px;padding:4px 16px;';
+    retryBtn.onclick = () => this._retryLastMessage();
+    target.appendChild(retryBtn);
+    this._scrollToBottom();
+  }
+
+  // 网络中断/后台中断后重试上一次消息
+  async _retryLastMessage() {
+    if (!this._lastSendContext || this.isProcessing) return;
+
+    const { userContent } = this._lastSendContext;
+
+    // 移除历史中最后一条 assistant 消息（可能是部分内容或错误）
+    const history = this.chatManager.getHistory();
+    if (history.length > 0 && history[history.length - 1].role === 'assistant') {
+      this.chatManager.history.pop();
+      this.chatManager.saveHistory();
+    }
+
+    // 移除 UI 中最后一条 assistant 消息
+    const messages = document.getElementById('chatMessages');
+    const lastAssistant = messages.querySelector('.message.assistant:last-child');
+    if (lastAssistant) lastAssistant.remove();
+
+    // 重新执行 LLM 请求（非流式）
+    this.setProcessing(true);
+    this.showTyping();
+
+    try {
+      const result = await this._streamRender(userContent);
+
+      this.chatManager.addAssistantMessage(result.content);
+
+      if (result.usage) {
+        await this.chatManager.recordTokenUsage(result.usage);
+        this.updateTokenBar();
+      }
+      if (result.model) {
+        this._currentModel = result.model;
+        this.updateTokenBar();
+      }
+
+      this.renderToolLog(result.toolCalls);
+      await this.renderFileTree();
+
+      // 网络中断时继续显示重试按钮
+      if (result.content && result.content.includes('网络中断')) {
+        const lastMsg = document.querySelector('#chatMessages .message.assistant:last-child');
+        this._appendRetryButton(lastMsg);
+      }
+    } catch (err) {
+      this.hideTyping();
+      this.addMessage('assistant', `出错了：${err.message}`);
+      this._appendRetryButton(null);
     }
 
     this.setProcessing(false);
@@ -1386,17 +1714,59 @@ ${habits}
     return div;
   }
 
+  // 流式调用 LLM 并实时渲染（被 sendMessage / _retryLastMessage 复用）
+  async _streamRender(userContent) {
+    let bubble = null, fullText = '', thinking = '', curTool = '';
+    const onText = (chunk, full) => {
+      fullText = full; curTool = '';
+      if (!bubble) {
+        // 首个字到达：取消看门狗（避免误报"无响应"）、隐藏状态条、切到流式气泡
+        if (this._processingWatchdog) { clearTimeout(this._processingWatchdog); this._processingWatchdog = null; }
+        this._hideReqStatus();
+        this.hideTyping();
+        bubble = this._createStreamingMessage();
+      }
+      this._updateStreamingMessage(bubble, fullText, thinking, false, curTool);
+      this._scrollToBottom();
+    };
+    const onTool = (name) => {
+      curTool = name;
+      if (!bubble) { this.hideTyping(); bubble = this._createStreamingMessage(); }
+      this._updateStreamingMessage(bubble, fullText, thinking, false, curTool);
+      this._scrollToBottom();
+    };
+    const onThinking = (chunk, full) => {
+      thinking = full;
+      if (bubble) this._updateStreamingMessage(bubble, fullText, thinking, false, curTool);
+    };
+    const result = await this.llmService.chatStream(
+      userContent,
+      this.chatManager.getHistory(),
+      { currentDate: this.chatManager.currentDate },
+      onText, onTool, onThinking
+    );
+    this.hideTyping();
+    if (bubble) {
+      bubble.classList.remove('streaming');
+      this._updateStreamingMessage(bubble, result.content || '', thinking, true, '');
+    }
+    return result;
+  }
+
   // 更新流式消息内容（思考区域 + 正文）
-  _updateStreamingMessage(div, text, thinking, isFinal = false) {
+  _updateStreamingMessage(div, text, thinking, isFinal = false, toolName = '') {
     let html = '';
     // 思考区域（折叠式）
     if (thinking && thinking.trim()) {
-      const isCollapsed = isFinal ? '' : '';
       const toggleLabel = isFinal ? '💭 思考过程（点击展开/折叠）' : '💭 思考中...';
       html += `<details class="thinking-block"${isFinal ? ' open' : ''}>`;
       html += `<summary class="thinking-toggle">${toggleLabel}</summary>`;
       html += `<div class="thinking-content">${this.formatMarkdown(thinking)}</div>`;
       html += `</details>`;
+    }
+    // 工具调用状态（流式进行中）
+    if (toolName && !isFinal) {
+      html += `<div class="tool-stream-status">⏳ 正在调用工具：${this.getToolIcon(toolName)} ${toolName}...</div>`;
     }
     // 正文
     if (text && text.trim()) {
@@ -1678,7 +2048,7 @@ ${habits}
     const div = document.createElement('div');
     div.className = 'typing';
     div.id = 'typingIndicator';
-    div.innerHTML = '<span></span><span></span><span></span>';
+    div.innerHTML = '<span></span><span></span><span></span><span class="typing-wait"></span>';
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
   }
@@ -1999,6 +2369,7 @@ ${habits}
 
     try {
       const result = await this.indexManager.rebuildIndex();
+      this.onDemandLoader?.invalidateIndexCache();
       this.addMessage('assistant', `**INDEX.md 已重建**\n\n- 总文件: ${result.totalFiles}\n- 饮食记录: ${result.dietCount}\n- 对话摘要: ${result.chatCount}\n- 洞察报告: ${result.insightsCount}\n- 行数: ${result.lineCount} / 200`);
       await this.renderFileTree();
     } catch (err) {
@@ -2050,12 +2421,13 @@ ${habits}
   // ===== 模拟次日 =====
   async advanceDay() {
     // 传入 profileLearner,在清空历史前学习当日对话
-    await this.chatManager.advanceDay(this.profileLearner);
+    await this.chatManager.advanceDay(this.profileLearner, this.llm);
     this.updateDateBadge();
 
     // 重建 INDEX.md（包含新的对话摘要）
     try {
       await this.indexManager.rebuildIndex();
+      this.onDemandLoader?.invalidateIndexCache();
     } catch (e) {
       console.error('Index rebuild failed:', e);
     }
@@ -2806,6 +3178,352 @@ updated: ${profile.startDate}
     };
   }
 
+  // ===== 习惯打卡 =====
+
+  // 注册习惯打卡工具回调到 LLMService
+  _registerHabitCallbacks() {
+    // checkin_habit — 对话中打卡
+    this.llmService.onCheckinHabit = async (habitName, amount, note) => {
+      const habits = await this.habitManager.getHabits();
+      // 三级匹配：精确 → 包含 → 模糊
+      let habit = habits.find(h => h.name === habitName);
+      if (!habit) habit = habits.find(h => h.name.includes(habitName) || habitName.includes(h.name));
+      if (!habit) {
+        return { success: false, message: `未找到习惯"${habitName}"，当前习惯列表：${habits.map(h => h.name).join('、') || '（无）'}` };
+      }
+      await this.habitManager.checkin(habit.id, amount, note);
+      const progress = await this.habitManager.getTodayProgress(habit.id);
+      this._refreshHabitPanelIfOpen();
+      return {
+        success: true,
+        habit: habit.name,
+        amount,
+        todayTotal: progress.amount,
+        goal: progress.goal,
+        unit: habit.unit,
+        percentage: progress.percentage,
+        completed: progress.isCompleted,
+        message: progress.isCompleted
+          ? `${habit.name}今日已达标！累计 ${progress.amount}${habit.unit}（目标${progress.goal}${habit.unit}）`
+          : `${habit.name}今日已打卡 ${progress.amount}/${progress.goal}${habit.unit}（${progress.percentage}%）`
+      };
+    };
+
+    // get_habit_status — 查询打卡状态
+    this.llmService.onGetHabitStatus = async (date) => {
+      const habits = await this.habitManager.getHabits();
+      const results = [];
+      for (const habit of habits) {
+        const progress = await this.habitManager.getTodayProgress(habit.id);
+        const stats = await this.habitManager.getHabitStats(habit.id);
+        results.push({
+          name: habit.name,
+          icon: habit.icon,
+          todayAmount: progress.amount,
+          goal: progress.goal,
+          unit: habit.unit,
+          percentage: progress.percentage,
+          completed: progress.isCompleted,
+          streak: stats.currentStreak
+        });
+      }
+      return { date: date || this.habitManager._getToday(), habits: results };
+    };
+
+    // suggest_habit — AI 推荐习惯
+    this.llmService.onSuggestHabit = async () => {
+      const suggestions = await this.habitManager.suggestHabitsFromProfile(this.llm);
+      return { suggestions };
+    };
+
+    // add_habit — 添加自定义习惯
+    this.llmService.onAddHabit = async (name, unit, dailyGoal, icon) => {
+      const habit = await this.habitManager.addHabit({
+        name, unit, dailyGoal, icon: icon || '✅',
+        category: 'custom', source: 'user_custom'
+      });
+      this._refreshHabitPanelIfOpen();
+      return { success: true, habit: { id: habit.id, name: habit.name, goal: habit.dailyGoal, unit: habit.unit } };
+    };
+
+    // HabitManager 数据变化回调
+    this.habitManager.onChangeCallback = () => {
+      this._refreshHabitPanelIfOpen();
+    };
+  }
+
+  // 启动未完成习惯提醒检查
+  _startHabitReminderCheck() {
+    this._habitReminderInterval = setInterval(() => this._checkUncompletedHabits(), 2 * 60 * 60 * 1000);
+    setTimeout(() => this._checkUncompletedHabits(), 5 * 60 * 1000);
+  }
+
+  async _checkUncompletedHabits() {
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour >= 22 || hour < 7) return;
+
+    const today = this.habitManager._getToday();
+    let reminderLog;
+    try {
+      const raw = await this.fm.readFile('.meta/habit-reminders.json');
+      reminderLog = raw ? JSON.parse(raw) : {};
+    } catch { reminderLog = {}; }
+
+    const slot = hour < 12 ? 'morning' : 'afternoon';
+    if (reminderLog[today]?.includes(slot)) return;
+
+    const habits = await this.habitManager.getHabits();
+    const uncompleted = [];
+    for (const habit of habits) {
+      if (!habit.reminderEnabled) continue;
+      const progress = await this.habitManager.getTodayProgress(habit.id);
+      if (!progress.isCompleted) uncompleted.push(habit);
+    }
+
+    if (uncompleted.length > 0) {
+      const names = uncompleted.map(h => `${h.icon} ${h.name}`).join('、');
+      await this.notificationManager.schedule({
+        title: '打卡提醒',
+        message: `今天还有 ${uncompleted.length} 个习惯未完成：${names}`,
+        delayMinutes: 0,
+        type: 'custom'
+      });
+      reminderLog[today] = reminderLog[today] || [];
+      reminderLog[today].push(slot);
+      await this.fm.writeFile('.meta/habit-reminders.json', JSON.stringify(reminderLog));
+    }
+  }
+
+  // 显示打卡面板
+  async showHabitPanel() {
+    this._habitViewDate = null; // null = 今天
+    document.getElementById('habitOverlay').style.display = 'flex';
+    await this._renderHabitPanel();
+  }
+
+  // 日期导航
+  async _habitNavDay(delta) {
+    if (this._habitViewDate === null) {
+      this._habitViewDate = this.habitManager._getToday();
+    }
+    this._habitViewDate = this.habitManager._addDays(this._habitViewDate, delta);
+    // 不允许导航到未来
+    const today = this.habitManager._getToday();
+    if (this._habitViewDate > today) {
+      this._habitViewDate = today;
+    }
+    await this._renderHabitPanel();
+  }
+
+  // 渲染打卡面板
+  async _renderHabitPanel() {
+    const viewDate = this._habitViewDate || this.habitManager._getToday();
+    const today = this.habitManager._getToday();
+    const isToday = viewDate === today;
+
+    document.getElementById('habitDateLabel').textContent = isToday ? '今天' : viewDate;
+
+    const habits = await this.habitManager.getHabits();
+    const cardsContainer = document.getElementById('habitCards');
+    const emptyEl = document.getElementById('habitEmpty');
+    const suggestArea = document.getElementById('habitSuggestArea');
+
+    if (habits.length === 0) {
+      cardsContainer.innerHTML = '';
+      emptyEl.style.display = 'block';
+      suggestArea.style.display = 'none';
+      return;
+    }
+
+    emptyEl.style.display = 'none';
+
+    // 渲染习惯卡片
+    const cardsHtml = [];
+    let completedCount = 0;
+
+    for (const habit of habits) {
+      const checkins = await this.habitManager.getCheckinsByHabit(habit.id, viewDate, viewDate);
+      const amount = checkins.reduce((sum, c) => sum + c.amount, 0);
+      const percentage = habit.dailyGoal > 0 ? Math.min(100, Math.round((amount / habit.dailyGoal) * 100)) : 0;
+      const isCompleted = amount >= habit.dailyGoal;
+      if (isCompleted) completedCount++;
+
+      const streak = await this.habitManager.calculateStreak(habit.id);
+      const streakHtml = streak > 0 ? `<span class="habit-card-streak">🔥 ${streak}天</span>` : '';
+
+      // 快速打卡按钮（仅今天显示）
+      let actionsHtml = '';
+      if (isToday) {
+        const quickAmounts = this._getQuickAmounts(habit);
+        actionsHtml = `<div class="habit-card-actions">
+          ${quickAmounts.map(a => `<button class="habit-quick-checkin" data-habit-id="${habit.id}" data-amount="${a}">+${a}${habit.unit}</button>`).join('')}
+          <button class="habit-quick-checkin" data-habit-id="${habit.id}" data-custom="1">自定义</button>
+        </div>`;
+      }
+
+      const completedHtml = isCompleted ? `<div class="habit-card-completed">✓ 今日已达标</div>` : '';
+
+      cardsHtml.push(`
+        <div class="habit-card ${isCompleted ? 'completed' : ''}" data-habit-id="${habit.id}">
+          <div class="habit-card-header">
+            <span class="habit-card-icon">${habit.icon}</span>
+            <span class="habit-card-name">${habit.name}</span>
+            ${streakHtml}
+            <button class="habit-card-delete" data-habit-id="${habit.id}" title="删除">×</button>
+          </div>
+          <div class="habit-card-progress">
+            <div class="habit-progress-bar">
+              <div class="habit-progress-fill" style="width: ${percentage}%"></div>
+            </div>
+            <span class="habit-progress-text">${amount} / ${habit.dailyGoal} ${habit.unit} (${percentage}%)</span>
+          </div>
+          ${actionsHtml}
+          ${completedHtml}
+        </div>
+      `);
+    }
+
+    cardsContainer.innerHTML = cardsHtml.join('');
+    document.getElementById('habitSummary').textContent = `${completedCount}/${habits.length} 已完成`;
+
+    // 绑定快速打卡按钮
+    cardsContainer.querySelectorAll('.habit-quick-checkin').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const habitId = e.target.dataset.habitId;
+        if (e.target.dataset.custom) {
+          this._showCustomCheckin(habitId);
+        } else {
+          const amount = parseFloat(e.target.dataset.amount);
+          await this.habitManager.checkin(habitId, amount);
+          await this._renderHabitPanel();
+        }
+      });
+    });
+
+    // 绑定删除按钮
+    cardsContainer.querySelectorAll('.habit-card-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const habitId = e.target.dataset.habitId;
+        if (confirm('确定要删除这个习惯吗？历史打卡数据会保留。')) {
+          await this.habitManager.deleteHabit(habitId);
+          await this._renderHabitPanel();
+        }
+      });
+    });
+  }
+
+  // 获取快速打卡的预设数量
+  _getQuickAmounts(habit) {
+    if (habit.dailyGoal <= 1) return [1];
+    if (habit.dailyGoal <= 5) return [1, 2];
+    if (habit.dailyGoal <= 10) return [1, 5];
+    if (habit.dailyGoal <= 100) return [10, 25];
+    if (habit.dailyGoal <= 1000) return [100, 500];
+    return [500, 1000];
+  }
+
+  // 刷新打卡面板（如果已打开）
+  async _refreshHabitPanelIfOpen() {
+    const overlay = document.getElementById('habitOverlay');
+    if (overlay.classList.contains('show')) {
+      await this._renderHabitPanel();
+    }
+  }
+
+  // 显示添加习惯表单
+  _showHabitAddForm() {
+    document.getElementById('habitNameInput').value = '';
+    document.getElementById('habitGoalInput').value = '';
+    document.getElementById('habitUnitInput').value = '';
+    document.getElementById('habitCategoryInput').value = 'custom';
+    document.querySelectorAll('.habit-icon-option').forEach(o => o.classList.remove('active'));
+    document.querySelector('.habit-icon-option[data-icon="✅"]').classList.add('active');
+    document.getElementById('habitAddOverlay').style.display = 'flex';
+  }
+
+  // 确认添加习惯
+  async _confirmAddHabit() {
+    const name = document.getElementById('habitNameInput').value.trim();
+    const goal = parseFloat(document.getElementById('habitGoalInput').value);
+    const unit = document.getElementById('habitUnitInput').value.trim() || '次';
+    const category = document.getElementById('habitCategoryInput').value;
+    const iconEl = document.querySelector('.habit-icon-option.active');
+    const icon = iconEl ? iconEl.dataset.icon : '✅';
+
+    if (!name) { alert('请输入习惯名称'); return; }
+    if (!goal || goal <= 0) { alert('请输入有效的每日目标'); return; }
+
+    await this.habitManager.addHabit({
+      name, icon, unit, dailyGoal: goal, category, source: 'user_custom'
+    });
+
+    document.getElementById('habitAddOverlay').style.display = 'none';
+    await this._renderHabitPanel();
+  }
+
+  // 加载 AI 推荐习惯
+  async _loadHabitSuggestions() {
+    const suggestArea = document.getElementById('habitSuggestArea');
+    const suggestList = document.getElementById('habitSuggestList');
+    const emptyEl = document.getElementById('habitEmpty');
+
+    suggestArea.style.display = 'block';
+    emptyEl.style.display = 'none';
+    suggestList.innerHTML = '<div style="color:var(--muted);padding:12px;">正在分析你的习惯档案...</div>';
+
+    try {
+      const suggestions = await this.habitManager.suggestHabitsFromProfile(this.llm);
+      if (suggestions.length === 0) {
+        suggestList.innerHTML = '<div style="color:var(--muted);padding:12px;">暂无推荐，请先添加自定义习惯</div>';
+        return;
+      }
+      suggestList.innerHTML = suggestions.map((s, i) => `
+        <div class="habit-suggest-item">
+          <span class="habit-suggest-icon">${s.icon || '✅'}</span>
+          <div class="habit-suggest-info">
+            <div class="habit-suggest-name">${s.name} — 目标 ${s.dailyGoal}${s.unit}</div>
+            <div class="habit-suggest-reason">${s.reason || ''}</div>
+          </div>
+          <button class="btn accent habit-suggest-adopt" data-idx="${i}">采纳</button>
+        </div>
+      `).join('');
+
+      suggestList.querySelectorAll('.habit-suggest-adopt').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          await this.habitManager.adoptSuggestedHabit(suggestions[idx]);
+          e.target.parentElement.style.opacity = '0.5';
+          e.target.textContent = '已采纳';
+          e.target.disabled = true;
+          await this._renderHabitPanel();
+        });
+      });
+    } catch (err) {
+      suggestList.innerHTML = `<div style="color:var(--warn);padding:12px;">推荐失败: ${err.message}</div>`;
+    }
+  }
+
+  // 显示自定义打卡弹窗
+  _showCustomCheckin(habitId) {
+    this._customCheckinHabitId = habitId;
+    const habit = null;
+    document.getElementById('habitCustomAmount').value = '';
+    document.getElementById('habitCustomNote').value = '';
+    document.getElementById('habitCustomCheckinOverlay').style.display = 'flex';
+  }
+
+  // 确认自定义打卡
+  async _confirmCustomCheckin() {
+    const amount = parseFloat(document.getElementById('habitCustomAmount').value);
+    const note = document.getElementById('habitCustomNote').value.trim();
+    if (!amount || amount <= 0) { alert('请输入有效的数量'); return; }
+    await this.habitManager.checkin(this._customCheckinHabitId, amount, note);
+    document.getElementById('habitCustomCheckinOverlay').style.display = 'none';
+    await this._renderHabitPanel();
+  }
+
   // 显示通知横幅
   _showNotificationBanner(notif) {
     const container = document.getElementById('notifBannerContainer');
@@ -2959,15 +3677,70 @@ updated: ${profile.startDate}
   // ===== UI 辅助 =====
   setProcessing(processing) {
     this.isProcessing = processing;
-    document.getElementById('sendBtn').disabled = processing;
+    const sendBtn = document.getElementById('sendBtn');
+    if (sendBtn) sendBtn.disabled = processing;
     // 不 disable 输入框，保持可编辑（避免 IME 中文输入被阻断）
     const input = document.getElementById('messageInput');
     if (processing) {
       input.setAttribute('data-processing', 'true');
+      // 看门狗：非流式请求可能长时间静默（服务端 thinking / 视觉编码），
+      // 超过 3 分钟仍无响应则自动解锁，避免界面永久卡死、后续发送全部静默吞掉
+      if (this._processingWatchdog) clearTimeout(this._processingWatchdog);
+      this._processingWatchdog = setTimeout(() => {
+        if (!this.isProcessing) return;
+        this.isProcessing = false;
+        const sb = document.getElementById('sendBtn'); if (sb) sb.disabled = false;
+        input.removeAttribute('data-processing');
+        this.hideTyping();
+        const waited = this._reqStarted ? Math.round((Date.now() - this._reqStarted) / 1000) : 0;
+        const stageTxt = this._reqStage === 'waiting-server'
+          ? '服务端长时间未返回（图片识别/生成慢，或连接静默挂起）'
+          : '请求在发送前卡住（本地记忆加载 / 前端逻辑）';
+        this.addMessage('assistant', `⚠️ 请求等待约 ${waited}s 仍无响应，已自动恢复。诊断：${stageTxt}。可点击「🔄 重试」或重新发送。`);
+        this._appendRetryButton(null);
+        input.focus();
+      }, 180000);
+      // 实时请求状态条：显示「卡在哪一步、等了多久」，方便排查
+      this._reqStarted = Date.now();
+      if (this._reqStage !== 'waiting-server') this._reqStage = 'preparing';
+      this._showReqStatus();
+      if (this._reqTimer) clearInterval(this._reqTimer);
+      this._reqTimer = setInterval(() => this._showReqStatus(), 1000);
     } else {
+      if (this._processingWatchdog) { clearTimeout(this._processingWatchdog); this._processingWatchdog = null; }
+      if (this._reqTimer) { clearInterval(this._reqTimer); this._reqTimer = null; }
+      this._hideReqStatus();
       input.removeAttribute('data-processing');
       input.focus();
     }
+  }
+
+  // 请求进行中状态条（每秒刷新一次已等待秒数 + 当前阶段）
+  _showReqStatus() {
+    if (!this.isProcessing) return;
+    // 监听「请求已真正发出」事件，区分「前端准备」与「等服务端返回」两个阶段
+    if (!window.__qbStageBound) {
+      window.__qbStageBound = true;
+      window.addEventListener('qb-llm-stage', (e) => {
+        if (e.detail && e.detail.stage === 'sent') {
+          this._reqStage = 'waiting-server';
+          if (e.detail.hasImages !== undefined) this._reqIsImg = e.detail.hasImages;
+          this._showReqStatus();
+        }
+      });
+    }
+    const sec = this._reqStarted ? Math.round((Date.now() - this._reqStarted) / 1000) : 0;
+    const img = this._reqIsImg ? '🖼️ ' : '';
+    const stageTxt = this._reqStage === 'waiting-server' ? '等待响应' : '准备中';
+    // 等待秒数融入 typing 指示器（聊天气泡风格），不再用独立浮动黑条
+    const el = document.getElementById('typingIndicator');
+    if (!el) return;
+    const wait = el.querySelector('.typing-wait');
+    if (wait) wait.textContent = `${img}${stageTxt} · ${sec}s`;
+  }
+
+  _hideReqStatus() {
+    // 等待文字随 typing 指示器一起由 hideTyping() 移除，此处无需操作
   }
 
   // 显示进度遮罩

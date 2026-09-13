@@ -52,3 +52,7 @@ test_ps.txt
 
 # === Runtime Uploads ===
 .uploads/
+# === Tool-generated dirs ===
+.arts/
+.codegraph/
+.codeartsdoer/

@@ -2,13 +2,127 @@
 // LLM 服务层 — 管理 LLM 通信、Function Calling 循环、工具执行
 
 export class LLMService {
-  constructor(fileManager, mockLLM) {
+  constructor(fileManager, mockLLM, onDemandLoader) {
     this.fm = fileManager;
     this.llm = mockLLM;
+    this.onDemandLoader = onDemandLoader;
     this.maxToolRounds = (window.QINGBAN_SETTINGS?.maxToolRounds) || 5;
     this.toolCallLog = [];
     // ask_user 回调 — 由 App 层注入，返回 Promise<string>
     this.onAskUser = null;
+
+    // ===== KV Cache 优化：三层缓存 =====
+    // 第一层：System Prompt 固定前缀缓存
+    // 固定文件列表 — 这些文件内容不常变化，缓存后避免每次从 IndexedDB 读取
+    this._fixedFiles = [
+      'CLAUDE.md', 'PROFILE.md', 'BODY_METRICS.md',
+      'rules/learned-habits.md', 'rules/allergies.md',
+      'rules/preferences.md', 'rules/exercise.md'
+    ];
+    this._cachedPrefix = null;      // 缓存的固定前缀字符串
+    this._prefixCacheValid = false;  // 缓存是否有效
+
+    // 第三层：客户端响应缓存（LRU + TTL）
+    this._responseCache = new Map();
+    this._responseCacheMaxSize = 10;
+    this._responseCacheTTL = 30000; // 30 秒
+  }
+
+  // ===== 第一层：固定前缀缓存方法 =====
+
+  // 构建固定前缀（从 IndexedDB 读取固定文件并拼接）
+  async _buildFixedPrefix() {
+    const claudeMd = await this.fm.readFile('CLAUDE.md');
+    const profile = await this.fm.readFile('PROFILE.md');
+    const metrics = await this.fm.readFile('BODY_METRICS.md');
+    const learned = await this.fm.readFile('rules/learned-habits.md');
+    const allergies = await this.fm.readFile('rules/allergies.md');
+    const preferences = await this.fm.readFile('rules/preferences.md');
+    const exercise = await this.fm.readFile('rules/exercise.md');
+
+    return `${claudeMd || ''}
+
+---
+# 用户档案（固定注入）
+${profile || '（暂无记录）'}
+
+---
+# 身体指标（固定注入）
+${metrics || '（暂无记录）'}
+
+---
+# 过敏与忌口（固定注入）
+${allergies || '（暂无记录）'}
+
+---
+# 饮食偏好（固定注入）
+${preferences || '（暂无记录）'}
+
+---
+# 运动情况（固定注入）
+${exercise || '（暂无记录）'}
+
+---
+# AI 学习到的用户习惯（固定注入）
+${learned || '（暂无学习记录）'}`;
+  }
+
+  // 获取固定前缀（带缓存）
+  async _getFixedPrefix() {
+    if (this._prefixCacheValid && this._cachedPrefix !== null) {
+      console.log('[LLMService] 固定前缀缓存命中，跳过 IndexedDB 读取');
+      return this._cachedPrefix;
+    }
+    console.log('[LLMService] 固定前缀缓存未命中，从 IndexedDB 读取');
+    this._cachedPrefix = await this._buildFixedPrefix();
+    this._prefixCacheValid = true;
+    return this._cachedPrefix;
+  }
+
+  // 失效固定前缀缓存（当固定文件被修改时调用）
+  _invalidatePrefixCache(filePath) {
+    if (this._fixedFiles.includes(filePath)) {
+      console.log(`[LLMService] 固定文件 ${filePath} 被修改，失效前缀缓存`);
+      this._cachedPrefix = null;
+      this._prefixCacheValid = false;
+    }
+  }
+
+  // ===== 第三层：响应缓存方法 =====
+
+  // 计算响应缓存 key（基于对话历史 + 用户消息）
+  _computeResponseCacheKey(userMessage, conversationHistory) {
+    // 只使用最近 4 轮对话 + 用户消息作为 key，避免 key 过长
+    const recentHistory = conversationHistory.slice(-8);
+    const historyStr = recentHistory.map(m =>
+      `${m.role}:${typeof m.content === 'string' ? m.content.substring(0, 200) : ''}`
+    ).join('|');
+    return `${historyStr}||${typeof userMessage === 'string' ? userMessage.substring(0, 500) : ''}`;
+  }
+
+  // 查询响应缓存
+  _getResponseFromCache(key) {
+    const cached = this._responseCache.get(key);
+    if (!cached) return null;
+    if (Date.now() - cached.timestamp > this._responseCacheTTL) {
+      this._responseCache.delete(key);
+      return null;
+    }
+    // LRU: 移到末尾（最近使用）
+    this._responseCache.delete(key);
+    this._responseCache.set(key, cached);
+    console.log('[LLMService] 响应缓存命中，跳过 API 调用');
+    return cached.response;
+  }
+
+  // 写入响应缓存
+  _setResponseCache(key, response) {
+    if (this._responseCache.size >= this._responseCacheMaxSize) {
+      // LRU 淘汰：删除最早的一条
+      const firstKey = this._responseCache.keys().next().value;
+      this._responseCache.delete(firstKey);
+    }
+    this._responseCache.set(key, { response, timestamp: Date.now() });
   }
 
   // 读取近 N 天的日期文件（diet/ 或 chat/）
@@ -35,15 +149,13 @@ export class LLMService {
     return results;
   }
 
-  // 构建系统提示词（固定注入 + 近 7 天动态注入）
+  // 构建系统提示词 — 优化版：固定前缀在前，动态内容在后
+  // 结构重排目的：让 Kimi 服务端 KV Cache 的前缀部分保持稳定，提升缓存命中率
   async buildSystemPrompt(context) {
-    const claudeMd = await this.fm.readFile('CLAUDE.md');
-    const profile = await this.fm.readFile('PROFILE.md');
-    const metrics = await this.fm.readFile('BODY_METRICS.md');
-    const learned = await this.fm.readFile('rules/learned-habits.md');
-    const allergies = await this.fm.readFile('rules/allergies.md');
-    const preferences = await this.fm.readFile('rules/preferences.md');
-    const exercise = await this.fm.readFile('rules/exercise.md');
+    // ===== 第一部分：固定前缀（从缓存获取，避免每次读 IndexedDB）=====
+    const fixedPrefix = await this._getFixedPrefix();
+
+    // ===== 第二部分：动态内容（每次请求都变化，放在后面）=====
 
     // 构建详细时间信息
     const now = new Date();
@@ -80,28 +192,72 @@ export class LLMService {
     // 模拟日期
     const simDate = context?.currentDate || dateStr;
 
-    // 读取近 N 天的饮食记录和对话摘要
+    // 读取近 N 天的饮食记录和对话摘要 — 按需加载或全量注入
     const histDays = window.QINGBAN_SETTINGS?.historyDays ?? 7;
-    const recentDiet = await this._readRecentFiles('diet/', histDays, simDate);
-    const recentChat = await this._readRecentFiles('chat/', histDays, simDate);
-
-    // 格式化近 7 天饮食记录
     let dietSection = '';
-    if (recentDiet.length > 0) {
-      dietSection = recentDiet.map(d => `### ${d.date}\n${d.content}`).join('\n\n');
-    } else {
-      dietSection = '（近 7 天无饮食记录）';
-    }
-
-    // 格式化近 7 天对话摘要
     let chatSection = '';
-    if (recentChat.length > 0) {
-      chatSection = recentChat.map(d => `### ${d.date}\n${d.content}`).join('\n\n');
+
+    if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+      // 按需加载分支
+      const result = await this.onDemandLoader.loadForChat(context?.userText || '', simDate);
+      if (result.strategy === 'no_match') {
+        // 未命中历史查询：只注入索引摘要行
+        dietSection = result.indexSummaryLines
+          .filter(l => l.startsWith('- diet/'))
+          .join('\n') || '（近 7 天无饮食记录）';
+        chatSection = result.indexSummaryLines
+          .filter(l => l.startsWith('- chat/'))
+          .join('\n') || '（近 7 天无对话摘要）';
+        if (result.indexSummaryLines.length > 0) {
+          chatSection += '\n（如需历史详情，可使用 read_file 工具按需读取）';
+        }
+      } else {
+        // 命中意图或无索引：按返回文件分流
+        const dietFiles = result.files.filter(f => f.path.startsWith('diet/'));
+        const chatFiles = result.files.filter(f => f.path.startsWith('chat/'));
+        dietSection = dietFiles.length > 0
+          ? dietFiles.map(d => `### ${d.date}\n${d.content}`).join('\n\n')
+          : '（无饮食记录）';
+        chatSection = chatFiles.length > 0
+          ? chatFiles.map(d => `### ${d.date}\n${d.content}`).join('\n\n')
+          : '（无对话摘要）';
+      }
     } else {
-      chatSection = '（近 7 天无对话摘要）';
+      // 回退分支：原全量注入
+      const recentDiet = await this._readRecentFiles('diet/', histDays, simDate);
+      const recentChat = await this._readRecentFiles('chat/', histDays, simDate);
+      dietSection = recentDiet.length > 0
+        ? recentDiet.map(d => `### ${d.date}\n${d.content}`).join('\n\n')
+        : '（近 7 天无饮食记录）';
+      chatSection = recentChat.length > 0
+        ? recentChat.map(d => `### ${d.date}\n${d.content}`).join('\n\n')
+        : '（近 7 天无对话摘要）';
     }
 
-    return `${claudeMd}
+    // 读取今日打卡状态
+    let habitSection = '（暂无打卡习惯，可使用 suggest_habit 工具推荐）';
+    if (this.onGetHabitStatus) {
+      try {
+        const habitStatus = await this.onGetHabitStatus(null);
+        if (habitStatus.habits && habitStatus.habits.length > 0) {
+          const lines = habitStatus.habits.map(h =>
+            `- ${h.name}: ${h.todayAmount}/${h.goal}${h.unit} (${h.percentage}%) ${h.completed ? '✓' : ''} | 连续${h.streak}天`
+          );
+          habitSection = lines.join('\n');
+        }
+      } catch (e) {
+        // 静默失败，不影响主流程
+      }
+    }
+
+    // ===== 组装最终提示词：固定前缀 → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 =====
+    // 固定前缀在最前面，服务端 KV Cache 可以复用这部分
+    // 动态内容放在后面，变化不会影响前缀的缓存
+    return `${fixedPrefix}
+
+---
+# 近 7 天对话摘要（动态注入）
+${chatSection}
 
 ---
 # 当前时间（请严格以此为准，不要自行推算）
@@ -120,36 +276,12 @@ export class LLMService {
 - 不要凭印象判断工作日/周末，严格按上面的信息回答
 
 ---
-# 用户档案（固定注入）
-${profile}
-
----
-# 身体指标（固定注入）
-${metrics}
-
----
-# 过敏与忌口（固定注入）
-${allergies || '（暂无记录）'}
-
----
-# 饮食偏好（固定注入）
-${preferences || '（暂无记录）'}
-
----
-# 运动情况（固定注入）
-${exercise || '（暂无记录）'}
-
----
-# AI 学习到的用户习惯（固定注入）
-${learned || '（暂无学习记录）'}
-
----
 # 近 7 天饮食记录（动态注入）
 ${dietSection}
 
 ---
-# 近 7 天对话摘要（动态注入）
-${chatSection}`;
+# 今日打卡状态（动态注入）
+${habitSection}`;
   }
 
   // 定义可用工具
@@ -249,6 +381,63 @@ ${chatSection}`;
             required: ['title', 'message']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'checkin_habit',
+          description: '为用户完成习惯打卡。支持按习惯名称打卡，可记录数量。同一天可多次打卡，数量会累加。用户提到喝水、运动等习惯行为时调用。',
+          parameters: {
+            type: 'object',
+            properties: {
+              habit_name: { type: 'string', description: '习惯名称，如"喝水""跑步"' },
+              amount: { type: 'number', description: '本次打卡数量，如喝水0.5L、跑步30分钟。如不指定则默认1。' },
+              note: { type: 'string', description: '备注信息（可选）' }
+            },
+            required: ['habit_name']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'get_habit_status',
+          description: '查询用户今日或指定日期的打卡状态，包括各习惯的完成进度、连续天数。用户询问打卡进度时调用。',
+          parameters: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: '查询日期 YYYY-MM-DD，不传则默认今天' }
+            }
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'suggest_habit',
+          description: '基于用户的学习习惯档案，推荐适合打卡的健康习惯。用户要求推荐习惯或首次使用打卡功能时调用。',
+          parameters: {
+            type: 'object',
+            properties: {}
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'add_habit',
+          description: '添加一个新的打卡习惯。当用户在对话中要求添加习惯时调用。',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: '习惯名称，如"冥想""阅读"' },
+              unit: { type: 'string', description: '计量单位，如"分钟""次""页"' },
+              daily_goal: { type: 'number', description: '每日目标量' },
+              icon: { type: 'string', description: '习惯图标 emoji（可选），默认为 ✅' }
+            },
+            required: ['name', 'unit', 'daily_goal']
+          }
+        }
       }
     ];
   }
@@ -295,6 +484,8 @@ ${chatSection}`;
         case 'write_file':
           result = await this.fm.writeFile(args.path, args.content);
           displayName = `write_file("${args.path}", ${args.content.length} chars)`;
+          // KV Cache 优化：如果修改的是固定文件，失效前缀缓存
+          this._invalidatePrefixCache(args.path);
           break;
 
         case 'search_files':
@@ -305,6 +496,8 @@ ${chatSection}`;
         case 'append_file':
           result = await this.fm.appendFile(args.path, args.content);
           displayName = `append_file("${args.path}", ${args.content.length} chars)`;
+          // KV Cache 优化：如果修改的是固定文件，失效前缀缓存
+          this._invalidatePrefixCache(args.path);
           break;
 
         case 'ask_user':
@@ -333,6 +526,46 @@ ${chatSection}`;
           displayName = `send_notification("${args.title}", delay=${args.delay_minutes || 0}min)`;
           break;
 
+        case 'checkin_habit':
+          if (this.onCheckinHabit) {
+            const checkinResult = await this.onCheckinHabit(args.habit_name, args.amount || 1, args.note || '');
+            result = JSON.stringify(checkinResult);
+          } else {
+            result = '打卡回调未注册';
+          }
+          displayName = `checkin_habit("${args.habit_name}", ${args.amount || 1})`;
+          break;
+
+        case 'get_habit_status':
+          if (this.onGetHabitStatus) {
+            const statusResult = await this.onGetHabitStatus(args.date || null);
+            result = JSON.stringify(statusResult);
+          } else {
+            result = '打卡状态查询回调未注册';
+          }
+          displayName = `get_habit_status("${args.date || 'today'}")`;
+          break;
+
+        case 'suggest_habit':
+          if (this.onSuggestHabit) {
+            const suggestResult = await this.onSuggestHabit();
+            result = JSON.stringify(suggestResult);
+          } else {
+            result = '习惯推荐回调未注册';
+          }
+          displayName = `suggest_habit()`;
+          break;
+
+        case 'add_habit':
+          if (this.onAddHabit) {
+            const addResult = await this.onAddHabit(args.name, args.unit, args.daily_goal, args.icon);
+            result = JSON.stringify(addResult);
+          } else {
+            result = '添加习惯回调未注册';
+          }
+          displayName = `add_habit("${args.name}")`;
+          break;
+
         default:
           result = `Error: unknown tool: ${name}`;
       }
@@ -359,12 +592,55 @@ ${chatSection}`;
     };
   }
 
+  // 优化：剥离历史消息中的图片，仅保留最近一条用户消息的图片
+  // 避免每轮请求都把历史图片重新用 base64 发给模型做视觉编码（缓慢且浪费 token）
+  // 历史图片的关键信息已写入长期记忆文件，模型可通过 read_file 获取
+  _stripHistoryImages(messages) {
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    return messages.map((m, idx) => {
+      if (m.role === 'user' && idx !== lastUserIdx && Array.isArray(m.content)) {
+        const newContent = m.content.map(c =>
+          (c.type === 'image_url' || c.type === 'image')
+            ? { type: 'text', text: '[历史图片已省略，其内容已写入长期记忆文件]' }
+            : c
+        );
+        return { ...m, content: newContent };
+      }
+      return m;
+    });
+  }
+
   // 主对话方法 — 包含 Function Calling 循环
   async chat(userMessage, conversationHistory, context) {
     this.toolCallLog = [];
     this._lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     this._lastModel = 'unknown';
 
+    // ===== 第三层：响应缓存检查 =====
+    // 对短时间内相同（对话历史 + 用户消息）的请求直接返回缓存结果
+    // 跳过带图片的请求（图片内容难以作为缓存 key）
+    const hasImages = conversationHistory.some(m =>
+      Array.isArray(m.content) && m.content.some(c => c.type === 'image_url' || c.type === 'image')
+    ) || (typeof userMessage !== 'string');
+
+    if (!hasImages) {
+      const cacheKey = this._computeResponseCacheKey(userMessage, conversationHistory);
+      const cached = this._getResponseFromCache(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      // 记住 cacheKey，API 返回后写入缓存
+      this._pendingCacheKey = cacheKey;
+    } else {
+      this._pendingCacheKey = null;
+    }
+
+    context = context || {};
+    context.userText = typeof userMessage === 'string' ? userMessage
+      : (Array.isArray(userMessage) ? userMessage.filter(p => p.type === 'text').map(p => p.text).join(' ') : '');
     const systemPrompt = await this.buildSystemPrompt(context);
 
     let messages = [
@@ -372,6 +648,8 @@ ${chatSection}`;
       ...conversationHistory,
       { role: 'user', content: userMessage }
     ];
+    // 优化：历史轮次的图片只做视觉编码一次，后续请求省略，避免每轮重复编码历史图片
+    messages = this._stripHistoryImages(messages);
 
     const tools = this.getToolDefinitions();
 
@@ -391,12 +669,21 @@ ${chatSection}`;
 
       // 如果没有工具调用，返回最终回复
       if (!response.tool_calls || response.tool_calls.length === 0) {
-        return {
+        const result = {
           content: response.content,
           toolCalls: this.toolCallLog,
           model: response.model || this._lastModel || 'unknown',
           usage: this._lastUsage
         };
+
+        // ===== 第三层：写入响应缓存 =====
+        // 只缓存无工具调用的最终回复（带工具调用的回复依赖上下文，不适合缓存）
+        if (this._pendingCacheKey && this.toolCallLog.length === 0) {
+          this._setResponseCache(this._pendingCacheKey, result);
+        }
+        this._pendingCacheKey = null;
+
+        return result;
       }
 
       // 添加助手消息（包含工具调用）到消息列表
@@ -415,6 +702,8 @@ ${chatSection}`;
     }
 
     // 超过最大轮次，返回默认回复
+    // 有工具调用的回复不写入缓存
+    this._pendingCacheKey = null;
     return {
       content: '抱歉，处理超时了，请重试。',
       toolCalls: this.toolCallLog
@@ -429,7 +718,12 @@ ${chatSection}`;
     this.toolCallLog = [];
     this._lastUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     this._lastModel = 'unknown';
+    // 流式模式不使用响应缓存
+    this._pendingCacheKey = null;
 
+    context = context || {};
+    context.userText = typeof userMessage === 'string' ? userMessage
+      : (Array.isArray(userMessage) ? userMessage.filter(p => p.type === 'text').map(p => p.text).join(' ') : '');
     const systemPrompt = await this.buildSystemPrompt(context);
 
     let messages = [
@@ -437,20 +731,36 @@ ${chatSection}`;
       ...conversationHistory,
       { role: 'user', content: userMessage }
     ];
+    // 优化：历史轮次的图片只做视觉编码一次，后续请求省略，避免每轮重复编码历史图片
+    messages = this._stripHistoryImages(messages);
 
     const tools = this.getToolDefinitions();
     let finalContent = '';
     let finalThinking = '';
 
     for (let round = 0; round < this.maxToolRounds; round++) {
-      // 调用流式接口
-      const response = await this.llm.chatStream(messages, tools, context, (chunk) => {
-        finalContent += chunk;
-        if (onTextChunk) onTextChunk(chunk, finalContent);
-      }, (thinkingChunk) => {
-        finalThinking += thinkingChunk;
-        if (onThinkingChunk) onThinkingChunk(thinkingChunk, finalThinking);
-      });
+      // 调用流式接口（带 try-catch 防止网络错误直接中断）
+      let response;
+      try {
+        response = await this.llm.chatStream(messages, tools, context, (chunk) => {
+          finalContent += chunk;
+          if (onTextChunk) onTextChunk(chunk, finalContent);
+        }, (thinkingChunk) => {
+          finalThinking += thinkingChunk;
+          if (onThinkingChunk) onThinkingChunk(thinkingChunk, finalThinking);
+        });
+      } catch (llmErr) {
+        // LLM 调用失败 — 如果已有部分内容，返回部分内容
+        if (finalContent) {
+          return {
+            content: finalContent + '\n\n⚠️ （网络中断，回复可能不完整，可点击重试）',
+            toolCalls: this.toolCallLog,
+            model: this._lastModel || 'unknown',
+            usage: this._lastUsage
+          };
+        }
+        throw llmErr;
+      }
 
       // 累加 token 用量
       if (response.usage) {
@@ -462,10 +772,30 @@ ${chatSection}`;
         this._lastModel = response.model;
       }
 
+      // 检测流式中断（spark-llm 返回 stop_reason: 'error'）— 不执行可能不完整的工具调用
+      if (response.stop_reason === 'error') {
+        console.warn('[LLMService] 检测到流式中断，返回部分内容');
+        return {
+          content: response.content || finalContent,
+          toolCalls: this.toolCallLog,
+          model: response.model || this._lastModel || 'unknown',
+          usage: this._lastUsage
+        };
+      }
+
       // 检测 max_tokens 截断：如果有工具调用但 stop_reason 为 max_tokens，
       // 说明工具参数被截断，不执行工具，直接提示用户重试
       if (response.stop_reason === 'max_tokens' && response.tool_calls && response.tool_calls.length > 0) {
-        console.warn('[LLMService] 检测到 max_tokens 截断，工具调用可能不完整，跳过执行');
+        const _hasImg = messages.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'image_url' || c.type === 'image'));
+        console.warn('[LLMService] 检测到 max_tokens 截断，工具调用可能不完整，跳过执行。诊断:', {
+          hasImages: _hasImg,
+          thinkingLen: finalThinking.length,
+          contentLen: finalContent.length,
+          toolCount: response.tool_calls.length,
+          tools: response.tool_calls.map(t => ({ name: t.function.name, argsLen: t.function.arguments.length, argsHead: t.function.arguments.slice(0, 120) })),
+          usage: response.usage,
+          model: response.model
+        });
         if (onTextChunk) onTextChunk('', finalContent + '\n\n⚠️ 回复因 token 上限被截断，请重新发送消息。');
         return {
           content: finalContent + '\n\n⚠️ 回复因 token 上限被截断，工具调用未完成。请重新发送消息。',
@@ -500,9 +830,8 @@ ${chatSection}`;
         messages.push(toolResult);
       }
 
-      // 工具调用后重置 finalContent 和 finalThinking，下一轮会重新累积
-      finalContent = '';
-      finalThinking = '';
+      // 工具调用后保留 finalContent / finalThinking 的累积（不重置），
+      // 使多轮工具调用产生的文本能完整拼接显示
     }
 
     // 超过最大轮次

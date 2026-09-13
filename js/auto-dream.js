@@ -3,9 +3,10 @@
 // Claude Code 四大核心机制之一：后台自动整理记忆、生成周报/月报、识别模式
 
 export class AutoDream {
-  constructor(fileManager, mockLLM) {
+  constructor(fileManager, mockLLM, onDemandLoader) {
     this.fm = fileManager;
     this.llm = mockLLM;
+    this.onDemandLoader = onDemandLoader;
   }
 
   // 判断是否应该触发 Auto Dream
@@ -234,6 +235,19 @@ export class AutoDream {
 
   // 收集日期范围内的饮食数据
   async _collectDietData(startDate, endDate) {
+    if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+      // 按需加载分支
+      const result = await this.onDemandLoader.loadForSummary({
+        taskType: 'weekly_report',
+        currentDate: endDate,
+        dateRange: { start: startDate, end: endDate }
+      });
+      return result.files
+        .filter(f => f.path.startsWith('diet/'))
+        .map(f => ({ date: f.date, content: f.content }));
+    }
+
+    // 回退分支：原 listFiles + 逐个读取
     const files = await this.fm.listFiles();
     const dietFiles = files.filter(f => {
       if (!f.path.startsWith('diet/')) return false;
@@ -256,6 +270,19 @@ export class AutoDream {
 
   // 收集日期范围内的对话数据
   async _collectChatData(startDate, endDate) {
+    if (window.QINGBAN_SETTINGS?.onDemandLoad !== false && this.onDemandLoader) {
+      // 按需加载分支
+      const result = await this.onDemandLoader.loadForSummary({
+        taskType: 'weekly_report',
+        currentDate: endDate,
+        dateRange: { start: startDate, end: endDate }
+      });
+      return result.files
+        .filter(f => f.path.startsWith('chat/'))
+        .map(f => ({ date: f.date, content: f.content }));
+    }
+
+    // 回退分支：原 listFiles + 逐个读取
     const files = await this.fm.listFiles();
     const chatFiles = files.filter(f => {
       if (!f.path.startsWith('chat/')) return false;

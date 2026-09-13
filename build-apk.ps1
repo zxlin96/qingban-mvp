@@ -49,6 +49,19 @@ if (Test-Path $syncedAssets) {
     Log "WARNING: Web assets not found, build may fail."
 }
 
+# Step 2.5: Sync latest web assets (www -> assets/public), equivalent to `cap copy`
+# 根因修复：此前打包不拷贝 web 资源，全靠手动同步，曾导致 on-demand-loader.js 缺失、
+# app.js 模块 404、整个应用黑屏卡「加载中」。此后每次打包前自动镜像 www 到原生工程。
+Log "Step 2.5: Syncing web assets www -> assets/public..."
+robocopy "$projectRoot\www" "$androidDir\app\src\main\assets\public" /E /NFL /NDL /NJH /NJS | Out-Null
+if ($LASTEXITCODE -ge 8) {
+    Log "ERROR: robocopy failed with exit code $LASTEXITCODE"
+    "FAILED" | Out-File $StatusFile -Encoding UTF8
+    Log "=== Build Failed ==="
+    exit 1
+}
+Log "Web assets synced (robocopy exit $LASTEXITCODE)."
+
 # Step 3: Build APK with Gradle (clean first to ensure latest assets are packaged)
 Log "Step 3: Building APK with Gradle..."
 Set-Location $androidDir

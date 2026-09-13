@@ -141,6 +141,7 @@
     <div class="actions">
       <button class="btn icon-btn" id="memoryBtn" title="记忆 — 查看轻伴记住了什么"><svg class="ico"><use href="#icon-folder"/></svg></button>
       <button class="btn icon-btn" id="autoDreamBtn" title="Auto Dream — 生成周报/月报/模式分析"><svg class="ico"><use href="#icon-dream"/></svg></button>
+      <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
     </div>
   </header>
 
@@ -431,6 +432,112 @@
 
 <!-- 通知横幅 — 大模型通过 send_notification 工具触发，从顶部滑入 -->
 <div class="notif-banner-container" id="notifBannerContainer"></div>
+
+<!-- 打卡面板 — 习惯追踪 -->
+<div class="habit-overlay" id="habitOverlay" style="display:none;">
+  <div class="habit-panel">
+    <div class="habit-header">
+      <span class="habit-title">打卡 · 习惯追踪</span>
+      <div class="habit-header-actions">
+        <button class="btn accent habit-add-btn" id="habitAddBtn">+ 添加习惯</button>
+        <button class="btn icon-btn" id="closeHabit" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+      </div>
+    </div>
+    <div class="habit-overview">
+      <div class="habit-date-nav">
+        <button class="btn icon-btn" id="habitPrevDay" title="前一天"><svg class="ico"><use href="#icon-chevron-down" style="transform:rotate(90deg)"/></svg></button>
+        <span id="habitDateLabel">今天</span>
+        <button class="btn icon-btn" id="habitNextDay" title="后一天"><svg class="ico"><use href="#icon-chevron-down" style="transform:rotate(-90deg)"/></svg></button>
+      </div>
+      <div class="habit-summary" id="habitSummary"></div>
+    </div>
+    <div class="habit-cards" id="habitCards"></div>
+    <div class="habit-suggest-area" id="habitSuggestArea" style="display:none;">
+      <div class="habit-suggest-title">AI 根据你的习惯档案推荐</div>
+      <div id="habitSuggestList"></div>
+    </div>
+    <div class="habit-empty" id="habitEmpty" style="display:none;">
+      <div class="habit-empty-icon">📋</div>
+      <div class="habit-empty-text">还没有打卡习惯</div>
+      <button class="btn accent" id="habitSuggestBtn">让 AI 推荐习惯</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加习惯表单 -->
+<div class="file-viewer" id="habitAddOverlay" style="display:none;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <span class="title">添加打卡习惯</span>
+      <button class="btn icon-btn" id="closeHabitAdd" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+    </div>
+    <div class="modal-body" style="padding:16px;">
+      <div class="settings-row">
+        <label>习惯名称</label>
+        <input type="text" id="habitNameInput" class="settings-input" placeholder="如：喝水、跑步、冥想">
+      </div>
+      <div class="settings-row">
+        <label>图标</label>
+        <div class="habit-icon-picker" id="habitIconPicker">
+          <span class="habit-icon-option active" data-icon="✅">✅</span>
+          <span class="habit-icon-option" data-icon="💧">💧</span>
+          <span class="habit-icon-option" data-icon="🏃">🏃</span>
+          <span class="habit-icon-option" data-icon="😴">😴</span>
+          <span class="habit-icon-option" data-icon="🍽️">🍽️</span>
+          <span class="habit-icon-option" data-icon="⚖️">⚖️</span>
+          <span class="habit-icon-option" data-icon="🧘">🧘</span>
+          <span class="habit-icon-option" data-icon="📚">📚</span>
+          <span class="habit-icon-option" data-icon="🚶">🚶</span>
+          <span class="habit-icon-option" data-icon="💊">💊</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>每日目标</label>
+        <div style="display:flex;gap:8px;">
+          <input type="number" id="habitGoalInput" class="settings-input" placeholder="如 2" min="0" step="0.1" style="flex:1;">
+          <input type="text" id="habitUnitInput" class="settings-input" placeholder="单位" style="width:90px;">
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>分类</label>
+        <select id="habitCategoryInput" class="settings-input">
+          <option value="custom">自定义</option>
+          <option value="water">喝水</option>
+          <option value="meal">饮食</option>
+          <option value="exercise">运动</option>
+          <option value="weight">称重</option>
+          <option value="sleep">睡眠</option>
+        </select>
+      </div>
+      <div class="settings-actions">
+        <button class="btn accent" id="habitAddConfirm">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自定义打卡弹窗 -->
+<div class="file-viewer" id="habitCustomCheckinOverlay" style="display:none;">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-header">
+      <span class="title" id="habitCustomCheckinTitle">打卡</span>
+      <button class="btn icon-btn" id="closeHabitCustomCheckin" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+    </div>
+    <div class="modal-body" style="padding:16px;">
+      <div class="settings-row">
+        <label>本次数量</label>
+        <input type="number" id="habitCustomAmount" class="settings-input" placeholder="如 0.5" min="0" step="0.1">
+      </div>
+      <div class="settings-row">
+        <label>备注（可选）</label>
+        <input type="text" id="habitCustomNote" class="settings-input" placeholder="如：早晨喝了一杯">
+      </div>
+      <div class="settings-actions">
+        <button class="btn accent" id="habitCustomConfirm">确认打卡</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

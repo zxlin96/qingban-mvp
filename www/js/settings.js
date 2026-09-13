@@ -15,7 +15,9 @@ const DEFAULT_SETTINGS = {
   fileTruncate: 800,              // 单文件截断字数
   maxOutputTokens: 32768,         // 单次回复最大输出 token 数（32K，适配 K3 thinking）
   maxContextTokens: 1048576,      // 上下文窗口大小（1M）
-  effortLevel: 'max'              // 推理强度（max=最高质量）
+  effortLevel: 'max',             // 推理强度（max=最高质量）
+  onDemandLoad: true,             // 按需索引加载开关（true=按需加载历史，false=回退全量注入近N天）
+  onDemandTokenBudget: 2000       // 对话场景动态注入部分 token 预算上限
 };
 
 // 加载设置（合并默认值 + 版本升级）
