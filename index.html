@@ -114,6 +114,12 @@
     <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="6 9 12 15 18 9"/>
     </symbol>
+    <symbol id="icon-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 18 9 12 15 6"/>
+    </symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="9 18 15 12 9 6"/>
+    </symbol>
     <symbol id="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
       <circle cx="12" cy="12" r="3"/>
@@ -154,8 +160,10 @@
       <div class="menu-item" id="menuFont"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-font"/></svg><span>字体大小</span></div>
       <div class="menu-item" id="menuToken"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-chart"/></svg><span>Token 用量</span></div>
       <div class="menu-item" id="menuContext"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-eye"/></svg><span>查看上下文</span></div>
+      <div class="menu-item" id="menuCalendar"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span class="date-badge date-badge-clickable" id="dateBadge">加载中...</span></div>
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
+      <div class="menu-item" id="menuAutoDream"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-dream"/></svg><span>Auto Dream — 周报/月报</span></div>
       <div class="menu-item" id="menuRebuild"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>重建索引</span></div>
       <div class="menu-item" id="menuRefreshHabits"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>刷新习惯总结</span></div>
       <div class="menu-item" id="menuBackup"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>数据备份</span></div>
@@ -165,13 +173,10 @@
     <div class="brand">
       <div class="logo">轻</div>
       <span class="app-name">轻伴</span>
-      <!-- 日期徽章（可点击，打开日历） -->
-      <span class="date-badge date-badge-clickable" id="dateBadge" title="点击查看历史记录">加载中...</span>
     </div>
     <div class="actions">
       <button class="btn icon-btn" id="memoryBtn" title="记忆 — 查看轻伴记住了什么"><svg class="ico"><use href="#icon-folder"/></svg></button>
       <button class="btn icon-btn" id="trendBtn" title="趋势 — 体重/热量/打卡可视化"><svg class="ico"><use href="#icon-chart"/></svg></button>
-      <button class="btn icon-btn" id="autoDreamBtn" title="Auto Dream — 生成周报/月报/模式分析"><svg class="ico"><use href="#icon-dream"/></svg></button>
       <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
     </div>
   </header>
@@ -540,9 +545,9 @@
     </div>
     <div class="habit-overview">
       <div class="habit-date-nav">
-        <button class="btn icon-btn" id="habitPrevDay" title="前一天"><svg class="ico"><use href="#icon-chevron-down" style="transform:rotate(90deg)"/></svg></button>
+        <button class="btn icon-btn" id="habitPrevDay" title="前一天"><svg class="ico"><use href="#icon-chevron-left"/></svg></button>
         <span id="habitDateLabel">今天</span>
-        <button class="btn icon-btn" id="habitNextDay" title="后一天"><svg class="ico"><use href="#icon-chevron-down" style="transform:rotate(-90deg)"/></svg></button>
+        <button class="btn icon-btn" id="habitNextDay" title="后一天"><svg class="ico"><use href="#icon-chevron-right"/></svg></button>
       </div>
       <div class="habit-summary" id="habitSummary"></div>
     </div>

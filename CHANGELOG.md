@@ -1,5 +1,14 @@
 # 轻伴 MVP 变更日志
 
+## 2026-09-19 (v3.6.1)
+
+### 优化 — 顶栏布局与打卡日期导航修复
+
+- **顶栏瘦身**：「Auto Dream」与日期徽章移入左侧功能菜单 — 菜单新增「日历」条目（日历图标 + 当前日期，点击打开日历）与「Auto Dream — 周报/月报」条目，顶栏仅保留 记忆/趋势/打卡 三个高频入口，手机宽度下不再拥挤
+- **修复打卡日期导航左右箭头不显示**：原实现通过 `transform:rotate(90deg)` 复用向下箭头图标，SVG rotate 默认围绕原点 (0,0) 旋转，图形被转出 viewBox 可视区域；新增 `icon-chevron-left`/`icon-chevron-right` 图标定义并直接引用，左右箭头正常渲染
+- **样式适配**：`.date-badge`/`.date-badge-clickable` 选择器从 `.topbar` 前缀改为全局类，日期徽章在功能菜单内正常展示
+- **涉及文件**：`js/app.js`、`index.html`、`css/style.css`、`package.json` 及三目录同步副本
+
 ## 2026-09-18 (v3.6.0)
 
 ### 新增 — 趋势可视化与 AI 周报（ROADMAP 阶段三）

@@ -144,7 +144,7 @@ html, body {
   font-weight: 700;
 }
 
-.topbar .date-badge {
+.date-badge {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
@@ -153,12 +153,12 @@ html, body {
   border-radius: 4px;
 }
 
-.topbar .date-badge-clickable {
+.date-badge-clickable {
   cursor: pointer;
   transition: color 0.2s, background 0.2s;
 }
 
-.topbar .date-badge-clickable:hover {
+.date-badge-clickable:hover {
   color: var(--accent);
   background: var(--bg2);
 }

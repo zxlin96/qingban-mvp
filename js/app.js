@@ -3,12 +3,19 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.6.0';
-const APP_VERSION_DATE = '2026-09-18';
+const APP_VERSION = '3.6.1';
+const APP_VERSION_DATE = '2026-09-19';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
 const CHANGELOG = [
+  {
+    ver: '3.6.1', date: '2026-09-19',
+    items: [
+      '优化：顶栏瘦身 — 「Auto Dream」与日期徽章移入左侧功能菜单，顶栏仅保留 记忆/趋势/打卡 三个高频入口',
+      '修复：打卡面板日期导航左右箭头不显示 — 原 rotate(90deg) 复用向下箭头导致图形转出可视区，新增左/右箭头图标直接引用'
+    ]
+  },
   {
     ver: '3.6.0', date: '2026-09-18',
     items: [
@@ -1519,8 +1526,11 @@ ${habits}
     });
     document.getElementById('trendWeeklyBtn').addEventListener('click', () => this._onWeeklyReportClick());
 
-    // 日期徽章 — 点击打开日历
-    document.getElementById('dateBadge').addEventListener('click', () => this.showCalendar());
+    // 菜单项 — 日历（日期徽章已从顶栏移入功能菜单）
+    document.getElementById('menuCalendar').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showCalendar();
+    });
     document.getElementById('closeCalendar').addEventListener('click', () => {
       document.getElementById('calendarOverlay').style.display = 'none';
     });
@@ -1553,8 +1563,11 @@ ${habits}
       }
     });
 
-    // Auto Dream — 生成周报/月报/模式分析
-    document.getElementById('autoDreamBtn').addEventListener('click', () => this.runAutoDream());
+    // 菜单项 — Auto Dream — 生成周报/月报/模式分析（已从顶栏移入功能菜单）
+    document.getElementById('menuAutoDream').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.runAutoDream();
+    });
 
     // 打卡面板
     document.getElementById('habitBtn').addEventListener('click', () => this.showHabitPanel());
