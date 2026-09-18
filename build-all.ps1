@@ -131,6 +131,16 @@ Write-Step "Step 1/4: 同步 Web 资源到 Android..."
 
 Push-Location $projectRoot
 try {
+    # 1a. 源目录(js/css/data/index.html/manifest.json) → www/ → android assets
+    $syncResult = & node scripts/sync-web.mjs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "三目录同步失败"
+        $syncResult | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        Pop-Location
+        exit 1
+    }
+    $syncResult | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    # 1b. Capacitor 同步: www/ → android assets + 插件更新
     $npxResult = & npx cap sync android 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Web 资源同步失败"

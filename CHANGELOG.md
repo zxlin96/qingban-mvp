@@ -1,5 +1,47 @@
 # 轻伴 MVP 变更日志
 
+## 2026-09-18 (v3.6.0)
+
+### 新增 — 趋势可视化与 AI 周报（ROADMAP 阶段三）
+
+- **数据解析层**：新模块 `js/stats-manager.js`。容错解析 `diet/*.md`（分餐段"估算热量"、汇总段"总估算热量"）与 `BODY_METRICS.md`（体重趋势表 MM-DD 行，按今天推算年份、1 月日期归上一年、同日多条取最后）。解析结果缓存到 `.meta/daily-stats.json` 侧车文件，以源文件 `updatedAt` 集合为签名，未变化直接命中缓存；历史数据零迁移，升级后即可出图
+- **趋势面板**：顶栏新增「趋势」按钮。体重折线图（近 30 天，首末值标注）、热量柱状图（近 7 天，无记录日占位、日均汇总）、打卡热力图（近 28 天 7 列网格，颜色深浅 = 当日打卡条数，悬停显示明细）。全部为原生 SVG 字符串生成（`buildWeightSvg`/`buildCaloriesSvg`/`buildHabitHeatmap` 纯函数），零第三方依赖、离线可用，配色走 CSS 变量跟随深/浅/暖三主题
+- **AI 周报**：跨天流程新增条件步骤 4.6 — 昨日为周日时自动生成上周周报（近 7 天热量/体重/习惯打卡数据驱动 + 300-450 字解读与建议），写入 `weekly/<周日日期>.md`；趋势面板「生成本周周报」可手动触发（生成后重建索引 + 刷新文件树）
+- **KV Cache 保护**：图表数据仅从 IndexedDB 读取展示，不注入系统提示词，前缀缓存命中率不受影响
+- **测试**：新增 `test/stats-manager.test.js` 15 个用例（体重表解析/年份推算/饮食解析降级/缓存签名与 force 重建/三个 SVG 生成器/日期平移），全量 70 用例通过
+- **涉及文件**：`js/stats-manager.js`（新）、`js/app.js`、`index.html`、`css/style.css`、`package.json` 及三目录同步副本
+
+## 2026-09-18 (v3.5.0)
+
+### 新增 — 数据备份与迁移（ROADMAP 阶段二）
+
+- **全量导出**：新模块 `js/backup-manager.js`，把 IndexedDB 单一文件存储（记忆文件、`diet/`、`chat/`、`habits/`、`.meta/*.json`、设置）dump 为单个 `qingban-backup-日期-时间.qb.json`（含 format/version/appVersion/exportedAt 元信息与版本兼容校验）。APK 内经 `@capacitor/filesystem` 写入系统 Documents 目录，失败或 Web 模式自动降级浏览器 blob 下载
+- **完整还原（导入）**：`<input type="file">` 选择备份 → 结构校验（format/版本号/ files 结构，版本高于当前 App 时拒绝并提示升级）→ confirm 确认 → `clearAll` 后全量写入 → 失效 KV 前缀缓存 + 重建 INDEX.md + 整页刷新（replace 导入后内存对话历史与磁盘不一致，必须重载）
+- **记忆文件自动快照**：跨天流程新增步骤 4.5，将 `PROFILE.md`、`BODY_METRICS.md`、`rules/learned-habits.md`、`rules/allergies.md`、`rules/preferences.md`、`rules/exercise.md` 快照到 `.meta/backups/<日期_时分>/`，滚动保留最近 7 份（超出自动删除）
+- **快照手动管理**：菜单「数据备份」新面板：立即快照 / 快照列表（时间倒序 + 文件数）/ 一键回滚指定快照（stamp 格式校验防路径注入，回滚后失效前缀缓存并刷新文件树）。CLAUDE.md / INDEX.md 为系统文件不入快照
+- **插件**：新增依赖 `@capacitor/filesystem@^8.1.3`，`npx cap sync android` 已注册（capacitor.plugins.json 含 FilesystemPlugin）
+- **测试**：新增 `test/backup-manager.test.js` 9 个用例（导出结构/校验拒绝/replace 与 merge 导入/快照与滚动清理/回滚与 stamp 拒绝），全量 55 用例通过
+- **涉及文件**：`js/backup-manager.js`（新）、`js/app.js`、`index.html`、`css/style.css`、`package.json`、`test/*` 及三目录同步副本
+
+## 2026-09-18 (v3.4.8)
+
+### 新增 — 工程地基（ROADMAP 阶段一）
+
+- **三目录同步自动化**：新增 `scripts/sync-web.mjs`，管理范围 js/、css/、data/、index.html、manifest.json，源目录 → www/ → android assets。`npm run sync` 复制差异并清理孤儿文件，`npm run verify` 仅校验（MD5 比对，不一致退出码 1）；`build-all.ps1` Step 1 接入同一脚本，消除两套同步逻辑漂移
+- **测试基建**：新增 `npm test`（Node 22 原生 node:test，零新依赖），46 个用例 = 历史 Bug 回归集：max_tokens 传参（v3.4.2/v3.4.7）、含图片 Anthropic maxTokens 上限、凌晨 0-4 点熬夜不跨天、cleanMessages 剥离非标字段、KV 前缀缓存失效（write_file/append_file 命中固定文件）、响应缓存 LRU/TTL、流式工具参数跨 chunk 累加、流式中断返回部分内容（stop_reason=error）、chat() 工具循环与缓存行为
+- **真机回归清单**：新增 `docs/REGRESSION.md`，发版前手动验收逐项过（启动/对话/打卡/跨天/弱网/备份/趋势）
+
+### 优化
+
+- **server.js 可测试化**：`cleanMessages` 改为导出；API Key 校验与端口监听用主模块判断（`import.meta.url === pathToFileURL(argv[1])`）包裹，作为模块导入时不退出、不监听，`node server.js` 直接运行行为不变
+- **熬夜跨天逻辑提取**：app.js 启动流程中内联的"凌晨 0-4 点算前一天"日期计算提取为 `ChatManager.getEffectiveToday(now)`，行为不变、可单测（含月初/跨年边界用例）
+- **AGENTS.md 更新**：移除"无测试"描述，补充 npm test / npm run sync / npm run verify 用法
+
+### 清理
+
+- 删除无引用的孤儿实验文件 `www/js/data-store.js`（android assets 副本同步清理）；根目录构建中间物 `cmd_test.txt`、`test_ps.txt`、`轻伴-debug_3.4.1.apk`、`轻伴-debug - 副本.apk`；`www/index.html` 独有的启动诊断脚本回迁根目录 index.html（恢复"根目录为源"约定）
+- **涉及文件**：`scripts/sync-web.mjs`（新）、`test/*`（新）、`docs/REGRESSION.md`（新）、`server.js`、`js/app.js`、`js/chat-manager.js`、`package.json`、`build-all.ps1` 及三目录同步副本
+
 ## 2026-08-31 (v3.4.7)
 
 ### 修复

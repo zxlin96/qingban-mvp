@@ -3,12 +3,40 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.4.7';
-const APP_VERSION_DATE = '2026-08-31';
+const APP_VERSION = '3.6.0';
+const APP_VERSION_DATE = '2026-09-18';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
 const CHANGELOG = [
+  {
+    ver: '3.6.0', date: '2026-09-18',
+    items: [
+      '新增：趋势面板 — 顶栏新入口，体重折线（近30天）/ 热量柱状（近7天）/ 打卡热力图（近28天），原生 SVG 零依赖、配色跟随主题',
+      '新增：数据解析层 stats-manager — 容错解析 diet/*.md 与 BODY_METRICS.md，缓存到 .meta/daily-stats.json（源文件签名变化自动重建），历史数据零迁移直接出图',
+      '新增：AI 周报 — 每周日跨天自动生成上周周报（热量/体重/习惯数据驱动），写入 weekly/日期.md；趋势面板支持手动生成',
+      '优化：图表数据不注入系统提示词，KV Cache 前缀命中不受影响'
+    ]
+  },
+  {
+    ver: '3.5.0', date: '2026-09-18',
+    items: [
+      '新增：数据备份 — 菜单「数据备份」，一键导出全部数据为 .qb.json（记忆/饮食/对话/打卡/设置），导入完整还原',
+      '新增：记忆文件自动快照 — 每次跨天自动快照 PROFILE/身体指标/rules 等关键记忆文件，滚动保留最近 7 份',
+      '新增：快照手动管理 — 面板内立即快照、查看快照列表、一键回滚（防 AI 误写记忆）',
+      '新增：@capacitor/filesystem 插件（APK 内写入系统目录），Web 模式自动降级浏览器下载'
+    ]
+  },
+  {
+    ver: '3.4.8', date: '2026-09-18',
+    items: [
+      '新增：三目录同步自动化 scripts/sync-web.mjs（npm run sync / verify），build-all.ps1 接入同一脚本',
+      '新增：测试基建 npm test（node:test 零依赖），46 个用例覆盖 max_tokens/熬夜跨天/cleanMessages/KV 缓存等历史 Bug 回归',
+      '新增：docs/REGRESSION.md 真机回归清单，发版前逐项过',
+      '优化：server.js 可测试化（cleanMessages 导出、启动主模块判断）；熬夜跨天逻辑提取为 ChatManager.getEffectiveToday()',
+      '清理：删除孤儿 data-store.js 副本与根目录构建中间物，www/index.html 启动诊断回迁根目录'
+    ]
+  },
   {
     ver: '3.4.7', date: '2026-08-31',
     items: [
@@ -282,6 +310,8 @@ import { NotificationManager } from './notification-manager.js';
 import { HabitManager } from './habit-manager.js';
 import { IndexManager } from './index-manager.js';
 import { OnDemandLoader } from './on-demand-loader.js';
+import { BackupManager } from './backup-manager.js';
+import { StatsManager } from './stats-manager.js';
 
 class App {
   constructor() {
@@ -296,6 +326,8 @@ class App {
     this.profileLearner = new ProfileLearner(this.fm, this.llm, this.onDemandLoader);
     this.notificationManager = new NotificationManager(this.fm);
     this.habitManager = new HabitManager(this.fm);
+    this.backupManager = new BackupManager(this.fm, APP_VERSION);
+    this.statsManager = new StatsManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -370,20 +402,8 @@ class App {
     window.__qbStage = 'dayRollover';
     const savedDate = saved?.date;
 
-    // 凌晨 0-4 点不跨天：用户可能熬夜，仍然算前一天
-    const initHour = new Date().getHours();
-    const isLateNight = initHour >= 0 && initHour < 4;
-    // 熬夜时段：effectiveToday 为昨天，否则为今天
-    const effectiveToday = isLateNight
-      ? (() => {
-          const d = new Date();
-          d.setDate(d.getDate() - 1);
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          return `${y}-${m}-${day}`;
-        })()
-      : realToday;
+    // 凌晨 0-4 点不跨天：用户可能熬夜，仍然算前一天（熬夜时段 effectiveToday 为昨天）
+    const effectiveToday = this.chatManager.getEffectiveToday();
 
     // 检测是否跨天：保存的日期早于有效今天
     if (savedDate && savedDate < effectiveToday) {
@@ -738,6 +758,33 @@ class App {
       } catch (e) {
         console.error('[DayRollover] 周度总结失败:', e.message);
         if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'error');
+      }
+    }
+
+    // 步骤 4.5: 记忆文件自动快照（滚动保留最近 7 份，防 AI 误写丢数据）
+    if (this._dtAddStep) this._dtAddStep('正在快照记忆文件...');
+    const stepSnap = this._dtStepIndex - 1;
+    try {
+      await this.backupManager.snapshotMemory();
+      if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
+    } catch (e) {
+      console.error('[DayRollover] 记忆快照失败:', e.message);
+      if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'error');
+    }
+
+    // 步骤 4.6 (条件): AI 周报 — 昨日为周日时生成上周周报
+    let yesterdayDow = -1;
+    try { yesterdayDow = new Date(`${yesterdayDate}T00:00:00`).getDay(); } catch (_) {}
+    if (yesterdayDow === 0) {
+      if (this._dtAddStep) this._dtAddStep('正在生成 AI 周报...');
+      const stepWeeklyReport = this._dtStepIndex - 1;
+      try {
+        const report = await this._generateWeeklyReport(yesterdayDate);
+        console.log('[DayRollover] AI 周报已生成:', report.path);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'done');
+      } catch (e) {
+        console.error('[DayRollover] AI 周报失败:', e.message);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'error');
       }
     }
 
@@ -1438,6 +1485,39 @@ ${habits}
         this.advanceDay();
       }
     });
+
+    // 菜单项 — 数据备份
+    document.getElementById('menuBackup').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this._openBackupPanel();
+    });
+    document.getElementById('closeBackup').addEventListener('click', () => {
+      document.getElementById('backupOverlay').style.display = 'none';
+    });
+    document.getElementById('backupOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'backupOverlay') {
+        document.getElementById('backupOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('backupExportBtn').addEventListener('click', () => this._exportBackup());
+    document.getElementById('backupImportBtn').addEventListener('click', () => {
+      document.getElementById('backupImportInput').click();
+    });
+    document.getElementById('backupImportInput').addEventListener('change', (e) => this._importBackupFile(e.target));
+    document.getElementById('backupSnapshotBtn').addEventListener('click', () => this._snapshotNow());
+    document.getElementById('backupSnapshotList').addEventListener('click', (e) => this._onSnapshotListClick(e));
+
+    // 顶栏 — 趋势面板
+    document.getElementById('trendBtn').addEventListener('click', () => this._openTrendPanel());
+    document.getElementById('closeTrend').addEventListener('click', () => {
+      document.getElementById('trendOverlay').style.display = 'none';
+    });
+    document.getElementById('trendOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'trendOverlay') {
+        document.getElementById('trendOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('trendWeeklyBtn').addEventListener('click', () => this._onWeeklyReportClick());
 
     // 日期徽章 — 点击打开日历
     document.getElementById('dateBadge').addEventListener('click', () => this.showCalendar());
@@ -3758,6 +3838,201 @@ updated: ${profile.startDate}
   // 隐藏进度遮罩
   hideProgress() {
     document.getElementById('taskProgressOverlay').style.display = 'none';
+  }
+
+  // ===== 数据备份面板 =====
+
+  async _openBackupPanel() {
+    document.getElementById('backupOverlay').style.display = 'flex';
+    await this._renderSnapshotList();
+  }
+
+  async _renderSnapshotList() {
+    const listEl = document.getElementById('backupSnapshotList');
+    try {
+      const snaps = await this.backupManager.listSnapshots();
+      if (snaps.length === 0) {
+        listEl.innerHTML = '<div class="backup-snapshot-empty">暂无快照（跨天时自动生成，也可点击上方按钮立即快照）</div>';
+        return;
+      }
+      listEl.innerHTML = snaps.map((s) => `
+        <div class="backup-snapshot-row">
+          <span class="backup-snapshot-time">🗂️ ${s.stamp.replace('_', ' ')} · ${s.files.length} 个文件</span>
+          <button class="btn backup-restore-btn" data-stamp="${s.stamp}">回滚</button>
+        </div>`).join('');
+    } catch (e) {
+      listEl.innerHTML = '<div class="backup-snapshot-empty">快照列表读取失败: ' + e.message + '</div>';
+    }
+  }
+
+  async _exportBackup() {
+    const btn = document.getElementById('backupExportBtn');
+    btn.disabled = true;
+    btn.textContent = '正在导出...';
+    try {
+      const r = await this.backupManager.exportBackup();
+      if (r.method === 'filesystem') {
+        this.showToast('备份已导出', r.path || r.fileName, 'success');
+      } else {
+        this.showToast('备份已开始下载', r.fileName, 'success');
+      }
+    } catch (e) {
+      this.showToast('导出失败', e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📤 导出全部数据（.qb.json）';
+    }
+  }
+
+  async _importBackupFile(input) {
+    const file = input.files && input.files[0];
+    input.value = ''; // 清空以便重复选择同一文件
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const err = this.backupManager.validateBackup(data);
+      if (err) {
+        this.showToast('导入失败', err, 'error');
+        return;
+      }
+      const fileCount = Object.keys(data.files).length;
+      if (!confirm(`导入备份？\n\n文件数: ${fileCount}\n导出时间: ${(data.exportedAt || '未知').replace('T', ' ').slice(0, 16)}\n\n将完整还原为备份时点的数据，当前全部数据会被覆盖！`)) {
+        return;
+      }
+      const r = await this.backupManager.importBackup(data, 'replace');
+      this.showToast('备份已导入', `已写入 ${r.written} 个文件，即将刷新...`, 'success');
+      // replace 导入后内存中的对话历史与磁盘已不一致，必须整页重载恢复一致状态
+      setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+      this.showToast('导入失败', e.message, 'error');
+    }
+  }
+
+  async _snapshotNow() {
+    try {
+      const r = await this.backupManager.snapshotMemory();
+      await this._renderSnapshotList();
+      this.showToast('快照完成', `${r.saved.length} 个记忆文件 → ${r.stamp}`, 'success');
+    } catch (e) {
+      this.showToast('快照失败', e.message, 'error');
+    }
+  }
+
+  _onSnapshotListClick(e) {
+    const btn = e.target.closest('.backup-restore-btn');
+    if (!btn) return;
+    const stamp = btn.dataset.stamp;
+    if (!confirm(`确定回滚到快照 ${stamp.replace('_', ' ')} 吗？\n\n将用该快照覆盖 PROFILE.md、BODY_METRICS.md、rules/ 等记忆文件。`)) {
+      return;
+    }
+    this._restoreSnapshot(stamp);
+  }
+
+  async _restoreSnapshot(stamp) {
+    try {
+      const r = await this.backupManager.restoreSnapshot(stamp);
+      // 记忆文件变化 → 失效 KV 前缀缓存，刷新文件树
+      this.llmService._fixedFiles.forEach((p) => this.llmService._invalidatePrefixCache(p));
+      await this.renderFileTree();
+      this.showToast('快照已回滚', `已恢复 ${r.restored} 个记忆文件`, 'success');
+    } catch (e) {
+      this.showToast('回滚失败', e.message, 'error');
+    }
+  }
+
+  // ===== 趋势面板与 AI 周报 =====
+
+  async _openTrendPanel() {
+    document.getElementById('trendOverlay').style.display = 'flex';
+    document.getElementById('trendWeeklyBox').style.display = 'none';
+    await this._renderTrend();
+  }
+
+  async _renderTrend() {
+    const weightBox = document.getElementById('trendWeightBox');
+    const calBox = document.getElementById('trendCalorieBox');
+    const habitBox = document.getElementById('trendHabitBox');
+    weightBox.innerHTML = '<div class="trend-empty">加载中...</div>';
+    try {
+      const { weights, calories } = await this.statsManager.getDailyStats();
+      const today = this.chatManager._getToday();
+      weightBox.innerHTML = StatsManager.buildWeightSvg(weights, { today });
+      calBox.innerHTML = StatsManager.buildCaloriesSvg(calories, { today });
+      // 热力图直接读打卡原始 JSON，不走 stats 缓存
+      let checkins = [];
+      try {
+        checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
+      } catch (_) { /* 打卡数据损坏时热力图显示为空 */ }
+      habitBox.innerHTML = StatsManager.buildHabitHeatmap(StatsManager.aggregateCheckinCounts(checkins), { today });
+    } catch (e) {
+      weightBox.innerHTML = '<div class="trend-empty">加载失败: ' + e.message + '</div>';
+      calBox.innerHTML = '';
+      habitBox.innerHTML = '';
+    }
+  }
+
+  // 生成 AI 周报（endDate 为周期最后一天），写入 weekly/<endDate>.md
+  async _generateWeeklyReport(endDate) {
+    const { weights, calories } = await this.statsManager.getDailyStats();
+    const startDate = StatsManager._shiftDate(endDate, -6);
+
+    // 近 7 天习惯完成情况（直接读原始 JSON，格式与 habit-manager 一致）
+    let habitSummary = '';
+    try {
+      const habits = JSON.parse((await this.fm.readFile('.meta/habits.json')) || '[]').filter((h) => h.active !== false);
+      const checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
+      const lines = habits.map((h) => {
+        const cs = checkins.filter((c) => c.habitId === h.id && c.date >= startDate && c.date <= endDate);
+        const daysHit = new Set(cs.map((c) => c.date)).size;
+        const total = cs.reduce((s, c) => s + (c.amount || 1), 0);
+        return `- ${h.name}: 打卡 ${daysHit}/7 天，累计 ${Math.round(total * 10) / 10}${h.unit || ''}`;
+      });
+      habitSummary = lines.join('\n');
+    } catch (e) {
+      console.warn('[周报] 习惯数据读取失败:', e.message);
+    }
+
+    const dataSection = StatsManager.buildWeeklyDataSection(weights, calories, habitSummary, endDate);
+    const prompt = `你是轻伴的周报助手。请基于以下真实数据生成本周（${startDate} ~ ${endDate}）减重周报，300-450 字。
+
+${dataSection}
+
+## 要求
+1. 数据必须原值引用，不得编造数据中不存在的信息
+2. 结构：热量摄入解读 → 体重变化 → 习惯完成情况 → 下周 1-3 条具体可执行的建议
+3. 语气温暖、不评判；数据缺失的维度如实说明"本周未记录"，不要臆测`;
+
+    const result = await this.llm.chat([{ role: 'user', content: prompt }], null, { currentDate: this.chatManager._getToday() });
+    const content = (result && result.content) || '【周报生成失败，请重试】';
+    const path = `weekly/${endDate}.md`;
+    await this.fm.writeFile(path, content);
+    return { path, content };
+  }
+
+  async _onWeeklyReportClick() {
+    const btn = document.getElementById('trendWeeklyBtn');
+    const box = document.getElementById('trendWeeklyBox');
+    btn.disabled = true;
+    btn.textContent = '正在生成本周周报...（约 20-40 秒）';
+    box.style.display = 'none';
+    try {
+      const endDate = this.chatManager._getToday();
+      const r = await this._generateWeeklyReport(endDate);
+      box.textContent = r.content;
+      box.style.display = 'block';
+      this.showToast('周报已生成', r.path, 'success');
+      // 重建索引让文件树/按需加载感知新文件
+      try {
+        await this.indexManager.rebuildIndex();
+        this.onDemandLoader?.invalidateIndexCache();
+        await this.renderFileTree();
+      } catch (_) { /* 索引刷新失败不影响周报展示 */ }
+    } catch (e) {
+      this.showToast('周报生成失败', e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '生成本周周报';
+    }
   }
 
   // 显示 Toast 通知（3 秒后自动消失）

@@ -28,6 +28,18 @@ export class ChatManager {
     return `${y}-${m}-${day}`;
   }
 
+  // 计算有效今天（跨天判断用）：凌晨 0-4 点视为熬夜时段，仍算前一天
+  // 传入 now 便于测试；app.js 启动跨天检测使用
+  getEffectiveToday(now = new Date()) {
+    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (now.getHours() < 4) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      return fmt(d);
+    }
+    return fmt(now);
+  }
+
   // 持久化当前对话历史到 IndexedDB
   async saveHistory() {
     const data = {

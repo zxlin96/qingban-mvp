@@ -8,7 +8,10 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// 是否作为主模块运行（node server.js）。作为模块导入（测试）时不启动服务、不校验 Key
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 // 加载 .env (Node 20.6+ 原生支持)
 try { process.loadEnvFile(); } catch (_) { /* .env 不存在时忽略 */ }
@@ -20,7 +23,7 @@ const XF_MODEL = process.env.XF_MODEL || 'astron-code-latest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-if (!XF_API_KEY || XF_API_KEY === 'your-coding-plan-api-key') {
+if (isMain && (!XF_API_KEY || XF_API_KEY === 'your-coding-plan-api-key')) {
   console.error('\n[✗] 未配置 XF_API_KEY');
   console.error('    请编辑 .env,填入你的 Coding Plan API Key');
   console.error('    获取地址: https://maas.xfyun.cn/packageSubscription\n');
@@ -51,7 +54,7 @@ function readBody(req) {
 }
 
 // 清理 messages,只保留 OpenAI 标准字段,避免讯飞拒绝非标准字段(如 _pendingAction)
-function cleanMessages(messages) {
+export function cleanMessages(messages) {
   return (messages || []).map(m => {
     const clean = { role: m.role };
     if (m.content !== undefined && m.content !== null) clean.content = m.content;
@@ -192,7 +195,7 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res);
 });
 
-server.listen(PORT, () => {
+if (isMain) server.listen(PORT, () => {
   console.log('\n  ┌──────────────────────────────────────────────┐');
   console.log('  │  轻伴 MVP · 已启动                            │');
   console.log(`  │  地址: http://localhost:${PORT}                │`);

@@ -2500,3 +2500,84 @@ html, body {
 [data-theme="dark"] .habit-quick-checkin {
   background: var(--bg2);
 }
+
+/* ===== 数据备份面板 ===== */
+.backup-snapshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.backup-snapshot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg3);
+  font-size: 13px;
+  color: var(--ink);
+}
+.backup-snapshot-time {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.backup-restore-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.backup-snapshot-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ===== 趋势面板 ===== */
+.trend-box {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 10px;
+}
+.trend-svg {
+  width: 100%;
+  display: block;
+}
+.trend-axis {
+  font-size: 10px;
+  fill: var(--muted);
+  font-family: var(--mono);
+}
+.trend-val {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ink);
+}
+.trend-empty {
+  padding: 18px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.6;
+}
+.trend-caption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.trend-weekly-box {
+  display: block;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--bg3);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  max-height: 40vh;
+  overflow-y: auto;
+}

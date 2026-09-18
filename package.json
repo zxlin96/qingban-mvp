@@ -1,14 +1,18 @@
 {
   "name": "qingban-mvp",
-  "version": "3.4.7",
+  "version": "3.6.0",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "sync": "node scripts/sync-web.mjs",
+    "verify": "node scripts/sync-web.mjs --check",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
     "@capacitor/cli": "^8.4.1",
-    "@capacitor/core": "^8.4.1"
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/filesystem": "^8.1.3"
   }
 }
