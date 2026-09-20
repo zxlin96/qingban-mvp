@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>轻伴界面改版方案 · 三选一</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #14161c;
+    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, #1f2430 0%, transparent 60%);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #e8eaf0;
+    padding: 48px 32px 80px;
+  }
+  .page-title { text-align: center; font-size: 26px; font-weight: 700; letter-spacing: 2px; }
+  .page-sub { text-align: center; color: #8b93a7; font-size: 13px; margin-top: 10px; line-height: 1.8; }
+  .stage {
+    display: flex; gap: 36px; justify-content: center; align-items: flex-start;
+    flex-wrap: wrap; margin-top: 48px;
+  }
+  .proposal { width: 375px; }
+  .proposal-head { padding: 0 6px 16px; }
+  .p-tag {
+    display: inline-block; font-size: 11px; letter-spacing: 1px; padding: 3px 10px;
+    border-radius: 20px; margin-bottom: 8px; font-weight: 600;
+  }
+  .p-name { font-size: 19px; font-weight: 700; }
+  .p-desc { font-size: 12.5px; color: #9aa2b5; line-height: 1.7; margin-top: 6px; min-height: 44px; }
+  .p-meta { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .m-chip {
+    font-size: 10.5px; padding: 3px 8px; border-radius: 6px;
+    background: #1d212b; color: #aab2c5; border: 1px solid #2a3040;
+  }
+
+  .phone {
+    width: 375px; height: 780px; border-radius: 40px; overflow: hidden;
+    border: 10px solid #05060a; outline: 1px solid #333a4a;
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+    position: relative; display: flex; flex-direction: column;
+    font-size: 14px;
+  }
+  .notch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 110px; height: 26px; background: #05060a; border-radius: 14px; z-index: 50;
+  }
+  .screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ============ 方案 A：晨雾 · 呼吸感 ============ */
+  .pa {
+    background: linear-gradient(165deg, #eefaf3 0%, #e3f3ea 45%, #f6fbf8 100%);
+    color: #1c2b24;
+  }
+  .pa .topbar {
+    padding: 44px 18px 12px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .pa .logo-badge {
+    width: 34px; height: 34px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #10b981, #34d399); color: #fff; font-weight: 800; font-size: 15px;
+    box-shadow: 0 4px 12px rgba(16,185,129,.35);
+  }
+  .pa .brand-name { font-weight: 700; font-size: 16px; color: #14532d; margin-left: 9px; }
+  .pa .top-actions { display: flex; gap: 8px; }
+  .pa .top-ic {
+    width: 32px; height: 32px; border-radius: 11px; background: rgba(255,255,255,.75);
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    box-shadow: 0 2px 8px rgba(16,60,40,.08); backdrop-filter: blur(6px);
+  }
+  .pa .date-pill {
+    text-align: center; font-size: 11px; color: #5f8f78; margin: 2px 0 10px; letter-spacing: 1px;
+  }
+  .pa .chat { flex: 1; padding: 6px 16px 8px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .pa .msg-ai { max-width: 82%; align-self: flex-start; }
+  .pa .bubble-ai {
+    background: rgba(255,255,255,.9); border-radius: 4px 20px 20px 20px; padding: 12px 15px;
+    box-shadow: 0 6px 20px rgba(30,90,60,.08); line-height: 1.65; font-size: 13.5px; color: #243b30;
+    backdrop-filter: blur(8px);
+  }
+  .pa .bubble-ai b { color: #0d9463; }
+  .pa .mini-card {
+    margin-top: 10px; background: linear-gradient(135deg, #f0fdf6, #e6f7ee);
+    border: 1px solid #d3ecdd; border-radius: 14px; padding: 10px 12px;
+  }
+  .pa .kcal-bar { height: 7px; border-radius: 4px; background: #d9efe2; margin-top: 8px; overflow: hidden; }
+  .pa .kcal-fill { width: 45%; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #10b981, #5eead4); }
+  .pa .mini-row { display: flex; justify-content: space-between; font-size: 11px; color: #4d7a63; }
+  .pa .mini-row b { font-size: 13px; color: #0d9463; }
+  .pa .msg-user { max-width: 78%; align-self: flex-end; }
+  .pa .bubble-user {
+    background: linear-gradient(135deg, #10b981, #2dd4a8); color: #fff;
+    border-radius: 20px 4px 20px 20px; padding: 11px 15px; font-size: 13.5px; line-height: 1.6;
+    box-shadow: 0 6px 16px rgba(16,185,129,.3);
+  }
+  .pa .chips { display: flex; gap: 7px; padding: 4px 16px 8px; overflow: hidden; }
+  .pa .chip {
+    flex-shrink: 0; font-size: 11.5px; padding: 6px 13px; border-radius: 18px;
+    background: rgba(255,255,255,.85); color: #2f6b52; border: 1px solid #d5ebde;
+    box-shadow: 0 2px 6px rgba(30,90,60,.06);
+  }
+  .pa .inputbar {
+    margin: 0 14px; display: flex; align-items: center; gap: 9px;
+    background: rgba(255,255,255,.92); border-radius: 24px; padding: 8px 8px 8px 16px;
+    box-shadow: 0 8px 24px rgba(20,70,45,.1); border: 1px solid #e2f0e8;
+  }
+  .pa .cam {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    background: linear-gradient(135deg, #10b981, #34d399); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+  }
+  .pa .ipt { flex: 1; color: #9ab5a7; font-size: 13px; }
+  .pa .send {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    background: #eef7f2; color: #10b981; display: flex; align-items: center; justify-content: center; font-size: 14px;
+  }
+  .pa .navbar {
+    margin: 10px 14px 14px; display: flex; justify-content: space-around; align-items: center;
+    background: rgba(255,255,255,.85); backdrop-filter: blur(14px);
+    border-radius: 22px; padding: 9px 6px; box-shadow: 0 10px 30px rgba(20,70,45,.12);
+    border: 1px solid rgba(255,255,255,.9);
+  }
+  .pa .nav-it { text-align: center; font-size: 10px; color: #7ca28e; width: 25%; }
+  .pa .nav-it .nic { font-size: 17px; display: block; margin-bottom: 2px; filter: grayscale(.4); opacity: .55; }
+  .pa .nav-on { color: #0d9463; font-weight: 700; }
+  .pa .nav-on .nic {
+    filter: none; opacity: 1;
+    background: linear-gradient(135deg, #10b981, #4ade80); border-radius: 12px;
+    width: 44px; height: 28px; line-height: 28px; margin: 0 auto 2px; color: #fff; font-size: 15px;
+    box-shadow: 0 4px 10px rgba(16,185,129,.35);
+  }
+  .pa .habit-strip {
+    display: flex; gap: 8px; padding: 0 16px 4px;
+  }
+  .pa .hcard {
+    flex: 1; background: rgba(255,255,255,.85); border-radius: 14px; padding: 9px 11px;
+    box-shadow: 0 3px 10px rgba(30,90,60,.07); border: 1px solid #e4f1ea;
+  }
+  .pa .hcard .hn { font-size: 10.5px; color: #628a74; }
+  .pa .hcard .hv { font-size: 14px; font-weight: 700; color: #14532d; margin-top: 2px; }
+  .pa .hcard .hv span { font-size: 10px; font-weight: 500; color: #8fb3a0; }
+
+  /* ============ 方案 B：暗色玻璃 ============ */
+  .pb {
+    background: radial-gradient(ellipse 120% 60% at 80% -10%, #16324a 0%, transparent 55%),
+                radial-gradient(ellipse 90% 50% at 10% 110%, #0e2b26 0%, transparent 55%),
+                linear-gradient(180deg, #0a0f1a, #0b1018);
+    color: #e4ecf5;
+  }
+  .pb .topbar { padding: 44px 18px 12px; display: flex; align-items: center; justify-content: space-between; }
+  .pb .logo-badge {
+    width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #0ea5b7, #22d3ee); color: #04222b; font-weight: 800; font-size: 15px;
+    box-shadow: 0 0 18px rgba(34,211,238,.45);
+  }
+  .pb .brand-name { font-weight: 700; font-size: 16px; margin-left: 9px; letter-spacing: 1px; }
+  .pb .top-actions { display: flex; gap: 8px; }
+  .pb .top-ic {
+    width: 32px; height: 32px; border-radius: 10px; font-size: 14px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px);
+  }
+  .pb .date-pill {
+    text-align: center; font-size: 10.5px; color: #4d7d94; margin: 2px 0 10px; letter-spacing: 2px;
+  }
+  .pb .chat { flex: 1; padding: 6px 16px 8px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .pb .msg-ai { max-width: 84%; align-self: flex-start; }
+  .pb .bubble-ai {
+    background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.09);
+    backdrop-filter: blur(16px); border-radius: 4px 18px 18px 18px; padding: 12px 15px;
+    line-height: 1.65; font-size: 13.5px; color: #d7e3ee;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.35);
+  }
+  .pb .bubble-ai b { color: #3ee0c8; }
+  .pb .mini-card {
+    margin-top: 10px; background: rgba(34,211,238,.07); border: 1px solid rgba(34,211,238,.18);
+    border-radius: 12px; padding: 10px 12px;
+  }
+  .pb .kcal-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); margin-top: 8px; overflow: hidden; }
+  .pb .kcal-fill { width: 45%; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #22d3ee, #4ade80); box-shadow: 0 0 10px rgba(34,211,238,.6); }
+  .pb .mini-row { display: flex; justify-content: space-between; font-size: 11px; color: #6f97a8; }
+  .pb .mini-row b { font-size: 13px; color: #3ee0c8; font-variant-numeric: tabular-nums; }
+  .pb .msg-user { max-width: 78%; align-self: flex-end; }
+  .pb .bubble-user {
+    background: linear-gradient(135deg, #0891a5, #0ea5b7); color: #eafeff;
+    border-radius: 18px 4px 18px 18px; padding: 11px 15px; font-size: 13.5px; line-height: 1.6;
+    box-shadow: 0 8px 24px rgba(14,165,183,.28);
+  }
+  .pb .chips { display: flex; gap: 7px; padding: 4px 16px 8px; }
+  .pb .chip {
+    flex-shrink: 0; font-size: 11.5px; padding: 6px 13px; border-radius: 16px;
+    background: rgba(255,255,255,.05); color: #7fc4d4; border: 1px solid rgba(255,255,255,.1);
+  }
+  .pb .inputbar {
+    margin: 0 14px; display: flex; align-items: center; gap: 9px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1);
+    backdrop-filter: blur(16px); border-radius: 22px; padding: 8px 8px 8px 16px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  }
+  .pb .cam {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    background: linear-gradient(135deg, #0ea5b7, #22d3ee); color: #04222b;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+    box-shadow: 0 0 14px rgba(34,211,238,.4);
+  }
+  .pb .ipt { flex: 1; color: #557083; font-size: 13px; }
+  .pb .send {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(255,255,255,.07); color: #3ee0c8;
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    border: 1px solid rgba(255,255,255,.1);
+  }
+  .pb .navbar {
+    margin: 10px 14px 14px; display: flex; justify-content: space-around; align-items: center;
+    background: rgba(255,255,255,.045); backdrop-filter: blur(18px);
+    border: 1px solid rgba(255,255,255,.09); border-radius: 20px; padding: 9px 6px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 14px 34px rgba(0,0,0,.4);
+  }
+  .pb .nav-it { text-align: center; font-size: 10px; color: #5c7284; width: 25%; }
+  .pb .nav-it .nic { font-size: 17px; display: block; margin-bottom: 2px; opacity: .45; }
+  .pb .nav-on { color: #3ee0c8; font-weight: 700; }
+  .pb .nav-on .nic {
+    opacity: 1;
+    background: rgba(34,211,238,.14); border: 1px solid rgba(34,211,238,.35);
+    width: 44px; height: 28px; line-height: 26px; margin: 0 auto 2px; border-radius: 10px; font-size: 15px;
+    box-shadow: 0 0 14px rgba(34,211,238,.25); text-shadow: 0 0 8px rgba(34,211,238,.8);
+  }
+  .pb .habit-strip { display: flex; gap: 8px; padding: 0 16px 4px; }
+  .pb .hcard {
+    flex: 1; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px; padding: 9px 11px;
+  }
+  .pb .hcard .hn { font-size: 10.5px; color: #64808f; }
+  .pb .hcard .hv { font-size: 14px; font-weight: 700; color: #e4ecf5; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .pb .hcard .hv span { font-size: 10px; font-weight: 500; color: #5c7284; }
+
+  /* ============ 方案 C：暖纸手账 ============ */
+  .pc {
+    background: #faf6ee;
+    background-image: repeating-linear-gradient(0deg, transparent 0 27px, rgba(120,100,70,.045) 27px 28px);
+    color: #4a4234;
+  }
+  .pc .topbar { padding: 44px 18px 12px; display: flex; align-items: center; justify-content: space-between; }
+  .pc .logo-badge {
+    width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: #e8734a; color: #fff8f0; font-weight: 800; font-size: 15px;
+    box-shadow: 0 3px 0 #c95a33; transform: rotate(-4deg); border: 2px solid #fff;
+  }
+  .pc .brand-name {
+    font-weight: 700; font-size: 17px; margin-left: 9px; color: #5c4a32;
+    font-family: Georgia, "Songti SC", "SimSun", serif; letter-spacing: 1px;
+  }
+  .pc .top-actions { display: flex; gap: 8px; }
+  .pc .top-ic {
+    width: 32px; height: 32px; border-radius: 10px; font-size: 14px;
+    background: #fffdf8; border: 1.5px dashed #d8c9ac;
+    display: flex; align-items: center; justify-content: center; color: #a08b64;
+  }
+  .pc .date-pill {
+    text-align: center; font-size: 11px; color: #b09a76; margin: 2px 0 10px; letter-spacing: 1px;
+    font-family: Georgia, serif; font-style: italic;
+  }
+  .pc .chat { flex: 1; padding: 6px 16px 8px; display: flex; flex-direction: column; gap: 13px; overflow: hidden; }
+  .pc .msg-ai { max-width: 84%; align-self: flex-start; display: flex; gap: 8px; }
+  .pc .avatar {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; margin-top: 3px;
+    background: radial-gradient(circle at 35% 30%, #f6a623, #e8734a);
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    border: 2px solid #fff; box-shadow: 0 2px 6px rgba(160,100,40,.25);
+    transform: rotate(-6deg);
+  }
+  .pc .bubble-ai {
+    background: #fffdf8; border: 1.5px solid #e9dcc2; border-radius: 3px 16px 16px 16px;
+    padding: 12px 14px; line-height: 1.7; font-size: 13.5px; color: #55482f;
+    box-shadow: 2px 3px 0 rgba(160,130,70,.12);
+  }
+  .pc .bubble-ai b { color: #d05a2e; }
+  .pc .mini-card {
+    margin-top: 10px; background: #fdf3e3; border: 1.5px dashed #e0c48f; border-radius: 12px; padding: 10px 12px;
+  }
+  .pc .kcal-bar { height: 8px; border-radius: 4px; background: #f0e2c4; margin-top: 8px; overflow: hidden; border: 1px solid #e5d3ab; }
+  .pc .kcal-fill { width: 45%; height: 100%; background: repeating-linear-gradient(45deg, #e8734a 0 6px, #ef8a5e 6px 12px); }
+  .pc .mini-row { display: flex; justify-content: space-between; font-size: 11px; color: #a08b64; }
+  .pc .mini-row b { font-size: 13px; color: #d05a2e; font-family: Georgia, serif; }
+  .pc .msg-user { max-width: 78%; align-self: flex-end; }
+  .pc .bubble-user {
+    background: #8a9a5b; color: #fbfdf2;
+    border-radius: 16px 3px 16px 16px; padding: 11px 15px; font-size: 13.5px; line-height: 1.6;
+    box-shadow: -2px 3px 0 rgba(100,115,60,.2);
+  }
+  .pc .chips { display: flex; gap: 7px; padding: 4px 16px 8px; }
+  .pc .chip {
+    flex-shrink: 0; font-size: 11.5px; padding: 6px 13px; border-radius: 4px 14px 14px 14px;
+    background: #fffdf8; color: #8a734d; border: 1.5px dashed #d8c9ac;
+  }
+  .pc .inputbar {
+    margin: 0 14px; display: flex; align-items: center; gap: 9px;
+    background: #fffdf8; border: 1.5px solid #e0d3b4; border-radius: 6px;
+    padding: 8px 8px 8px 16px; box-shadow: 2px 3px 0 rgba(160,130,70,.12);
+  }
+  .pc .cam {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    background: #e8734a; color: #fff8f0;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+    box-shadow: 0 2px 0 #c95a33;
+  }
+  .pc .ipt { flex: 1; color: #bfae8c; font-size: 13px; }
+  .pc .send {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    background: #f2ead6; color: #8a734d;
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    border: 1.5px solid #e0d3b4;
+  }
+  .pc .navbar {
+    margin: 10px 14px 14px; display: flex; justify-content: space-around; align-items: center;
+    background: #fffdf8; border: 1.5px solid #e0d3b4; border-radius: 8px;
+    padding: 9px 6px; box-shadow: 2px 3px 0 rgba(160,130,70,.12);
+  }
+  .pc .nav-it { text-align: center; font-size: 10px; color: #b3a17d; width: 25%; }
+  .pc .nav-it .nic { font-size: 17px; display: block; margin-bottom: 2px; opacity: .5; }
+  .pc .nav-on { color: #5c4a32; font-weight: 700; }
+  .pc .nav-on .nic {
+    opacity: 1;
+    background: #fdeee0; border: 1.5px solid #e8734a; color: #d05a2e;
+    width: 44px; height: 28px; line-height: 25px; margin: 0 auto 2px; border-radius: 8px; font-size: 15px;
+    transform: rotate(-3deg); box-shadow: 1px 2px 0 rgba(200,110,60,.3);
+  }
+  .pc .habit-strip { display: flex; gap: 8px; padding: 0 16px 4px; }
+  .pc .hcard {
+    flex: 1; background: #fffdf8; border: 1.5px solid #e9dcc2; border-radius: 4px 12px 12px 12px;
+    padding: 9px 11px; box-shadow: 2px 3px 0 rgba(160,130,70,.1);
+  }
+  .pc .hcard .hn { font-size: 10.5px; color: #a08b64; }
+  .pc .hcard .hv { font-size: 14px; font-weight: 700; color: #5c4a32; margin-top: 2px; font-family: Georgia, serif; }
+  .pc .hcard .hv span { font-size: 10px; font-weight: 500; color: #b3a17d; }
+
+  /* ============ 通知横幅（三案共用结构） ============ */
+  .notif {
+    position: absolute; top: 78px; left: 14px; right: 14px; z-index: 30;
+    display: flex; gap: 10px; align-items: center; padding: 10px 13px;
+    border-radius: 16px; font-size: 11.5px; line-height: 1.45;
+    animation: drop .6s ease both;
+  }
+  @keyframes drop { from { transform: translateY(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .notif .n-ic { font-size: 18px; }
+  .notif .n-t { font-weight: 700; font-size: 12px; }
+  .notif .n-m { opacity: .8; }
+  .pa .notif { background: rgba(255,255,255,.95); box-shadow: 0 12px 30px rgba(30,90,60,.18); color: #243b30; }
+  .pb .notif {
+    background: rgba(20,34,48,.85); backdrop-filter: blur(14px); color: #d7e3ee;
+    border: 1px solid rgba(34,211,238,.25); box-shadow: 0 12px 30px rgba(0,0,0,.5);
+  }
+  .pc .notif { background: #fffdf8; border: 1.5px solid #e0c48f; box-shadow: 2px 4px 0 rgba(160,130,70,.15); color: #55482f; }
+
+  /* ============ 底部对比说明 ============ */
+  .compare {
+    max-width: 1180px; margin: 56px auto 0; background: #1a1e28; border: 1px solid #2a3040;
+    border-radius: 16px; padding: 28px 32px;
+  }
+  .compare h3 { font-size: 15px; margin-bottom: 14px; color: #dfe4ee; letter-spacing: 1px; }
+  .compare table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .compare th, .compare td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #262c3a; line-height: 1.6; }
+  .compare th { color: #8b93a7; font-weight: 600; font-size: 11.5px; letter-spacing: 1px; }
+  .compare td:first-child { color: #cdd4e2; font-weight: 600; white-space: nowrap; }
+  .compare .note { margin-top: 16px; font-size: 12px; color: #8b93a7; line-height: 1.8; }
+  .compare .note b { color: #b9c2d4; }
+</style>
+</head>
+<body>
+
+<div class="page-title">轻伴 · 界面改版方案</div>
+<div class="page-sub">
+  三个方向均包含：底部导航（替代顶栏图标入口）· 气泡重绘 · 热量卡片 · 打卡速览 · 通知横幅 · 快捷 chip<br>
+  均保持零依赖原生 CSS + CSS 变量三主题架构，选定后 1~2 周内可完成实施
+</div>
+
+<div class="stage">
+
+  <!-- ================= 方案 A ================= -->
+  <div class="proposal">
+    <div class="proposal-head">
+      <span class="p-tag" style="background:#0c2b1f;color:#34d399;">方案 A</span>
+      <div class="p-name">晨雾 · 呼吸感</div>
+      <div class="p-desc">清新健康风：柔和渐变 + 大圆角 + 浮起卡片。最接近主流健康类 App 的气质，亲和、轻盈、无负担。</div>
+      <div class="p-meta">
+        <span class="m-chip">工期 ~1.5 周</span><span class="m-chip">改动量：中</span><span class="m-chip">三主题兼容：易</span>
+      </div>
+    </div>
+    <div class="phone pa">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="topbar">
+          <div style="display:flex;align-items:center;">
+            <div class="logo-badge">轻</div><span class="brand-name">轻伴</span>
+          </div>
+          <div class="top-actions">
+            <div class="top-ic">📋</div><div class="top-ic">📈</div><div class="top-ic">✅</div>
+          </div>
+        </div>
+        <div class="date-pill">9 月 20 日 星期日 · 第 12 周减重打卡中</div>
+
+        <div class="notif">
+          <span class="n-ic">🌅</span>
+          <div><div class="n-t">早安 ☀️</div><div class="n-m">昨天体重 79.5kg（-0.5kg），点开聊聊今天计划</div></div>
+        </div>
+
+        <div class="chat">
+          <div class="msg-ai">
+            <div class="bubble-ai">
+              早安！<b>昨天 -0.5kg</b>，节奏很稳 👏 昨天喝水 6/8 杯，今天补上～
+              <div class="mini-card">
+                <div class="mini-row"><span>今日热量预算</span><b>780 / 1730 kcal</b></div>
+                <div class="kcal-bar"><div class="kcal-fill"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="msg-user">
+            <div class="bubble-user">中午吃了湘菜馆的辣椒炒肉盖饭</div>
+          </div>
+          <div class="msg-ai">
+            <div class="bubble-ai">辣椒炒肉盖饭约 <b>780 kcal</b>，已帮你记录 📝 配份青菜更好，晚上清淡一点平衡下～</div>
+          </div>
+        </div>
+
+        <div class="chips">
+          <span class="chip">💧 喝水 250ml</span><span class="chip">⚖️ 记体重</span><span class="chip">🍪 加餐</span>
+        </div>
+
+        <div class="habit-strip">
+          <div class="hcard"><div class="hn">💧 喝水</div><div class="hv">1.5<span> / 2L</span></div></div>
+          <div class="hcard"><div class="hn">🏃 跑步</div><div class="hv">5<span> / 5km</span></div></div>
+          <div class="hcard"><div class="hn">🔥 连续</div><div class="hv">12<span> 天</span></div></div>
+        </div>
+
+        <div class="inputbar">
+          <div class="cam">📷</div>
+          <div class="ipt">输入消息，或拍张餐照…</div>
+          <div class="send">➤</div>
+        </div>
+
+        <div class="navbar">
+          <div class="nav-it nav-on"><span class="nic">💬</span>聊天</div>
+          <div class="nav-it"><span class="nic">✅</span>打卡</div>
+          <div class="nav-it"><span class="nic">📈</span>趋势</div>
+          <div class="nav-it"><span class="nic">🗂️</span>记忆</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 方案 B ================= -->
+  <div class="proposal">
+    <div class="proposal-head">
+      <span class="p-tag" style="background:#0a2430;color:#22d3ee;">方案 B</span>
+      <div class="p-name">暗色玻璃 · 数据感</div>
+      <div class="p-desc">毛玻璃卡片 + 霓虹渐变强调。热量/体重等数字在深色下更醒目，科技感强，夜间使用友好。</div>
+      <div class="p-meta">
+        <span class="m-chip">工期 ~1.5 周</span><span class="m-chip">改动量：中</span><span class="m-chip">浅色主题需另调</span>
+      </div>
+    </div>
+    <div class="phone pb">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="topbar">
+          <div style="display:flex;align-items:center;">
+            <div class="logo-badge">轻</div><span class="brand-name">轻伴</span>
+          </div>
+          <div class="top-actions">
+            <div class="top-ic">📋</div><div class="top-ic">📈</div><div class="top-ic">✅</div>
+          </div>
+        </div>
+        <div class="date-pill">9 月 20 日 星期日 · DAY 12</div>
+
+        <div class="notif">
+          <span class="n-ic">🌅</span>
+          <div><div class="n-t">早安 ☀️</div><div class="n-m">昨天体重 79.5kg（-0.5kg），点开聊聊今天计划</div></div>
+        </div>
+
+        <div class="chat">
+          <div class="msg-ai">
+            <div class="bubble-ai">
+              早安！<b>昨天 -0.5kg</b>，节奏很稳 👏 昨天喝水 6/8 杯，今天补上～
+              <div class="mini-card">
+                <div class="mini-row"><span>今日热量预算</span><b>780 / 1730 kcal</b></div>
+                <div class="kcal-bar"><div class="kcal-fill"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="msg-user">
+            <div class="bubble-user">中午吃了湘菜馆的辣椒炒肉盖饭</div>
+          </div>
+          <div class="msg-ai">
+            <div class="bubble-ai">辣椒炒肉盖饭约 <b>780 kcal</b>，已帮你记录 📝 配份青菜更好，晚上清淡一点平衡下～</div>
+          </div>
+        </div>
+
+        <div class="chips">
+          <span class="chip">💧 喝水 250ml</span><span class="chip">⚖️ 记体重</span><span class="chip">🍪 加餐</span>
+        </div>
+
+        <div class="habit-strip">
+          <div class="hcard"><div class="hn">💧 喝水</div><div class="hv">1.5<span> / 2L</span></div></div>
+          <div class="hcard"><div class="hn">🏃 跑步</div><div class="hv">5<span> / 5km</span></div></div>
+          <div class="hcard"><div class="hn">🔥 连续</div><div class="hv">12<span> 天</span></div></div>
+        </div>
+
+        <div class="inputbar">
+          <div class="cam">📷</div>
+          <div class="ipt">输入消息，或拍张餐照…</div>
+          <div class="send">➤</div>
+        </div>
+
+        <div class="navbar">
+          <div class="nav-it nav-on"><span class="nic">💬</span>聊天</div>
+          <div class="nav-it"><span class="nic">✅</span>打卡</div>
+          <div class="nav-it"><span class="nic">📈</span>趋势</div>
+          <div class="nav-it"><span class="nic">🗂️</span>记忆</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 方案 C ================= -->
+  <div class="proposal">
+    <div class="proposal-head">
+      <span class="p-tag" style="background:#2f2318;color:#e8734a;">方案 C</span>
+      <div class="p-name">暖纸 · 手账陪伴感</div>
+      <div class="p-desc">米色纸纹 + 手账贴纸感。最贴合"懂营养学的朋友"的语气，治愈、有日记感，与其他减肥 App 区分度最高。</div>
+      <div class="p-meta">
+        <span class="m-chip">工期 ~2 周</span><span class="m-chip">改动量：中大</span><span class="m-chip">风格独特但挑审美</span>
+      </div>
+    </div>
+    <div class="phone pc">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="topbar">
+          <div style="display:flex;align-items:center;">
+            <div class="logo-badge">轻</div><span class="brand-name">轻伴手账</span>
+          </div>
+          <div class="top-actions">
+            <div class="top-ic">📋</div><div class="top-ic">📈</div><div class="top-ic">✅</div>
+          </div>
+        </div>
+        <div class="date-pill">Sep.20 星期日 · 减重手记 · 第 12 周</div>
+
+        <div class="notif">
+          <span class="n-ic">🌅</span>
+          <div><div class="n-t">早安 ☀️</div><div class="n-m">昨天体重 79.5kg（-0.5kg），点开聊聊今天计划</div></div>
+        </div>
+
+        <div class="chat">
+          <div class="msg-ai">
+            <div class="avatar">🥗</div>
+            <div class="bubble-ai">
+              早安！<b>昨天 -0.5kg</b>，节奏很稳 👏 昨天喝水 6/8 杯，今天补上～
+              <div class="mini-card">
+                <div class="mini-row"><span>今日热量预算</span><b>780 / 1730 kcal</b></div>
+                <div class="kcal-bar"><div class="kcal-fill"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="msg-user">
+            <div class="bubble-user">中午吃了湘菜馆的辣椒炒肉盖饭</div>
+          </div>
+          <div class="msg-ai">
+            <div class="avatar">🥗</div>
+            <div class="bubble-ai">辣椒炒肉盖饭约 <b>780 kcal</b>，已帮你记录 📝 配份青菜更好，晚上清淡一点平衡下～</div>
+          </div>
+        </div>
+
+        <div class="chips">
+          <span class="chip">💧 喝水 250ml</span><span class="chip">⚖️ 记体重</span><span class="chip">🍪 加餐</span>
+        </div>
+
+        <div class="habit-strip">
+          <div class="hcard"><div class="hn">💧 喝水</div><div class="hv">1.5<span> / 2L</span></div></div>
+          <div class="hcard"><div class="hn">🏃 跑步</div><div class="hv">5<span> / 5km</span></div></div>
+          <div class="hcard"><div class="hn">🔥 连续</div><div class="hv">12<span> 天</span></div></div>
+        </div>
+
+        <div class="inputbar">
+          <div class="cam">📷</div>
+          <div class="ipt">写点什么，或拍张餐照…</div>
+          <div class="send">➤</div>
+        </div>
+
+        <div class="navbar">
+          <div class="nav-it nav-on"><span class="nic">💬</span>手记</div>
+          <div class="nav-it"><span class="nic">✅</span>打卡</div>
+          <div class="nav-it"><span class="nic">📈</span>趋势</div>
+          <div class="nav-it"><span class="nic">🗂️</span>记忆</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="compare">
+  <h3>方案对比与实施说明</h3>
+  <table>
+    <tr><th>维度</th><th>A 晨雾 · 呼吸感</th><th>B 暗色玻璃</th><th>C 暖纸 · 手账</th></tr>
+    <tr><td>气质</td><td>清新轻盈，主流健康 App 感</td><td>科技数据感，夜间友好</td><td>治愈陪伴感，差异化最强</td></tr>
+    <tr><td>主题体系</td><td>可平滑映射现有深/浅/暖三主题</td><td>适合以深色为主，浅色需重调</td><td>暖色主题天然契合，深色需重调</td></tr>
+    <tr><td>风险</td><td>低（视觉层为主）</td><td>中（backdrop-filter 真机性能需验证）</td><td>中（衬线字体在各机型表现需验证）</td></tr>
+    <tr><td>工期</td><td>~1.5 周</td><td>~1.5 周</td><td>~2 周</td></tr>
+  </table>
+  <div class="note">
+    <b>三案共同的信息架构改动（消除"原始感"的关键）</b>：① 顶栏图标入口改为底部导航四 Tab（聊天/打卡/趋势/记忆），单手可达；
+    ② 消息气泡重绘 + AI 回复内嵌热量卡片；③ 打卡状态常驻速览条；④ 弹窗面板统一圆角/阴影/间距体系。<br>
+    <b>实施方式</b>：只改 css/style.css + index.html 结构 + 少量绑定 JS，不动任何业务逻辑与工具链；改完跑 npm test + REGRESSION 全量回归。
+  </div>
+</div>
+
+</body>
+</html>

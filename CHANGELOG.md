@@ -1,5 +1,24 @@
 # 轻伴 MVP 变更日志
 
+## 2026-09-19 (v3.7.0)
+
+### 新增 — 主动陪伴与记录提效（ROADMAP 阶段四）
+
+- **通知系统升级（4.1）**：`js/notification-manager.js` 双轨适配 — Capacitor 原生环境接入 `@capacitor/local-notifications`（系统级 AlarmManager 调度，App 被杀后提醒仍可达），Web 环境自动降级 Web Notification + 应用内横幅（本地开发行为不回退）。补齐每日定点（`schedule.on` + `allowWhileIdle`）与一次性（`schedule.at`）两种调度原语；启动时 reconcile 对账（过期未标记静默补 fired / 系统侧丢失重新注册 / 孤儿清理且每日定点固定 id 保留）；通知点击路由（`localNotificationActionPerformed` → 打卡/趋势面板）；权限请求移至提醒设置保存时触发
+- **主动陪伴场景（4.2）**：晨间问候（默认 8:00，昨日体重变化 + 打卡回顾模板文案）、打卡提醒系统级定点两次（默认 12:30 / 20:00，通用文案 + 点击进打卡面板看真实进度；原前台轮询仅在 App 可见时补充具体习惯名横幅）、晚间复盘提醒（默认 21:30）。全部文案为模板 + 结构化数据离线生成（零 LLM 调用）。菜单新增「提醒设置」（`remindersOverlay` 弹窗），三个提醒的开关与时间可配置，存 settings.reminders
+- **Auto Dream 自动触发（4.3）**：`shouldTrigger()`（预留未接通）接入跨天流程末尾静默执行 — 本周无周报且数据足够时后台生成周报/月报/模式分析，`.meta/autodream.json` 记录当日防重，完成后横幅提示
+- **record_metrics 双写（4.4）**：新 LLM 工具 `record_metrics`（meals/total/weight），AI 写 `diet/日期.md` 后调用提交结构化数据到 `.meta/metrics-manual.json`（事实数据，不随缓存重建丢失）；`stats-manager.js` 读数优先级 = 双写结构化 > MD 容错解析（解析保留兜底历史），体重在 BODY_METRICS 缺失日期用双写补齐；缓存签名纳入 manual 文件。`data/CLAUDE.md` 更新使用指引
+- **快捷记录通道（4.5）**：拍照菜单新增「📸 拍餐照 · 一键记录」— 拍完自动附记录意图直接发送；聊天页输入栏上方新增快捷 chip（喝水 250ml / 记体重 / 加餐）一键填充
+- **插件**：新增依赖 `@capacitor/local-notifications@^8`，`capacitor.plugins.json` 注册 LocalNotificationsPlugin
+
+### 修复 — 内测验收发现的两个回归
+
+- **跨天总结清单被超时砍断**：SparkLLM 重试循环（最多 30 次 × 单请求 120s）叠加跨天流程单步无超时兜底，LLM 服务变慢/持续失败时击穿 init 全局 5 分钟超时，跨天清单定格在已显示的几项，后续步骤（21 天习惯刷新 / 打卡报告 / 快照 / AI 周报 / 重建索引 / 每日提醒）全部未执行（v3.4.8 同款 bug 复发，单步变慢再次击穿总预算）。修复：新增 `_stepTimeout()` 步骤级超时 — 四个 LLM 步骤（昨日摘要 / 21 天习惯刷新 / 周度习惯总结 / AI 周报）各配 90s 兜底，超时标红不阻断后续；init 总超时 5min → 8min；`autoDream.run` 后台执行加 10min 兜底；`_hideDayTransition` 不再把未完成步骤伪装成成功；REGRESSION.md 新增「断网状态下跨天」异常路径验收项
+- **功能菜单溢出**：新增「提醒设置」后菜单 13 → 14 项，`.menu-dropdown` 无高度约束无滚动，手机上底部入口（含「刷新习惯总结」）溢出屏幕不可见。修复：`.menu-dropdown` 加 `max-height: calc(100vh - 60px)` + `overflow-y: auto`
+
+- **测试**：新增 `test/notification-reminders.test.js` 17 用例（模板文案/静默时段/时间解析/Web 轨道调度与每日补发/原生轨道系统注册与 reconcile 对账），`test/stats-manager.test.js` 追加双写用例（mergeCaloriesDay/recordMetrics/统计合并），全量 98 用例通过
+- **涉及文件**：`js/notification-manager.js`（重写）、`js/stats-manager.js`、`js/llm-service.js`、`js/settings.js`、`js/app.js`、`index.html`、`css/style.css`、`data/CLAUDE.md`、`test/*`、`package.json` 及三目录同步副本
+
 ## 2026-09-19 (v3.6.1)
 
 ### 优化 — 顶栏布局与打卡日期导航修复

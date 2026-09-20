@@ -17,7 +17,16 @@ const DEFAULT_SETTINGS = {
   maxContextTokens: 1048576,      // 上下文窗口大小（1M）
   effortLevel: 'max',             // 推理强度（max=最高质量）
   onDemandLoad: true,             // 按需索引加载开关（true=按需加载历史，false=回退全量注入近N天）
-  onDemandTokenBudget: 2000       // 对话场景动态注入部分 token 预算上限
+  onDemandTokenBudget: 2000,      // 对话场景动态注入部分 token 预算上限
+  reminders: {                    // 系统级每日提醒（阶段四 · 主动陪伴）
+    morningEnabled: true,         // 晨间问候（昨日体重/打卡回顾）
+    morningTime: '08:00',
+    habitEnabled: true,           // 打卡提醒（每日两次定点）
+    habitNoonTime: '12:30',
+    habitEveningTime: '20:00',
+    eveningEnabled: true,         // 晚间复盘（睡前体重提醒）
+    eveningTime: '21:30'
+  }
 };
 
 // 加载设置（合并默认值 + 版本升级）

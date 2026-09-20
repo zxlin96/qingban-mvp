@@ -438,6 +438,34 @@ ${habitSection}`;
             required: ['name', 'unit', 'daily_goal']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'record_metrics',
+          description: '记录当日结构化热量与体重数据（趋势统计专用）。在把饮食记录写入 diet/YYYY-MM-DD.md 之后必须调用本工具双写结构化数据；单独称重时也可直接调用并只传 weight。同一餐重复调用会自动去重。',
+          parameters: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: '记录日期 YYYY-MM-DD，不传默认今天' },
+              meals: {
+                type: 'array',
+                description: '餐次热量列表，如 [{"name":"午餐","kcal":650}]',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: '餐次名：早餐/午餐/晚餐/加餐/夜宵/零食' },
+                    kcal: { type: 'number', description: '该餐估算热量 kcal' }
+                  },
+                  required: ['name', 'kcal']
+                }
+              },
+              total: { type: 'number', description: '当日总热量 kcal，可省略（省略时按餐次自动求和）' },
+              weight: { type: 'number', description: '体重 kg（称重时传入，可单独使用）' }
+            },
+            required: ['meals']
+          }
+        }
       }
     ];
   }
@@ -564,6 +592,16 @@ ${habitSection}`;
             result = '添加习惯回调未注册';
           }
           displayName = `add_habit("${args.name}")`;
+          break;
+
+        case 'record_metrics':
+          if (this.onRecordMetrics) {
+            const metricsResult = await this.onRecordMetrics(args);
+            result = JSON.stringify(metricsResult);
+          } else {
+            result = 'record_metrics 回调未注册';
+          }
+          displayName = `record_metrics(${args.date || 'today'}, ${Array.isArray(args.meals) ? args.meals.length : 0}餐${args.weight ? ', ' + args.weight + 'kg' : ''})`;
           break;
 
         default:

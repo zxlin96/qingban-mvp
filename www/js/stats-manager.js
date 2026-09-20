@@ -2,9 +2,12 @@
 // 数据统计层 — 把 diet/*.md 与 BODY_METRICS.md 容错解析为结构化每日数据，供趋势面板与周报使用
 // v1 策略：Markdown 是数据源（AI 写入），解析结果缓存到 .meta/daily-stats.json 侧车文件，
 // 源文件未变化（按 updatedAt 签名）时直接命中缓存。历史数据零迁移，装上即可出图。
+// v2 增强（record_metrics 双写）：AI 写 diet/*.md 的同时调用 record_metrics 工具提交结构化
+// 数据到 .meta/metrics-manual.json，读数时双写数据优先于 MD 解析（解析保留兜底历史数据）。
 // 图表数据只从 IndexedDB 读取，不注入系统提示词（避免破坏 KV Cache 前缀命中）。
 
 const STATS_CACHE_KEY = '.meta/daily-stats.json';
+const MANUAL_KEY = '.meta/metrics-manual.json';
 const MEAL_NAMES = ['早餐', '午餐', '晚餐', '加餐', '夜宵', '零食'];
 
 export class StatsManager {
@@ -76,9 +79,11 @@ export class StatsManager {
     const all = await this.fm.listFiles();
     const dietFiles = all.filter((f) => /^diet\/\d{4}-\d{2}-\d{2}\.md$/.test(f.path));
     const metricsFile = all.find((f) => f.path === 'BODY_METRICS.md');
+    const manualFile = all.find((f) => f.path === MANUAL_KEY);
     const signature = JSON.stringify({
       diet: dietFiles.map((f) => `${f.path}:${f.updatedAt}`).sort(),
       metrics: metricsFile ? metricsFile.updatedAt : '',
+      manual: manualFile ? manualFile.updatedAt : '',
     });
 
     if (!force) {
@@ -87,13 +92,33 @@ export class StatsManager {
     }
 
     const weights = StatsManager.parseBodyMetrics(await this.fm.readFile('BODY_METRICS.md'), this._today());
+    const manual = await this._loadManual();
     const calories = [];
+    const dietDates = new Set();
     for (const f of dietFiles) {
       const date = (f.path.match(/(\d{4}-\d{2}-\d{2})/) || [])[1];
+      if (date) dietDates.add(date);
       const parsed = StatsManager.parseDietMd(await this.fm.readFile(f.path));
-      if (date && parsed) calories.push({ date, total: parsed.total, meals: parsed.meals });
+      const merged = StatsManager.mergeCaloriesDay(parsed, manual[date]);
+      if (date && merged) calories.push({ date, total: merged.total, meals: merged.meals });
+    }
+    // 双写数据存在但 diet 文件缺失的日期（AI 漏写 MD 或写失败时仍有结构化数据）
+    for (const [date, day] of Object.entries(manual)) {
+      if (dietDates.has(date)) continue;
+      const mealNames = (day.meals || []).map((m) => m.name);
+      if (mealNames.length > 0 || typeof day.total === 'number') {
+        calories.push({ date, total: typeof day.total === 'number' ? day.total : null, meals: mealNames });
+      }
     }
     calories.sort((a, b) => a.date.localeCompare(b.date));
+
+    // 双写体重：BODY_METRICS 表缺失的日期用 record_metrics 提交的体重补齐
+    for (const [date, day] of Object.entries(manual)) {
+      if (typeof day.weight === 'number' && !weights.some((w) => w.date === date)) {
+        weights.push({ date, weight: day.weight });
+      }
+    }
+    weights.sort((a, b) => a.date.localeCompare(b.date));
 
     await this.fm.writeFile(STATS_CACHE_KEY, JSON.stringify({
       signature,
@@ -102,6 +127,70 @@ export class StatsManager {
       calories,
     }));
     return { weights, calories };
+  }
+
+  // ===== record_metrics 结构化双写（v2）=====
+
+  // 提交某日的结构化热量/体重数据，写入 .meta/metrics-manual.json（事实数据，不随缓存重建丢失）
+  // 同日同餐同名同热量去重；total 缺省按餐次求和；weight 可单独提交
+  async recordMetrics({ date, meals, total, weight }, todayStr) {
+    const cleanMeals = (Array.isArray(meals) ? meals : [])
+      .filter((m) => m && typeof m.name === 'string' && m.name.trim())
+      .map((m) => ({ name: m.name.trim(), kcal: Number(m.kcal) }))
+      .filter((m) => Number.isFinite(m.kcal) && m.kcal > 0);
+    const hasWeight = typeof weight === 'number' && Number.isFinite(weight) && weight > 0;
+
+    if (cleanMeals.length === 0 && !hasWeight) {
+      return { success: false, message: '没有有效的餐次热量或体重数据，未记录' };
+    }
+
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date : (todayStr || this._today());
+    const data = await this._loadManual();
+    const day = data[dateStr] || { meals: [] };
+
+    for (const m of cleanMeals) {
+      const dup = day.meals.find((x) => x.name === m.name && Math.abs(x.kcal - m.kcal) < 0.01);
+      if (!dup) day.meals.push(m);
+    }
+    const sum = day.meals.reduce((s, m) => s + m.kcal, 0);
+    day.total = (typeof total === 'number' && Number.isFinite(total) && total > 0)
+      ? Math.round(total)
+      : (sum > 0 ? Math.round(sum) : null);
+    if (hasWeight) day.weight = weight;
+    day.updatedAt = new Date().toISOString();
+
+    data[dateStr] = day;
+    await this.fm.writeFile(MANUAL_KEY, JSON.stringify(data));
+    return { success: true, date: dateStr, meals: day.meals, total: day.total, weight: day.weight || null };
+  }
+
+  async _loadManual() {
+    try {
+      const raw = await this.fm.readFile(MANUAL_KEY);
+      const d = raw ? JSON.parse(raw) : {};
+      return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+    } catch {
+      return {};
+    }
+  }
+
+  // 合并单日热量：双写数据优先于 MD 解析（餐次名合并去重，total 取双写值）
+  // mdDay: { total, meals: [名字...] } | null；manualDay: { meals: [{name, kcal}], total } | undefined
+  static mergeCaloriesDay(mdDay, manualDay) {
+    if (!manualDay) return mdDay || null;
+    const names = new Set(mdDay?.meals || []);
+    for (const m of manualDay.meals || []) {
+      if (m && m.name) names.add(m.name);
+    }
+    const meals = [...names];
+    let total = null;
+    if (typeof manualDay.total === 'number' && manualDay.total > 0) {
+      total = manualDay.total;
+    } else if (mdDay && typeof mdDay.total === 'number') {
+      total = mdDay.total;
+    }
+    if (meals.length === 0 && total === null) return mdDay || null;
+    return { total, meals };
   }
 
   _readCache() {

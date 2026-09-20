@@ -184,6 +184,9 @@ html, body {
   border-radius: 8px;
   padding: 4px 0;
   min-width: 180px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   z-index: 9999;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
@@ -383,6 +386,15 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 提醒设置 — 复选框（阶段四） */
+.settings-check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .settings-slider {
@@ -749,6 +761,38 @@ html, body {
 /* Chat input */
 .chat-input-wrapper {
   border-top: 1px solid var(--rule);
+  background: var(--bg2);
+}
+
+/* 快捷记录 chip（阶段四 · 4.5） */
+.quick-chips {
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.quick-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-chip {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 14px;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.quick-chip:hover {
+  border-color: var(--accent);
+  color: var(--ink);
   background: var(--bg2);
 }
 

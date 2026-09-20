@@ -3,12 +3,25 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.0';
 const APP_VERSION_DATE = '2026-09-19';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
 const CHANGELOG = [
+  {
+    ver: '3.7.0', date: '2026-09-19',
+    items: [
+      '新增：通知系统升级 — 接入 Capacitor LocalNotifications 系统级调度（App 被杀后提醒仍可达），Web 环境自动降级原横幅路径，启动时与系统调度对账（reconcile）',
+      '新增：主动陪伴 — 晨间问候（昨日体重/打卡回顾）、打卡提醒系统级定点两次、晚间复盘提醒，均为模板文案离线生成（零 LLM 调用）',
+      '新增：提醒设置 — 菜单新入口，三个提醒的开关与时间可配置，首次开启请求通知权限；系统通知点击路由到对应面板',
+      '新增：Auto Dream 自动触发 — shouldTrigger 接入跨天流程，本周无周报且数据足够时后台静默生成，防重+横幅提示',
+      '新增：record_metrics 双写 — AI 写 diet/MD 后同步提交结构化热量/体重，趋势读数双写数据优先、MD 解析兜底，图表可靠性提升',
+      '新增：快捷记录 — 拍餐照一键模式（拍完自动发送）+ 聊天页快捷 chip（喝水/记体重/加餐）',
+      '修复：跨天总结清单被超时砍断 — LLM 重试循环叠加单步无兜底，LLM 变慢时击穿全局 5 分钟超时，清单定格、后续步骤全部未执行；新增步骤级超时（四个 LLM 步骤各 90s 兜底，超时标红不阻断），总超时放宽至 8 分钟，未完成步骤不再伪装成成功',
+      '修复：功能菜单溢出 — 新增「提醒设置」后菜单 14 项超出手机视口且无滚动，底部入口不可见；菜单加高度约束与滚动'
+    ]
+  },
   {
     ver: '3.6.1', date: '2026-09-19',
     items: [
@@ -367,6 +380,18 @@ class App {
     }
   }
 
+  // 步骤级超时（区别于 _withTimeout）：超时直接抛错，由调用方步骤的 catch 捕获并标记 error，
+  // 保证跨天流程单个 LLM 步骤挂起（如 SparkLLM 30 次重试循环）不会拖垮整个清单
+  _stepTimeout(promise, ms, label) {
+    const p = Promise.resolve(promise);
+    p.catch(() => {});
+    let timer = null;
+    const guard = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} 超时（${Math.round(ms / 1000)}s，已跳过继续后续步骤）`)), ms);
+    });
+    return Promise.race([p, guard]).finally(() => clearTimeout(timer));
+  }
+
   async init() {
     // ===== 启动阶段追踪：每步打标记，超时横幅可显示「卡在哪一步」 =====
     window.__qbStage = 'fm.init';
@@ -393,7 +418,10 @@ class App {
     this._registerHabitCallbacks(); // 注册习惯打卡工具回调
     window.__qbStage = 'notificationManager.init';
     await this._withTimeout(this.notificationManager.init(), 4000, 'notificationManager.init');
-    this._startHabitReminderCheck(); // 启动未完成习惯提醒检查
+    this._startHabitReminderCheck(); // 启动未完成习惯提醒检查（前台横幅路径）
+    window.__qbStage = 'syncDailyReminders';
+    // 注册系统级每日定点提醒（晨间问候/打卡提醒/晚间复盘 — 权限未授予时静默跳过原生注册）
+    await this._withTimeout(this._syncDailyReminders(), 8000, 'syncDailyReminders');
     window.__qbStage = 'renderFileTree';
     await this._withTimeout(this.renderFileTree(), 4000, 'renderFileTree');
     this.updateContextInfo();
@@ -422,9 +450,10 @@ class App {
       this._showDayTransition(savedDate, effectiveToday);
       // 跨天总结是增值任务，界面已可用（遮罩仅提示"生成中"）— 先标记就绪，避免 20s 启动看门狗误报"启动超时"
       this._markAppReady();
-      // 跨天流程含多步大模型调用（昨日摘要 + 21天习惯总结 + 周度总结），单步 20-40s，
-      // 30s 会砍断流程导致后续步骤（习惯总结/重建索引等）丢失。就绪已标记，放宽到 5 分钟
-      await this._withTimeout(this.handleDayRollover(), 300000, 'handleDayRollover');
+      // 跨天流程含多步大模型调用（昨日摘要 + 21天习惯总结 + 周度总结 + AI周报），每步有 90s 步骤级超时兜底，
+      // 总预算需 ≥ 4×90s + 非 LLM 步骤耗时；v3.7.1 起为 8 分钟。单步挂起（LLM 重试循环）只会标记该步 error，
+      // 不再像 v3.4.8 前那样被总超时一刀切砍断整个清单
+      await this._withTimeout(this.handleDayRollover(), 480000, 'handleDayRollover');
       // 跨天后 currentDate 已更新为今天，history 已清空
       this.chatManager.currentDate = realToday;
       this.updateDateBadge();
@@ -682,11 +711,8 @@ class App {
   _hideDayTransition() {
     const overlay = document.getElementById('dayTransitionOverlay');
     const closeBtn = document.getElementById('dayTransitionCloseBtn');
-    // 显示完成状态，延迟关闭
-    const stats = document.getElementById('dayTransitionStats');
-    const allSteps = stats.querySelectorAll('.dt-step');
-    allSteps.forEach(s => s.classList.add('done'));
-
+    // 不把所有步骤统一标 done：error/未完成步骤保留原状态，
+    // 避免流程被超时砍断时未执行的步骤伪装成成功（v3.7.0 复盘教训）
     closeBtn.style.display = 'block';
     closeBtn.onclick = () => {
       overlay.classList.remove('show');
@@ -705,7 +731,7 @@ class App {
     // 步骤 1: 保存昨日对话摘要
     if (this._dtAddStep) this._dtAddStep('正在保存昨日对话摘要...');
     try {
-      await this.chatManager.saveDailySummary(this.llm);
+      await this._stepTimeout(this.chatManager.saveDailySummary(this.llm), 90000, '昨日摘要');
       if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
     } catch (e) {
       console.error('[DayRollover] 摘要失败:', e.message);
@@ -731,7 +757,7 @@ class App {
     const stepHabit = this._dtStepIndex - 1;
     if (this.profileLearner) {
       try {
-        const refreshResult = await this.profileLearner.refreshHabits(21);
+        const refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 90000, '习惯刷新');
         console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
         if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
       } catch (e) {
@@ -760,7 +786,7 @@ class App {
       if (this._dtAddStep) this._dtAddStep('正在总结近一个月的习惯变化...');
       const stepWeekly = this._dtStepIndex - 1;
       try {
-        await this._weeklyHabitSummary();
+        await this._stepTimeout(this._weeklyHabitSummary(), 90000, '周度习惯总结');
         if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'done');
       } catch (e) {
         console.error('[DayRollover] 周度总结失败:', e.message);
@@ -786,7 +812,7 @@ class App {
       if (this._dtAddStep) this._dtAddStep('正在生成 AI 周报...');
       const stepWeeklyReport = this._dtStepIndex - 1;
       try {
-        const report = await this._generateWeeklyReport(yesterdayDate);
+        const report = await this._stepTimeout(this._generateWeeklyReport(yesterdayDate), 90000, 'AI 周报');
         console.log('[DayRollover] AI 周报已生成:', report.path);
         if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'done');
       } catch (e) {
@@ -814,7 +840,130 @@ class App {
     await this.chatManager.clearSavedHistory();
     if (this._dtUpdateStep) this._dtUpdateStep(stepClear, 'done');
 
+    // 步骤 7 (静默): 刷新每日定点提醒 — 晨间问候文案用昨日最新数据重建
+    try {
+      await this._syncDailyReminders();
+    } catch (e) {
+      console.warn('[DayRollover] 每日提醒刷新失败:', e.message);
+    }
+
+    // 步骤 8 (静默): Auto Dream 自动触发 — 本周无周报且数据足够时后台生成（不阻塞跨天主流程）
+    this._runAutoDreamSilent(this.chatManager.getEffectiveToday());
+
     this._dayRolloverDone = true;
+  }
+
+  // ===== 每日定点提醒（阶段四 · 主动陪伴）=====
+
+  // 注册/刷新系统级每日定点提醒：晨间问候、打卡提醒两次、晚间复盘
+  // 调用时机：App 启动、跨天流程末尾、提醒设置保存。文案为模板生成（零 LLM 调用，离线可用）
+  async _syncDailyReminders() {
+    const s = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || {};
+    const t = NotificationManager.parseTime;
+    const morning = t(s.morningTime) || { hour: 8, minute: 0 };
+    const noon = t(s.habitNoonTime) || { hour: 12, minute: 30 };
+    const habitEvening = t(s.habitEveningTime) || { hour: 20, minute: 0 };
+    const evening = t(s.eveningTime) || { hour: 21, minute: 30 };
+
+    const items = [];
+    if (s.morningEnabled !== false) {
+      const data = await this._collectMorningData();
+      items.push({ key: 'morning', enabled: true, hour: morning.hour, minute: morning.minute, type: 'custom', title: '早安 ☀️', body: NotificationManager.buildMorningBrief(data) });
+    }
+    if (s.habitEnabled !== false) {
+      items.push({ key: 'habitNoon', enabled: true, hour: noon.hour, minute: noon.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText() });
+      items.push({ key: 'habitEvening', enabled: true, hour: habitEvening.hour, minute: habitEvening.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText() });
+    }
+    if (s.eveningEnabled !== false) {
+      items.push({ key: 'evening', enabled: true, hour: evening.hour, minute: evening.minute, type: 'custom', title: '晚间复盘', body: NotificationManager.buildEveningReviewText() });
+    }
+    return this.notificationManager.syncDailyReminders(items);
+  }
+
+  // 收集晨间问候文案数据：昨日体重（含较前值变化）+ 昨日打卡次数
+  async _collectMorningData() {
+    try {
+      const today = this.chatManager.getEffectiveToday();
+      const yesterday = StatsManager._shiftDate(today, -1);
+      const { weights } = await this.statsManager.getDailyStats();
+      const upTo = weights.filter((w) => w.date <= yesterday);
+      const yw = upTo.length ? upTo[upTo.length - 1] : null;
+      const pw = upTo.length > 1 ? upTo[upTo.length - 2] : null;
+      let checkins = [];
+      try {
+        checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
+      } catch (_) { /* 打卡数据损坏时按 0 次 */ }
+      const yesterdayCheckins = checkins.filter((c) => c.date === yesterday).length;
+      return {
+        yesterdayWeight: yw ? yw.weight : null,
+        prevWeight: pw ? pw.weight : null,
+        yesterdayCheckins
+      };
+    } catch (e) {
+      console.warn('[App] 晨间数据收集失败:', e.message);
+      return {};
+    }
+  }
+
+  // Auto Dream 静默自动触发（每天最多检查一次；本周已有周报则跳过）
+  async _runAutoDreamSilent(todayStr) {
+    try {
+      const raw = await this.fm.readFile('.meta/autodream.json');
+      const log = raw ? JSON.parse(raw) : {};
+      if (log.lastRun === todayStr) return;
+
+      const st = await this.autoDream.shouldTrigger();
+      if (!st.shouldRun || st.hasWeekReport) return;
+
+      await this._stepTimeout(this.autoDream.run(todayStr), 600000, 'Auto Dream');
+      await this.fm.writeFile('.meta/autodream.json', JSON.stringify({ lastRun: todayStr, updatedAt: new Date().toISOString() }));
+      this._showNotificationBanner({ type: 'custom', title: 'Auto Dream 完成', message: '周报/月报/模式洞察已更新，可在功能菜单查看' });
+      await this.renderFileTree();
+    } catch (e) {
+      console.warn('[AutoDream] 自动触发失败:', e.message);
+    }
+  }
+
+  // ===== 提醒设置面板 =====
+
+  showReminders() {
+    const s = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || {};
+    document.getElementById('remMorningEnabled').checked = s.morningEnabled !== false;
+    document.getElementById('remMorningTime').value = s.morningTime || '08:00';
+    document.getElementById('remHabitEnabled').checked = s.habitEnabled !== false;
+    document.getElementById('remHabitNoonTime').value = s.habitNoonTime || '12:30';
+    document.getElementById('remHabitEveningTime').value = s.habitEveningTime || '20:00';
+    document.getElementById('remEveningEnabled').checked = s.eveningEnabled !== false;
+    document.getElementById('remEveningTime').value = s.eveningTime || '21:30';
+    document.getElementById('remindersOverlay').style.display = 'flex';
+  }
+
+  async _saveReminders() {
+    const reminders = {
+      morningEnabled: document.getElementById('remMorningEnabled').checked,
+      morningTime: document.getElementById('remMorningTime').value || '08:00',
+      habitEnabled: document.getElementById('remHabitEnabled').checked,
+      habitNoonTime: document.getElementById('remHabitNoonTime').value || '12:30',
+      habitEveningTime: document.getElementById('remHabitEveningTime').value || '20:00',
+      eveningEnabled: document.getElementById('remEveningEnabled').checked,
+      eveningTime: document.getElementById('remEveningTime').value || '21:30'
+    };
+    const anyEnabled = reminders.morningEnabled || reminders.habitEnabled || reminders.eveningEnabled;
+
+    window.QINGBAN_SETTINGS.reminders = reminders;
+    saveSettings(window.QINGBAN_SETTINGS);
+
+    if (anyEnabled) {
+      // 首次开启提醒时请求系统通知权限（原生 LocalNotifications / Web Notification 双轨）
+      const perm = await this.notificationManager.requestPermission();
+      if (perm === 'denied') {
+        this.showToast('通知权限被拒绝', '提醒可能无法弹出，请在系统设置中允许通知', 'error');
+      }
+    }
+
+    await this._syncDailyReminders();
+    document.getElementById('remindersOverlay').style.display = 'none';
+    this.showToast('提醒设置已保存', anyEnabled ? '系统级每日提醒已更新' : '已关闭全部提醒', 'success');
   }
 
   // 检查是否需要执行周度总结（每 7 天一次）
@@ -1356,6 +1505,15 @@ ${habits}
 
     input.addEventListener('input', () => this.autoResize(input));
 
+    // 快捷记录 chip — 一键填充常见记录文案（阶段四 · 4.5）
+    document.querySelectorAll('.quick-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        input.value = chip.dataset.text || '';
+        input.focus();
+        this.autoResize(input);
+      });
+    });
+
     // 拍照上传 — 点击弹出选择菜单
     const photoBtn = document.getElementById('photoBtn');
     const fileInput = document.getElementById('fileInput');
@@ -1429,6 +1587,21 @@ ${habits}
     document.getElementById('settingsSave').addEventListener('click', () => this._saveSettings());
     document.getElementById('settingsReset').addEventListener('click', () => this._resetSettings());
     document.getElementById('presetK3').addEventListener('click', () => this._applyPresetK3());
+
+    // 菜单项 — 提醒设置（阶段四 · 主动陪伴）
+    document.getElementById('menuReminders').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showReminders();
+    });
+    document.getElementById('closeReminders').addEventListener('click', () => {
+      document.getElementById('remindersOverlay').style.display = 'none';
+    });
+    document.getElementById('remindersOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'remindersOverlay') {
+        document.getElementById('remindersOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('remindersSave').addEventListener('click', () => this._saveReminders());
 
     // ===== Ask User 弹窗事件 =====
     document.getElementById('askUserClose').addEventListener('click', () => this._resolveAskUser(null));
@@ -1904,7 +2077,8 @@ ${habits}
       return item;
     };
 
-    menu.appendChild(makeItem('拍照', 'icon-camera', () => this.openCamera()));
+    menu.appendChild(makeItem('📸 拍餐照 · 一键记录', 'icon-camera', () => this.openCamera(true)));
+    menu.appendChild(makeItem('拍照', 'icon-camera', () => this.openCamera(false)));
     menu.appendChild(makeItem('从相册选择', 'icon-folder', () => document.getElementById('fileInput').click()));
 
     document.body.appendChild(menu);
@@ -1921,8 +2095,8 @@ ${habits}
     }, 0);
   }
 
-  // 调用摄像头拍照（单张）
-  openCamera() {
+  // 调用摄像头拍照（单张；autoSend=true 时拍完自动附上记录意图并直接发送 — 一键拍餐记录）
+  openCamera(autoSend = false) {
     // 创建带 capture 属性的临时 input
     const camInput = document.createElement('input');
     camInput.type = 'file';
@@ -1938,8 +2112,17 @@ ${habits}
           const base64 = await this.dietRecorder.processImage(files[0]);
           this.pendingPhotos.push(base64);
           this.showPhotoPreview(this.pendingPhotos);
+          if (autoSend) {
+            const input = document.getElementById('messageInput');
+            if (!input.value.trim()) {
+              input.value = '帮我记录这餐饮食 📸';
+              this.autoResize(input);
+            }
+            this.sendMessage();
+          }
         } catch (err) {
           console.error('Camera capture error:', err);
+          if (autoSend) this.showToast('拍照失败', '未能获取照片，请重试', 'error');
         }
       }
       camInput.remove();
@@ -3181,7 +3364,8 @@ updated: ${profile.startDate}
       maxOutputTokens: parseInt(document.getElementById('setMaxOutputTokens').value) || 32768,
       effortLevel: document.getElementById('setEffortLevel').value || 'max',
       historyDays: parseInt(document.getElementById('setHistoryDays').value) ?? 7,
-      fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800
+      fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800,
+      reminders: (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || undefined
     };
 
     // 限制范围
@@ -3235,7 +3419,8 @@ updated: ${profile.startDate}
       maxContextTokens: 1048576,
       effortLevel: 'max',
       historyDays: 7,
-      fileTruncate: 800
+      fileTruncate: 800,
+      reminders: (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || undefined
     };
 
     window.QINGBAN_SETTINGS = settings;
@@ -3268,6 +3453,23 @@ updated: ${profile.startDate}
     // 通知触发时的 UI 回调
     this.notificationManager.onFire = (notif) => {
       this._showNotificationBanner(notif);
+    };
+
+    // 系统通知点击路由：按提醒类型拉起对应面板（一次性 AI 通知默认回到聊天页）
+    this.notificationManager.onNotificationTap = (extra) => {
+      const key = extra?.reminderKey || '';
+      if (key === 'habitNoon' || key === 'habitEvening' || extra?.type === 'habit') {
+        this.showHabitPanel();
+      } else if (key === 'evening') {
+        this._openTrendPanel();
+      }
+      // morning / 其他 → 聊天页（App 默认视图），无额外路由
+    };
+
+    // record_metrics 结构化双写回调（阶段四 · 4.4）
+    this.llmService.onRecordMetrics = async (args) => {
+      const today = this.chatManager.getEffectiveToday();
+      return this.statsManager.recordMetrics(args || {}, today);
     };
   }
 
@@ -3352,9 +3554,11 @@ updated: ${profile.startDate}
   }
 
   async _checkUncompletedHabits() {
+    // 仅前台弹具体习惯名的横幅（后台提醒已由系统级定点通知承担，避免重复打扰）
+    if (typeof document !== 'undefined' && document.hidden) return;
     const now = new Date();
     const hour = now.getHours();
-    if (hour >= 22 || hour < 7) return;
+    if (NotificationManager.isQuietHours(hour)) return;
 
     const today = this.habitManager._getToday();
     let reminderLog;

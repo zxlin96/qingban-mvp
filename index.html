@@ -140,6 +140,10 @@
       <line x1="8" y1="2" x2="8" y2="6"/>
       <line x1="3" y1="10" x2="21" y2="10"/>
     </symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -162,6 +166,7 @@
       <div class="menu-item" id="menuContext"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-eye"/></svg><span>查看上下文</span></div>
       <div class="menu-item" id="menuCalendar"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span class="date-badge date-badge-clickable" id="dateBadge">加载中...</span></div>
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
+      <div class="menu-item" id="menuReminders"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-bell"/></svg><span>提醒设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
       <div class="menu-item" id="menuAutoDream"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-dream"/></svg><span>Auto Dream — 周报/月报</span></div>
       <div class="menu-item" id="menuRebuild"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>重建索引</span></div>
@@ -205,6 +210,11 @@
     <div class="chat-messages" id="chatMessages">
     </div>
     <div class="chat-input-wrapper">
+      <div class="quick-chips" id="quickChips">
+        <button class="quick-chip" data-text="喝了 250ml 水">💧 喝水 250ml</button>
+        <button class="quick-chip" data-text="刚称了体重，">⚖️ 记体重</button>
+        <button class="quick-chip" data-text="加餐吃了">🍪 加餐</button>
+      </div>
       <div id="photoPreview" class="photo-preview-bar"></div>
       <div class="chat-input">
         <button class="photo-btn" id="photoBtn" title="上传食物照片"><svg class="ico"><use href="#icon-camera"/></svg></button>
@@ -425,6 +435,60 @@
         <button class="btn accent" id="settingsSave">保存</button>
       </div>
       <div class="settings-note">保存后立即生效，设置会持久化到本地。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Reminder Settings Modal (提醒设置) -->
+<div class="file-viewer" id="remindersOverlay" style="display:none;">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <span class="title">提醒设置</span>
+      <button class="btn" id="closeReminders">关闭</button>
+    </div>
+    <div class="modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+      <div class="settings-group">
+        <div class="settings-group-title">☀️ 晨间问候</div>
+        <div class="settings-row">
+          <label>每日早安（昨日体重 / 打卡回顾）</label>
+          <div class="settings-slider-row">
+            <input type="checkbox" id="remMorningEnabled" class="settings-check">
+            <input type="time" id="remMorningTime" class="settings-input" style="width:120px;" value="08:00">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">✅ 打卡提醒</div>
+        <div class="settings-row">
+          <label>每日两次定点提醒</label>
+          <input type="checkbox" id="remHabitEnabled" class="settings-check">
+        </div>
+        <div class="settings-row">
+          <label>中午提醒时间</label>
+          <input type="time" id="remHabitNoonTime" class="settings-input" style="width:120px;" value="12:30">
+        </div>
+        <div class="settings-row">
+          <label>晚上提醒时间</label>
+          <input type="time" id="remHabitEveningTime" class="settings-input" style="width:120px;" value="20:00">
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">⚖️ 晚间复盘</div>
+        <div class="settings-row">
+          <label>睡前体重 / 复盘提醒</label>
+          <div class="settings-slider-row">
+            <input type="checkbox" id="remEveningEnabled" class="settings-check">
+            <input type="time" id="remEveningTime" class="settings-input" style="width:120px;" value="21:30">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn accent" id="remindersSave">保存</button>
+      </div>
+      <div class="settings-note">提醒为系统级通知，App 被关闭后依然有效。首次开启会请求通知权限；打卡提醒在 22:00 ~ 次日 7:00 静默。</div>
     </div>
   </div>
 </div>

@@ -210,3 +210,147 @@ describe('SVG 图表生成', () => {
     assert.ok(section.includes('喝水'));
   });
 });
+// ===== 阶段四：record_metrics 结构化双写 =====
+
+describe('mergeCaloriesDay 双写合并', () => {
+  test('无 manual 数据时返回 MD 解析结果', () => {
+    const md = { total: 1180, meals: ['早餐', '午餐'] };
+    assert.deepEqual(StatsManager.mergeCaloriesDay(md, undefined), md);
+    assert.equal(StatsManager.mergeCaloriesDay(null, undefined), null);
+  });
+
+  test('manual total 优先于 MD total，餐次名合并去重', () => {
+    const md = { total: 1180, meals: ['早餐', '午餐'] };
+    const manual = { meals: [{ name: '午餐', kcal: 650 }, { name: '加餐', kcal: 80 }], total: 1300 };
+    const out = StatsManager.mergeCaloriesDay(md, manual);
+    assert.equal(out.total, 1300, '双写数据优先');
+    assert.deepEqual(out.meals.sort(), ['加餐', '午餐', '早餐']);
+  });
+
+  test('manual 无 total 时回退 MD total，再回退 null', () => {
+    const md = { total: 1180, meals: ['早餐'] };
+    assert.equal(StatsManager.mergeCaloriesDay(md, { meals: [{ name: '晚餐', kcal: 500 }], total: null }).total, 1180);
+    assert.equal(StatsManager.mergeCaloriesDay({ total: null, meals: ['早餐'] }, { meals: [{ name: '晚餐', kcal: 500 }], total: null }).total, null);
+  });
+
+  test('manual 无有效内容时不动 MD 结果', () => {
+    const md = { total: 500, meals: ['午餐'] };
+    assert.deepEqual(StatsManager.mergeCaloriesDay(md, { meals: [], total: null }), md);
+  });
+});
+
+describe('recordMetrics 结构化双写', () => {
+  function makeFm(initial = {}) {
+    const fm = mockFm(initial);
+    const mtimes = new Map();
+    fm.writeFile = async (p, c) => {
+      fm.files.set(p, c);
+      mtimes.set(p, `u${mtimes.size + 1}`);
+      return 'ok';
+    };
+    fm.listFiles = async () => [...fm.files.entries()]
+      .map(([path, content]) => ({ path, updatedAt: mtimes.get(path) || '', size: content.length }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    return fm;
+  }
+
+  test('写入 manual 文件，total 缺省按餐次求和，同餐同名同热量去重', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r1 = await sm.recordMetrics({ meals: [{ name: '午餐', kcal: 650 }, { name: '加餐', kcal: 80 }] }, '2026-09-19');
+    assert.equal(r1.success, true);
+    assert.equal(r1.total, 730);
+    assert.equal(r1.date, '2026-09-19');
+
+    const r2 = await sm.recordMetrics({ date: '2026-09-19', meals: [{ name: '午餐', kcal: 650 }, { name: '晚餐', kcal: 600 }] }, '2026-09-19');
+    assert.equal(r2.meals.length, 3, '同餐去重、新餐追加');
+    assert.equal(r2.total, 1330, 'total 按全部餐次重算');
+    assert.ok(fm.files.has('.meta/metrics-manual.json'));
+  });
+
+  test('显式 total 优先于求和', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r = await sm.recordMetrics({ meals: [{ name: '早餐', kcal: 400 }], total: 500 }, '2026-09-19');
+    assert.equal(r.total, 500);
+  });
+
+  test('单独提交体重（不传 meals）', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r = await sm.recordMetrics({ weight: 78.4 }, '2026-09-19');
+    assert.equal(r.success, true);
+    assert.equal(r.weight, 78.4);
+    assert.deepEqual(r.meals, []);
+  });
+
+  test('date 缺省用 todayStr，非法 date 格式回退 todayStr', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r1 = await sm.recordMetrics({ meals: [{ name: '午餐', kcal: 100 }] }, '2026-09-19');
+    assert.equal(r1.date, '2026-09-19');
+    const r2 = await sm.recordMetrics({ date: 'not-a-date', meals: [{ name: '晚餐', kcal: 100 }] }, '2026-09-19');
+    assert.equal(r2.date, '2026-09-19');
+  });
+
+  test('非法参数拒绝：无有效餐次且无体重', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    assert.equal((await sm.recordMetrics({}, '2026-09-19')).success, false);
+    assert.equal((await sm.recordMetrics({ meals: [] }, '2026-09-19')).success, false);
+    assert.equal((await sm.recordMetrics({ meals: [{ name: '', kcal: 100 }] }, '2026-09-19')).success, false);
+    assert.equal((await sm.recordMetrics({ meals: [{ name: '午餐', kcal: -5 }] }, '2026-09-19')).success, false);
+    assert.equal((await sm.recordMetrics({ meals: [{ name: '午餐', kcal: 'abc' }] }, '2026-09-19')).success, false);
+    assert.equal(fm.files.has('.meta/metrics-manual.json'), false, '拒绝时不应写文件');
+  });
+});
+
+describe('getDailyStats 合并双写数据', () => {
+  function makeFm(initial = {}) {
+    const fm = mockFm(initial);
+    const mtimes = new Map();
+    fm.writeFile = async (p, c) => {
+      fm.files.set(p, c);
+      mtimes.set(p, `u${mtimes.size + 1}`);
+      return 'ok';
+    };
+    fm.listFiles = async () => [...fm.files.entries()]
+      .map(([path, content]) => ({ path, updatedAt: mtimes.get(path) || '', size: content.length }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    return fm;
+  }
+
+  test('双写数据参与统计：total 优先、无 diet 文件日期补齐、体重补齐', async () => {
+    const fm = makeFm({
+      'BODY_METRICS.md': '| 08-20 | 79.5 | - |',
+      'diet/2026-09-17.md': '## 早餐\n- 估算热量: ~400 kcal\n\n## 当日汇总\n- 总估算热量: ~400 kcal',
+    });
+    const sm = new StatsManager(fm);
+    await sm.getDailyStats(); // 先建立缓存（无 manual）
+
+    await sm.recordMetrics({ date: '2026-09-17', meals: [{ name: '午餐', kcal: 650 }], total: 1200 }, '2026-09-17');
+    await sm.recordMetrics({ date: '2026-09-18', meals: [{ name: '晚餐', kcal: 600 }] }, '2026-09-18');
+    await sm.recordMetrics({ date: '2026-09-18', weight: 78.4 }, '2026-09-18');
+
+    const s = await sm.getDailyStats(); // manual updatedAt 变化 → 签名变化 → 重建
+    const d17 = s.calories.find((c) => c.date === '2026-09-17');
+    assert.equal(d17.total, 1200, '双写 total 优先于 MD 解析');
+    assert.deepEqual(d17.meals.sort(), ['午餐', '早餐']);
+
+    const d18 = s.calories.find((c) => c.date === '2026-09-18');
+    assert.equal(d18.total, 600, '无 diet 文件的日期由双写数据补齐');
+    assert.deepEqual(d18.meals, ['晚餐']);
+
+    assert.ok(s.weights.some((w) => w.date === '2026-09-18' && w.weight === 78.4), 'BODY_METRICS 缺失的日期用双写体重补齐');
+    assert.ok(s.weights.some((w) => w.date === '2026-08-20'), '原体重表数据保留');
+  });
+
+  test('仅双写体重、不写热量时热量不受影响', async () => {
+    const fm = makeFm({ 'BODY_METRICS.md': '| 08-20 | 79.5 | - |' });
+    const sm = new StatsManager(fm);
+    await sm.recordMetrics({ weight: 78.0 }, '2026-09-19');
+    const s = await sm.getDailyStats();
+    assert.equal(s.calories.length, 0);
+    assert.equal(s.weights.find((w) => w.date === '2026-09-19').weight, 78.0);
+  });
+});
