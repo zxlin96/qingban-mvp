@@ -3,12 +3,19 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.7.0';
-const APP_VERSION_DATE = '2026-09-19';
+const APP_VERSION = '3.8.0';
+const APP_VERSION_DATE = '2026-09-21';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
 const CHANGELOG = [
+  {
+    ver: '3.8.0', date: '2026-09-21',
+    items: [
+      '新增：三套界面主题（按 design/ui-proposals.html 三方案落地，与原三主题并存，菜单循环切换）— 晨雾呼吸（清新渐变+大圆角气泡）、暗色玻璃（深空光晕+弹窗毛玻璃）、暖纸手账（纸纹底+衬线标题+纸片投影）',
+      '主题细节：纯视觉层实现（CSS 变量 + 少量主题特化），不动 DOM 结构与业务逻辑；毛玻璃 backdrop-filter 渐进增强，不支持时半透明底仍可读；旧主题值异常自动回退默认'
+    ]
+  },
   {
     ver: '3.7.0', date: '2026-09-19',
     items: [
@@ -1413,12 +1420,17 @@ ${habits}
   }
 
   // ===== 主题切换 =====
-  static THEMES = ['dark', 'light', 'warm'];
-  static THEME_LABELS = { dark: '深色科技', light: '浅色清新', warm: '暖调米黄' };
+  // v3.8.0: 按 design/ui-proposals.html 三方案新增 fresh/glass/paper 三主题（纯视觉层，与原三主题并存）
+  static THEMES = ['dark', 'light', 'warm', 'fresh', 'glass', 'paper'];
+  static THEME_LABELS = {
+    dark: '深色科技', light: '浅色清新', warm: '暖调米黄',
+    fresh: '晨雾呼吸', glass: '暗色玻璃', paper: '暖纸手账'
+  };
 
   initTheme() {
-    const saved = localStorage.getItem('qingban-theme') || 'dark';
-    this.setTheme(saved);
+    const saved = localStorage.getItem('qingban-theme');
+    // 防御：旧版本/异常值回退默认主题，避免 setTheme 设出无变量定义的 data-theme
+    this.setTheme(App.THEMES.includes(saved) ? saved : 'dark');
   }
 
   // ===== 字体大小 =====

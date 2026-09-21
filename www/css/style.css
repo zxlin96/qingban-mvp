@@ -66,6 +66,57 @@
   --theme-name: '暖调米黄';
 }
 
+/* ===== 主题:晨雾呼吸（方案 A · 清新健康风） ===== */
+[data-theme="fresh"] {
+  --bg: #eaf7f0;
+  --bg2: #fbfefc;
+  --bg3: #e0f2e8;
+  --bg4: #d0ebde;
+  --ink: #1c2b24;
+  --muted: #5f8f78;
+  --muted2: #8fb3a0;
+  --rule: #d5ebde;
+  --accent: #10b981;
+  --accent2: #14b8a6;
+  --accent3: #38bdf8;
+  --warn: #e86a5e;
+  --theme-name: '晨雾呼吸';
+}
+
+/* ===== 主题:暗色玻璃（方案 B · 数据感毛玻璃） ===== */
+[data-theme="glass"] {
+  --bg: #0a0f1a;
+  --bg2: #101826;
+  --bg3: #16202f;
+  --bg4: #1d2a3a;
+  --ink: #e4ecf5;
+  --muted: #7d92a6;
+  --muted2: #557083;
+  --rule: rgba(255,255,255,.10);
+  --accent: #22d3ee;
+  --accent2: #4ade80;
+  --accent3: #38bdf8;
+  --warn: #f87171;
+  --theme-name: '暗色玻璃';
+}
+
+/* ===== 主题:暖纸手账（方案 C · 温暖陪伴感） ===== */
+[data-theme="paper"] {
+  --bg: #faf6ee;
+  --bg2: #fffdf8;
+  --bg3: #f3ecd9;
+  --bg4: #ece1c4;
+  --ink: #4a4234;
+  --muted: #a08b64;
+  --muted2: #b3a17d;
+  --rule: #e2d5b8;
+  --accent: #d05a2e;
+  --accent2: #8a9a5b;
+  --accent3: #b98a3e;
+  --warn: #c0453d;
+  --theme-name: '暖纸手账';
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
@@ -2624,4 +2675,73 @@ html, body {
   color: var(--ink);
   max-height: 40vh;
   overflow-y: auto;
+}
+/* ===== 主题特化:v3.8.0 三新主题（fresh/glass/paper — 视觉层,不动结构） ===== */
+
+/* --- 晨雾呼吸: 清新渐变底 + 大圆角柔和气泡 --- */
+[data-theme="fresh"] body {
+  background: linear-gradient(165deg, #e6f6ee 0%, #ddf1e6 45%, #f2faf5 100%);
+  background-attachment: fixed;
+}
+[data-theme="fresh"] .message {
+  border-radius: 18px;
+}
+[data-theme="fresh"] .message.user {
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, .22);
+}
+[data-theme="fresh"] .message.assistant {
+  border-bottom-left-radius: 6px;
+  box-shadow: 0 4px 16px rgba(20, 90, 60, .07);
+}
+[data-theme="fresh"] .file-viewer .modal,
+[data-theme="fresh"] .memory-panel,
+[data-theme="fresh"] .habit-panel,
+[data-theme="fresh"] .menu-dropdown {
+  box-shadow: 0 12px 32px rgba(20, 90, 60, .14);
+}
+
+/* --- 暗色玻璃: 深空光晕底 + 低频容器毛玻璃（backdrop-filter 渐进增强,不支持时半透明底仍可读） --- */
+[data-theme="glass"] body {
+  background:
+    radial-gradient(ellipse 70% 45% at 85% -5%, rgba(34, 211, 238, .10) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 10% 105%, rgba(74, 222, 128, .08) 0%, transparent 60%),
+    #0a0f1a;
+  background-attachment: fixed;
+}
+[data-theme="glass"] .file-viewer .modal,
+[data-theme="glass"] .memory-panel,
+[data-theme="glass"] .habit-panel,
+[data-theme="glass"] .menu-dropdown {
+  background: rgba(16, 24, 38, .84);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-color: rgba(255, 255, 255, .10);
+}
+[data-theme="glass"] .message.assistant {
+  background: rgba(255, 255, 255, .055);
+  border-color: rgba(255, 255, 255, .09);
+}
+
+/* --- 暖纸手账: 纸纹底 + 衬线标题 + 纸片实体投影 --- */
+[data-theme="paper"] body {
+  background: #faf6ee;
+  background-image: repeating-linear-gradient(0deg, transparent 0 27px, rgba(120, 100, 70, .05) 27px 28px);
+  background-attachment: fixed;
+}
+[data-theme="paper"] .brand,
+[data-theme="paper"] .file-viewer .modal-header .title,
+[data-theme="paper"] .section-title,
+[data-theme="paper"] .settings-group-title {
+  font-family: Georgia, 'Songti SC', 'SimSun', serif;
+  letter-spacing: .5px;
+}
+[data-theme="paper"] .file-viewer .modal,
+[data-theme="paper"] .memory-panel,
+[data-theme="paper"] .habit-panel,
+[data-theme="paper"] .menu-dropdown {
+  box-shadow: 3px 4px 0 rgba(160, 130, 70, .14);
+}
+[data-theme="paper"] .message.assistant {
+  box-shadow: 2px 3px 0 rgba(160, 130, 70, .10);
 }
