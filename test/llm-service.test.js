@@ -27,10 +27,14 @@ describe('固定前缀缓存失效（回归：v3.3.0 KV Cache）', () => {
     await svc.executeTool(toolCall('write_file', { path: 'diet/2026-09-18.md', content: '午餐 500千卡' }, 'w1'));
     assert.equal(svc._prefixCacheValid, true, 'diet 文件不应失效前缀缓存');
 
+    // v3.11.0 起 PROFILE.md 移出固定前缀（动态注入），写入不再失效缓存
     await svc.executeTool(toolCall('write_file', { path: 'PROFILE.md', content: '男，30岁' }, 'w2'));
-    assert.equal(svc._prefixCacheValid, false, '固定文件必须失效前缀缓存');
+    assert.equal(svc._prefixCacheValid, true, 'PROFILE.md 已是动态注入，不应失效前缀缓存');
+
+    await svc.executeTool(toolCall('write_file', { path: 'rules/learned-habits.md', content: '习惯' }, 'w3'));
+    assert.equal(svc._prefixCacheValid, false, '固定文件（rules/）必须失效前缀缓存');
     assert.equal(svc._cachedPrefix, null);
-    assert.ok(fm.files.get('PROFILE.md') === '男，30岁');
+    assert.ok(fm.files.get('rules/learned-habits.md') === '习惯');
   });
 
   test('append_file 同样触发失效', async () => {

@@ -186,6 +186,12 @@
     </div>
   </header>
 
+  <!-- 跨天后台结算状态条（顶栏下方，点击查看步骤明细；结算完成自动淡出） -->
+  <div class="rollover-strip" id="rolloverStrip" style="display:none;" role="status" title="点击查看结算明细">
+    <span class="rollover-strip-dot"></span>
+    <span id="rolloverStripText">昨日结算中…</span>
+  </div>
+
   <!-- Left Panel: File Browser -->
   <aside class="file-panel">
     <div class="panel-header">
@@ -489,6 +495,20 @@
         <button class="btn accent" id="remindersSave">保存</button>
       </div>
       <div class="settings-note">提醒为系统级通知，App 被关闭后依然有效。首次开启会请求通知权限；打卡提醒在 22:00 ~ 次日 7:00 静默。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Rollover Detail Modal (跨天结算步骤明细) -->
+<div class="file-viewer" id="rolloverOverlay" style="display:none;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <span class="title">昨日结算</span>
+      <button class="btn" id="closeRollover">关闭</button>
+    </div>
+    <div class="modal-body" style="padding:16px;max-height:60vh;overflow-y:auto;">
+      <div id="rolloverDetailList" class="rollover-detail-list"></div>
+      <div class="settings-note">结算在后台进行，不影响聊天。失败步骤恢复网络后可通过菜单「刷新习惯总结」/「重建索引」手动补齐。</div>
     </div>
   </div>
 </div>

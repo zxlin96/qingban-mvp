@@ -208,3 +208,75 @@ describe('token 用量记录', () => {
     assert.ok(fm.files.get('.meta/token-usage.json'));
   });
 });
+
+describe('图片消息预识别文字（两阶段发送 v3.6.1）', () => {
+  test('getHistory 将 _recognition 以 [图片识别] 并入上下文，_displayPhotos 不外泄', () => {
+    const { cm } = newCM();
+    cm.addUserPhotoMessage('看看这个', ['data:image/jpeg;base64,A'], '红烧肉，约500kcal');
+    cm.addAssistantMessage('已记录午餐');
+    assert.deepEqual(cm.getHistory(), [
+      { role: 'user', content: '看看这个\n[图片识别] 红烧肉，约500kcal' },
+      { role: 'assistant', content: '已记录午餐' },
+    ]);
+  });
+
+  test('无用户文字时识别文字独立成消息内容', () => {
+    const { cm } = newCM();
+    cm.addUserPhotoMessage('', ['data:image/jpeg;base64,A'], '体重秤 78.2kg');
+    assert.equal(cm.getHistory()[0].content, '[图片识别] 体重秤 78.2kg');
+  });
+
+  test('无识别文字的图片消息保持纯文本；旧格式数组消息原样通过', () => {
+    const { cm } = newCM();
+    cm.addUserPhotoMessage('hi', ['x']);
+    assert.equal(cm.getHistory()[0].content, 'hi');
+    cm.history.push({ role: 'user', content: [{ type: 'text', text: '旧格式' }] });
+    assert.deepEqual(cm.getHistory()[1].content, [{ type: 'text', text: '旧格式' }]);
+  });
+
+  test('getHistoryForRequest 弹出末尾用户消息（当前消息由 userMessage 携带，修复双发）', () => {
+    const { cm } = newCM();
+    cm.addUserMessage('a');
+    cm.addAssistantMessage('b');
+    cm.addUserPhotoMessage('看看', ['img'], '红烧肉');
+    const h = cm.getHistoryForRequest();
+    assert.deepEqual(h.map((m) => m.content), ['a', 'b']);
+    // 原 history 不受影响
+    assert.equal(cm.history.length, 3);
+  });
+
+  test('saveHistory/loadHistory 往返保留 _recognition 与 _displayPhotos', async () => {
+    const { fm, cm } = newCM();
+    cm.addUserPhotoMessage('看看这个', ['data:image/jpeg;base64,A'], '红烧肉');
+    const cm2 = new ChatManager(fm);
+    const saved = await cm2.loadHistory();
+    assert.equal(saved.history[0]._recognition, '红烧肉');
+    assert.deepEqual(saved.history[0]._displayPhotos, ['data:image/jpeg;base64,A']);
+  });
+});
+
+describe('saveDailySummary 快照参数（跨天后台结算 v3.10.0）', () => {
+  test('显式传入昨日快照与日期：从快照生成摘要，不读 live 状态', async () => {
+    const { fm, cm } = newCM();
+    cm.currentDate = '2026-09-26'; // live 已切今天
+    cm.addUserMessage('今天的新消息');
+    const snapshot = [
+      { role: 'user', content: '昨天吃了火锅' },
+      { role: 'assistant', content: '已记录，约1200千卡' },
+    ];
+    await cm.saveDailySummary(undefined, snapshot, '2026-09-25');
+
+    const content = fm.files.get('chat/2026-09-25.md');
+    assert.ok(content.includes('昨天吃了火锅'));
+    assert.ok(!content.includes('今天的新消息'), '不得混入今天的内容');
+    assert.ok(fm.files.get('INDEX.md').includes('- chat/2026-09-25.md — 2条对话'));
+    assert.ok(!fm.files.has('chat/2026-09-26.md'), 'live 状态不产生文件');
+  });
+
+  test('快照为空时不写任何文件（跨天当日没聊天的场景）', async () => {
+    const { fm, cm } = newCM();
+    const before = fm.files.size;
+    await cm.saveDailySummary(undefined, [], '2026-09-25');
+    assert.equal(fm.files.size, before);
+  });
+});

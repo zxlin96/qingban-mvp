@@ -232,3 +232,99 @@ describe('流式解析 _streamOpenAI', () => {
     }
   });
 });
+
+describe('recognizeImages 图片预识别（两阶段发送）', () => {
+  test('Anthropic 格式：无系统提示词、极简 hint、图片转 base64、视觉模型、返回修剪文本', async () => {
+    window.QINGBAN_CONFIG.apiFormat = 'anthropic';
+    window.QINGBAN_SETTINGS.visionModel = 'vtest';
+    const svc = new SparkLLM();
+    let captured;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      captured = { body: JSON.parse(opts.body) };
+      return jsonResponse({ content: [{ type: 'text', text: '  红烧肉约500kcal  ' }], usage: {} });
+    };
+    try {
+      const out = await svc.recognizeImages(['data:image/jpeg;base64,AAA']);
+      assert.equal(out, '红烧肉约500kcal');
+      assert.equal(captured.body.model, 'vtest');
+      assert.equal(captured.body.max_tokens, 4096);
+      assert.equal(captured.body.system, undefined, '预识别不携带系统提示词');
+      assert.equal(captured.body.messages.length, 1);
+      assert.ok(captured.body.messages[0].content[0].text.includes('识别'));
+      assert.deepEqual(captured.body.messages[0].content[1], {
+        type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAA' },
+      });
+    } finally {
+      globalThis.fetch = origFetch;
+      window.QINGBAN_CONFIG.apiFormat = 'openai';
+      delete window.QINGBAN_SETTINGS.visionModel;
+    }
+  });
+
+  test('OpenAI 直连格式：content 数组含 image_url 原样携带', async () => {
+    const svc = new SparkLLM();
+    let captured;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      captured = { body: JSON.parse(opts.body) };
+      return jsonResponse({ choices: [{ message: { content: ' 体重秤 78.2kg ' } }], usage: {} });
+    };
+    try {
+      const out = await svc.recognizeImages(['data:image/png;base64,XYZ']);
+      assert.equal(out, '体重秤 78.2kg');
+      assert.equal(captured.body.model, 'k3');
+      assert.equal(captured.body.messages[0].content[1].type, 'image_url');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('开发模式走 /api/chat 代理', async () => {
+    const savedKey = window.QINGBAN_CONFIG.apiKey;
+    delete window.QINGBAN_CONFIG.apiKey;
+    const svc = new SparkLLM();
+    assert.equal(svc.apkMode, false);
+    svc.endpoint = 'http://proxy.test/api/chat';
+    let captured;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      captured = { url, body: JSON.parse(opts.body) };
+      return jsonResponse({ choices: [{ message: { content: '识别结果' } }] });
+    };
+    try {
+      const out = await svc.recognizeImages(['data:image/jpeg;base64,A']);
+      assert.equal(out, '识别结果');
+      assert.ok(captured.url.endsWith('/api/chat'));
+      assert.equal(captured.body.max_tokens, 4096);
+    } finally {
+      globalThis.fetch = origFetch;
+      window.QINGBAN_CONFIG.apiKey = savedKey;
+    }
+  });
+
+  test('空图片列表直接返回空串（不发请求）', async () => {
+    const svc = new SparkLLM();
+    let called = 0;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => { called++; return jsonResponse({}); };
+    try {
+      assert.equal(await svc.recognizeImages([]), '');
+      assert.equal(await svc.recognizeImages([null, '']), '');
+      assert.equal(called, 0);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('请求失败抛错（调用方据此回退原图直发）', async () => {
+    const svc = new SparkLLM();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => 'bad request' });
+    try {
+      await assert.rejects(() => svc.recognizeImages(['data:image/jpeg;base64,A']), /400/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});

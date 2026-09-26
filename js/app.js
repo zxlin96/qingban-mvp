@@ -3,12 +3,48 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.8.0';
-const APP_VERSION_DATE = '2026-09-21';
+const APP_VERSION = '3.11.1';
+const APP_VERSION_DATE = '2026-09-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
+// 跨天后台结算的断点续跑快照（含昨日历史快照 + 步骤状态，结算完成后删除）
+const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
+
 const CHANGELOG = [
+  {
+    ver: '3.11.1', date: '2026-09-26',
+    items: [
+      '修复：Android 安装包版本号长期不更新 — 系统安装界面/应用管理里的 versionName 自 v3.4.1 起停在旧版（版本号第五处 build.gradle 无人同步）',
+      '新增：scripts/sync-android-version.mjs — package.json 自动同步 build.gradle 的 versionName/versionCode，npm run sync/verify 与 build-all.ps1 均已接入'
+    ]
+  },
+  {
+    ver: '3.11.0', date: '2026-09-26',
+    items: [
+      '优化：CLAUDE.md v11 → v12 无损压缩（6,242 → 3,495 字符，-44%）— 重复教学去重、示例减半、新增文件地图节引导模型主动查文件；饮食格式模板等红线一字未动',
+      '优化：固定前缀纯静态化 — PROFILE/身体指标移出 KV 缓存前缀（7,602 → 4,095 字符，-46%），记体重不再失效整个缓存',
+      '新增：npm run prompt:eval 行为评测集 — 10 用例真实 LLM 只比工具调用行为（含 2 个召回用例），压缩前后均全部通过',
+      '清理：删除 data/CLAUDE.md 旧模板；时间判断块表格化'
+    ]
+  },
+  {
+    ver: '3.10.0', date: '2026-09-26',
+    items: [
+      '新增：跨天结算后台化 — 打开 APP 立即可聊天，昨日摘要/习惯总结/周报等在后台顺序执行，顶栏状态条实时显示进度（点击看明细）',
+      '新增：结算断点续跑 — 结算中被杀 APP 后再次启动自动从快照恢复，昨日数据不丢',
+      '优化：问候拆两段 — 先发简短问候立即可聊，结算完成后再发含昨日总结的完整问候（已开聊则只发轻提示）',
+      '优化：结算完成后自动失效 KV 前缀缓存（learned-habits 等固定文件后台更新后，AI 立即感知新档案）'
+    ]
+  },
+  {
+    ver: '3.9.0', date: '2026-09-26',
+    items: [
+      '新增：图片两阶段发送 — 图片先单独预识别（极简提示词、不带系统提示词），识别文字并入消息后主对话纯文本处理；不再切换视觉模型、工具循环不重复编码图片、可命中响应缓存',
+      '修复：每条请求双发最新用户消息 — 新增 getHistoryForRequest() 弹出末尾当前消息，历史版本每次请求都把最新消息发送两遍',
+      '新增：识别阶段状态条「🔍 识别图片中」；识别失败自动回退原图直发（零回归）'
+    ]
+  },
   {
     ver: '3.8.0', date: '2026-09-21',
     items: [
@@ -448,30 +484,34 @@ class App {
     const effectiveToday = this.chatManager.getEffectiveToday();
 
     // 检测是否跨天：保存的日期早于有效今天
+    // v3.10.0 起跨天结算改为后台执行：前台只做日期切换（毫秒级），用户立即可聊天；
+    // 结算步骤在后台顺序执行并更新顶栏状态条（点击可查看步骤明细）
+    const pendingRollover = await this._loadRolloverPending();
     if (savedDate && savedDate < effectiveToday) {
       window.__qbStage = 'handleDayRollover';
-      // 跨天了 — 恢复历史执行跨天流程
+      // 跨天了 — 用保存的历史启动后台结算
       this.chatManager.currentDate = savedDate;
       this.chatManager.history = (saved.history && saved.history.length > 0) ? saved.history : [];
-      // 显示跨天总结动效遮罩
-      this._showDayTransition(savedDate, effectiveToday);
-      // 跨天总结是增值任务，界面已可用（遮罩仅提示"生成中"）— 先标记就绪，避免 20s 启动看门狗误报"启动超时"
+      // 界面已可用（结算在后台）— 先标记就绪，避免 20s 启动看门狗误报"启动超时"
       this._markAppReady();
-      // 跨天流程含多步大模型调用（昨日摘要 + 21天习惯总结 + 周度总结 + AI周报），每步有 90s 步骤级超时兜底，
-      // 总预算需 ≥ 4×90s + 非 LLM 步骤耗时；v3.7.1 起为 8 分钟。单步挂起（LLM 重试循环）只会标记该步 error，
-      // 不再像 v3.4.8 前那样被总超时一刀切砍断整个清单
-      await this._withTimeout(this.handleDayRollover(), 480000, 'handleDayRollover');
-      // 跨天后 currentDate 已更新为今天，history 已清空
-      this.chatManager.currentDate = realToday;
-      this.updateDateBadge();
-      this.updateContextInfo();
+      await this._startDayRollover(effectiveToday);
       window.__qbStage = 'renderFileTree(rollover)';
       await this._withTimeout(this.renderFileTree(), 5000, 'renderFileTree(rollover)');
-      // 隐藏遮罩
-      this._hideDayTransition();
-      // 显示新一天的问候（含昨日总结和今日建议）
-      window.__qbStage = 'showNewDayWelcome';
-      await this._withTimeout(this.showNewDayWelcome(), 15000, 'showNewDayWelcome');
+    } else if (pendingRollover && pendingRollover.date < effectiveToday) {
+      // 上次结算被中断（后台被杀）— live 状态已是今天，断点续跑后台队列
+      console.log('[DayRollover] 检测到未完成的结算，断点续跑:', pendingRollover.date);
+      this._markAppReady();
+      // 恢复今天已聊的内容（中断期间用户可能已聊天）
+      if (saved && saved.history && saved.history.length > 0) {
+        this.chatManager.currentDate = saved.date || effectiveToday;
+        this.chatManager.history = saved.history;
+        this._cleanupPhotoMessages();
+        this.renderChatHistory(saved.history);
+      }
+      this.updateDateBadge();
+      this._resumeRolloverPending(pendingRollover);
+      window.__qbStage = 'renderFileTree(rollover)';
+      await this._withTimeout(this.renderFileTree(), 5000, 'renderFileTree(rollover)');
     } else if (saved && saved.history && saved.history.length > 0) {
       // 同一天 — 恢复历史
       this.chatManager.currentDate = saved.date || realToday;
@@ -493,8 +533,8 @@ class App {
     if (firstTime) {
       this.showOnboarding();
     } else if (!saved || !saved.history || saved.history.length === 0) {
-      // 非首次但没有历史 → 显示欢迎语
-      if (!this._dayRolloverDone) this.showWelcome();
+      // 非首次但没有历史 → 显示欢迎语（后台结算进行中时跳过 — 结算完成会发完整问候）
+      if (!this._dayRolloverDone && !this._rolloverBgActive) this.showWelcome();
     }
 
     // 启动后台日期检测（每分钟检查一次，支持运行中跨天自动总结）
@@ -608,33 +648,17 @@ class App {
     this._lateNightNotified = false;
 
     if (this.chatManager.currentDate < realToday) {
-      // 日期变了 — 触发跨天总结
+      // 日期变了 — 前台立即切到今天（清空聊天区，昨日对话已持久化），结算放后台执行
+      // 进度显示在顶栏状态条，用户可继续聊天
       this._isRolloverProcessing = true;
       try {
         console.log(`[跨天检测] ${this.chatManager.currentDate} → ${realToday}`);
-
-        // 显示跨天总结动效遮罩
-        this._showDayTransition(this.chatManager.currentDate, realToday);
-
-        // 执行跨天总结
-        await this.handleDayRollover();
-
-        // 更新日期
-        this.chatManager.currentDate = realToday;
-        this.updateDateBadge();
-        this.updateContextInfo();
-        await this.renderFileTree();
-
-        // 清空聊天区，显示新一天问候（含昨日总结和今日建议）
         document.getElementById('chatMessages').innerHTML = '';
-        await this.showNewDayWelcome();
-
-        // 隐藏遮罩
-        this._hideDayTransition();
+        await this._startDayRollover(realToday);
+        await this.renderFileTree();
       } catch (e) {
         console.error('[跨天检测] 失败:', e.message);
-        this._hideDayTransition();
-        this.addMessage('system', `⚠️ 跨天总结出错: ${e.message}。你可以继续使用，稍后重试。`);
+        this.addMessage('system', `⚠️ 跨天切换出错: ${e.message}。你可以继续使用，稍后重试。`);
       } finally {
         this._isRolloverProcessing = false;
       }
@@ -676,69 +700,181 @@ class App {
     }
   }
 
-  // 显示跨天总结动效
-  _showDayTransition(yesterday, today) {
-    const overlay = document.getElementById('dayTransitionOverlay');
-    const stats = document.getElementById('dayTransitionStats');
-    const closeBtn = document.getElementById('dayTransitionCloseBtn');
-    closeBtn.style.display = 'none';
-    stats.innerHTML = '';
-    overlay.classList.add('show');
+  // ===== 跨天后台结算（v3.10.0）=====
+  // 前台（毫秒级，正确性必须）：快照昨日状态落盘 → 日期切今天 → 清空历史 → UI 就绪 + 状态条 + 简短问候
+  // 后台（顺序队列，不阻塞聊天）：昨日摘要(LLM) → 完整性检查 → 21天习惯(LLM) → 打卡报告
+  //   → 周度总结(条件) → 记忆快照 → AI周报(周日) → 重建索引 → 提醒刷新 → Auto Dream
+  // 划分依据：凡"今天的新聊天不能等"且"纯本地毫秒级"的在前台；凡依赖昨日数据可慢慢算的都在后台。
+  // 断点续跑：前台切换前把昨日快照写入 .meta/rollover-pending.json，后台被杀时下次启动恢复结算。
+  async _startDayRollover(todayStr) {
+    if (this._rolloverBgActive) return;
+    this._rolloverBgActive = true;
 
-    // 逐步显示总结步骤
-    const steps = [
-      '正在保存昨日对话摘要...',
-      '正在检查数据完整性...',
-      '正在学习你的生活习惯...',
-      '正在保存昨日打卡记录...',
-      '正在重建记忆索引...',
-      '正在开启新的一天...'
-    ];
+    const yesterdayDate = this.chatManager.currentDate;
+    // 快照昨日历史（剥离 _displayPhotos 的 base64 大图防止快照膨胀；识别文字 _recognition 保留）
+    const snapshotHistory = this.chatManager.history.map(({ _displayPhotos, ...rest }) => rest);
 
+    // 前台：立即切到今天，用户可直接聊天
+    this.chatManager.currentDate = todayStr;
+    this.chatManager.history = [];
+    this._rolloverPending = {
+      date: yesterdayDate,
+      history: snapshotHistory,
+      startedAt: new Date().toISOString(),
+      queue: { steps: [] },
+    };
+    try {
+      await this.fm.writeFile(ROLLOVER_PENDING_KEY, JSON.stringify(this._rolloverPending));
+    } catch (e) {
+      console.warn('[DayRollover] 结算快照落盘失败（后台被杀时该次结算不可续跑）:', e.message);
+    }
+    try { await this.chatManager.clearSavedHistory(); } catch (_) {}
+    this.updateDateBadge();
+    this.updateContextInfo();
+
+    // 顶栏状态条 + 简短问候（完整问候等后台摘要完成后再发）
+    this._showRolloverStrip();
+    this.showNewDayWelcomeQuick();
+    this._runRolloverQueueInBackground();
+  }
+
+  // 断点续跑：上次结算被中断（live 状态已是今天），直接恢复后台队列
+  _resumeRolloverPending(pending) {
+    if (this._rolloverBgActive) return;
+    this._rolloverBgActive = true;
+    this._rolloverPending = pending;
+    this._showRolloverStrip();
+    this.showNewDayWelcomeQuick();
+    this._runRolloverQueueInBackground();
+  }
+
+  _runRolloverQueueInBackground() {
+    const pending = this._rolloverPending;
+    // 不阻塞调用方：后台顺序执行，逐步更新状态条
+    (async () => {
+      try {
+        await this.handleDayRollover(pending.date, pending.history || []);
+        // 收尾：固定记忆文件可能已被后台步骤更新（learned-habits 等），失效 KV 前缀缓存
+        this.llmService._fixedFiles.forEach((p) => this.llmService._invalidatePrefixCache(p));
+        try { await this.fm.deleteFile(ROLLOVER_PENDING_KEY); } catch (_) {}
+        this._finishRolloverStrip();
+        // 用户还没开始聊 → 发完整新一天问候（含昨日总结）；已聊过 → 轻提示不打扰
+        if (this.chatManager.history.length === 0) {
+          await this._withTimeout(this.showNewDayWelcomeFull(), 15000, 'showNewDayWelcomeFull');
+        } else {
+          this.addMessage('system', `🌅 昨日结算完成：摘要已存入 chat/${pending.date}.md，习惯档案已更新。`);
+        }
+      } catch (e) {
+        console.error('[DayRollover] 后台结算失败:', e.message);
+        this._finishRolloverStrip(e.message);
+      } finally {
+        this._rolloverBgActive = false;
+        this._dayRolloverDone = true;
+      }
+    })();
+  }
+
+  async _loadRolloverPending() {
+    try {
+      const raw = await this.fm.readFile(ROLLOVER_PENDING_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      return (data && data.date && data.queue) ? data : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async _persistRolloverQueue() {
+    if (!this._rolloverPending) return;
+    try {
+      await this.fm.writeFile(ROLLOVER_PENDING_KEY, JSON.stringify(this._rolloverPending));
+    } catch (_) { /* 状态持久化失败不影响结算本身 */ }
+  }
+
+  // 顶栏状态条 + 步骤回调（_dtAddStep/_dtUpdateStep 供 handleDayRollover 复用，契约与原遮罩版一致）
+  _showRolloverStrip() {
+    const strip = document.getElementById('rolloverStrip');
+    if (strip) {
+      strip.style.display = 'flex';
+      strip.classList.remove('done', 'error');
+    }
     this._dtStepIndex = 0;
-    this._dtAddStep = (text, status = 'active') => {
-      const div = document.createElement('div');
-      div.className = 'dt-step' + (status === 'done' ? ' done' : status === 'error' ? ' error' : '');
-      div.innerHTML = `<span class="dt-dot"></span><span>${text}</span>`;
-      div.style.animationDelay = `${this._dtStepIndex * 0.1}s`;
-      stats.appendChild(div);
+    this._dtAddStep = (text) => {
+      const q = this._rolloverPending && this._rolloverPending.queue;
+      if (q) {
+        q.steps.push({ label: text, status: 'running' });
+        this._persistRolloverQueue();
+      }
       this._dtStepIndex++;
+      this._updateRolloverStripText(text);
     };
     this._dtUpdateStep = (index, status) => {
-      const steps = stats.querySelectorAll('.dt-step');
-      if (steps[index]) {
-        steps[index].className = 'dt-step ' + status;
+      const q = this._rolloverPending && this._rolloverPending.queue;
+      if (q && q.steps[index]) {
+        q.steps[index].status = status;
+        this._persistRolloverQueue();
       }
+      if (this._rolloverDetailOpen) this._renderRolloverDetail();
     };
-
-    // 先显示第一步
-    this._dtAddStep(steps[0]);
+    this._updateRolloverStripText('正在整理昨日数据…');
   }
 
-  _hideDayTransition() {
-    const overlay = document.getElementById('dayTransitionOverlay');
-    const closeBtn = document.getElementById('dayTransitionCloseBtn');
-    // 不把所有步骤统一标 done：error/未完成步骤保留原状态，
-    // 避免流程被超时砍断时未执行的步骤伪装成成功（v3.7.0 复盘教训）
-    closeBtn.style.display = 'block';
-    closeBtn.onclick = () => {
-      overlay.classList.remove('show');
-    };
-    // 3 秒后自动关闭
-    setTimeout(() => {
-      overlay.classList.remove('show');
-    }, 3000);
+  _updateRolloverStripText(text) {
+    const el = document.getElementById('rolloverStripText');
+    if (!el) return;
+    const q = this._rolloverPending && this._rolloverPending.queue;
+    const done = q ? q.steps.filter((s) => s.status === 'done').length : 0;
+    el.textContent = `🌙 昨日结算中 · ${text.replace(/^正在/, '').replace(/\.\.\.$/, '')}（${done} 步完成）`;
   }
 
-  // 跨天处理：保存昨日摘要 → 数据完整性检查 → 学习习惯 → 重建索引 → 清空历史
-  async handleDayRollover() {
-    const yesterdayDate = this.chatManager.currentDate;
-    const yesterdayHistory = [...this.chatManager.history];
+  // 结算结束：全部成功 → 淡出；有失败 → 保留状态条供点击查看明细
+  _finishRolloverStrip(explicitError) {
+    const strip = document.getElementById('rolloverStrip');
+    if (!strip) return;
+    const steps = (this._rolloverPending && this._rolloverPending.queue.steps) || [];
+    const errorDetail = explicitError || steps.filter((s) => s.status === 'error').map((s) => s.label).join('、');
+    const el = document.getElementById('rolloverStripText');
+    if (errorDetail) {
+      strip.classList.add('error');
+      if (el) el.textContent = '⚠️ 昨日结算部分失败，点击查看';
+      return;
+    }
+    strip.classList.add('done');
+    if (el) el.textContent = '✓ 昨日结算完成';
+    setTimeout(() => { strip.style.display = 'none'; }, 2500);
+  }
 
-    // 步骤 1: 保存昨日对话摘要
+  _openRolloverDetail() {
+    this._rolloverDetailOpen = true;
+    document.getElementById('rolloverOverlay').style.display = 'flex';
+    this._renderRolloverDetail();
+  }
+
+  _renderRolloverDetail() {
+    const box = document.getElementById('rolloverDetailList');
+    if (!box) return;
+    const steps = (this._rolloverPending && this._rolloverPending.queue.steps) || [];
+    if (steps.length === 0) {
+      box.innerHTML = '<div class="rollover-detail-empty">正在准备结算步骤…</div>';
+      return;
+    }
+    const icon = (s) => (s === 'done' ? '✅' : s === 'error' ? '⚠️' : '⏳');
+    box.innerHTML = steps
+      .map((s) => `<div class="rollover-detail-row"><span class="rollover-detail-icon">${icon(s.status)}</span><span>${s.label}</span></div>`)
+      .join('');
+  }
+
+  // 跨天处理（后台结算队列，由 _startDayRollover 驱动）：
+  // 昨日摘要（从快照生成） → 数据完整性检查 → 学习习惯 → 打卡报告 → 周度总结/AI周报(条件)
+  // → 记忆快照 → 重建索引 → 提醒刷新 → Auto Dream
+  // v3.10.0 起：日期切换与清空历史已移到前台（_startDayRollover），此处不再操作 live 状态
+  async handleDayRollover(yesterdayDate, yesterdayHistory = []) {
+
+    // 步骤 1: 保存昨日对话摘要（从快照生成 — live 历史已切今天，不能读）
     if (this._dtAddStep) this._dtAddStep('正在保存昨日对话摘要...');
     try {
-      await this._stepTimeout(this.chatManager.saveDailySummary(this.llm), 90000, '昨日摘要');
+      await this._stepTimeout(this.chatManager.saveDailySummary(this.llm, yesterdayHistory, yesterdayDate), 90000, '昨日摘要');
       if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
     } catch (e) {
       console.error('[DayRollover] 摘要失败:', e.message);
@@ -840,12 +976,8 @@ class App {
       if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'error');
     }
 
-    // 步骤 6: 清空历史
-    if (this._dtAddStep) this._dtAddStep('正在开启新的一天...');
-    const stepClear = this._dtStepIndex - 1;
-    this.chatManager.history = [];
-    await this.chatManager.clearSavedHistory();
-    if (this._dtUpdateStep) this._dtUpdateStep(stepClear, 'done');
+    // 步骤 6（已移除）: 清空历史 — v3.10.0 起移到前台（_startDayRollover 切日期时立即完成），
+    // 保证用户开始聊天前 live 状态就是今天，结算与日常聊天互不干扰
 
     // 步骤 7 (静默): 刷新每日定点提醒 — 晨间问候文案用昨日最新数据重建
     try {
@@ -1303,21 +1435,29 @@ ${currentExercise}
   }
 
   // 新一天问候 — 包含昨日总结和今日建议
-  async showNewDayWelcome() {
+  // 简短问候 — 前台立发（不等后台结算），让用户知道 App 已就绪、结算进行中
+  showNewDayWelcomeQuick() {
     const today = this.chatManager.currentDate;
-    const now = new Date();
-    const hour = now.getHours();
+    const hour = new Date().getHours();
     let greeting;
     if (hour < 9) greeting = '早上好';
     else if (hour < 12) greeting = '上午好';
     else if (hour < 14) greeting = '中午好';
     else if (hour < 18) greeting = '下午好';
     else greeting = '晚上好';
-
-    // 先显示一条简短问候，让用户知道 App 已就绪
     this.addMessage('assistant', `${greeting}！今天是 **${today}**，新的一天开始了 🌿\n\n正在为你整理昨日总结和今日建议，请稍候...`);
+  }
 
-    // 计算昨天的日期（用本地时间，不用 toISOString 避免时区偏移）
+  // 组合版：简短问候 + 完整问候（保留原入口，供非后台结算场景使用）
+  async showNewDayWelcome() {
+    this.showNewDayWelcomeQuick();
+    await this.showNewDayWelcomeFull();
+  }
+
+  // 完整问候（含昨日总结和今日建议）— 后台结算完成后调用（此时昨日摘要文件已生成）
+  async showNewDayWelcomeFull() {
+    const today = this.chatManager.currentDate;
+    const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
     const yp = (n) => String(n).padStart(2, '0');
@@ -1699,6 +1839,19 @@ ${habits}
     document.getElementById('backupSnapshotBtn').addEventListener('click', () => this._snapshotNow());
     document.getElementById('backupSnapshotList').addEventListener('click', (e) => this._onSnapshotListClick(e));
 
+    // 跨天结算状态条 + 步骤明细弹窗
+    document.getElementById('rolloverStrip').addEventListener('click', () => this._openRolloverDetail());
+    document.getElementById('closeRollover').addEventListener('click', () => {
+      document.getElementById('rolloverOverlay').style.display = 'none';
+      this._rolloverDetailOpen = false;
+    });
+    document.getElementById('rolloverOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'rolloverOverlay') {
+        document.getElementById('rolloverOverlay').style.display = 'none';
+        this._rolloverDetailOpen = false;
+      }
+    });
+
     // 顶栏 — 趋势面板
     document.getElementById('trendBtn').addEventListener('click', () => this._openTrendPanel());
     document.getElementById('closeTrend').addEventListener('click', () => {
@@ -1822,40 +1975,55 @@ ${habits}
 
     // 构建用户消息
     let userContent;
+    const photos = hasPhotos ? [...this.pendingPhotos] : [];
     if (hasPhotos) {
-      // 有图片(支持多张) — 只发图片，无文字时不附加默认文案
-      const parts = [];
-      if (text) {
-        parts.push({ type: 'text', text });
-      }
-      for (const photo of this.pendingPhotos) {
-        parts.push({ type: 'image_url', image_url: { url: photo } });
-      }
-      userContent = parts;
-      // 显示用户消息（图片+文字）
-      this.addMessage('user', text || '', this.pendingPhotos);
-      this.chatManager.addUserPhotoMessage(text || '', this.pendingPhotos);
+      // 有图片(支持多张) — 先显示用户消息，图片预识别放到 setProcessing 之后（状态条可显示「识别图片中」）
+      this.addMessage('user', text || '', photos);
       this.pendingPhotos = [];
       this.clearPhotoPreview();
     } else {
       // 纯文字
-      userContent = text;
       this.addMessage('user', text);
-      this.chatManager.addUserMessage(text);
     }
 
     input.value = '';
     this.autoResize(input);
     this.setProcessing(true);
 
-    // 保存上下文用于网络中断后重试
-    this._lastSendContext = { userContent, sentPhotos };
+    // 显示 typing 指示器（等待完整响应）
+    this.showTyping();
+
+    let recognition = '';
+    if (hasPhotos) {
+      // 两阶段发送第一阶段：图片单独发给视觉模型预识别（极简提示词、不带系统提示词），
+      // 识别文字并入消息后主对话保持纯文本 — 不再每轮工具调用重复编码图片、不切换视觉模型、可命中响应缓存
+      try {
+        this._reqStage = 'recognizing';
+        this._showReqStatus();
+        recognition = await this.llm.recognizeImages(photos);
+      } catch (e) {
+        console.warn('[sendMessage] 图片预识别失败，回退为原图+文字直发:', e.message);
+      }
+      if (recognition) {
+        userContent = text ? `${text}\n[图片识别] ${recognition}` : `[图片识别] ${recognition}`;
+      } else {
+        // 预识别失败/为空 — 回退旧行为：图片数组直发（视觉模型接管，行为同旧版）
+        const parts = [];
+        if (text) parts.push({ type: 'text', text });
+        for (const photo of photos) parts.push({ type: 'image_url', image_url: { url: photo } });
+        userContent = parts;
+      }
+      this.chatManager.addUserPhotoMessage(text || '', photos, recognition);
+    } else {
+      userContent = text;
+      this.chatManager.addUserMessage(text);
+    }
+
+    // 保存上下文用于网络中断后重试（userContent 已含识别文字，重试不会重复识别）
+    this._lastSendContext = { userContent, sentPhotos: photos };
 
     // 同一天内不压缩上下文，避免单天对话产生遗忘感
     // 上下文压缩改为仅在跨天(advanceDay)时通过存档+清空来处理
-
-    // 显示 typing 指示器（等待完整响应）
-    this.showTyping();
 
     try {
       // 调用流式 LLM 服务（实时渲染，首字即出；自带重试/中断恢复）
@@ -2019,7 +2187,8 @@ ${habits}
     };
     const result = await this.llmService.chatStream(
       userContent,
-      this.chatManager.getHistory(),
+      // 末尾的当前用户消息由 userContent 携带，不重复发送（修复历史版本每条请求双发最新消息的问题）
+      this.chatManager.getHistoryForRequest(),
       { currentDate: this.chatManager.currentDate },
       onText, onTool, onThinking
     );
@@ -4039,8 +4208,10 @@ updated: ${profile.startDate}
       });
     }
     const sec = this._reqStarted ? Math.round((Date.now() - this._reqStarted) / 1000) : 0;
-    const img = this._reqIsImg ? '🖼️ ' : '';
-    const stageTxt = this._reqStage === 'waiting-server' ? '等待响应' : '准备中';
+    // 三阶段：识别图片中（图片预识别）→ 等待响应（请求已发出）→ 准备中（本地处理）
+    const recognizing = this._reqStage === 'recognizing';
+    const img = recognizing ? '🔍 ' : (this._reqIsImg ? '🖼️ ' : '');
+    const stageTxt = recognizing ? '识别图片中' : (this._reqStage === 'waiting-server' ? '等待响应' : '准备中');
     // 等待秒数融入 typing 指示器（聊天气泡风格），不再用独立浮动黑条
     const el = document.getElementById('typingIndicator');
     if (!el) return;

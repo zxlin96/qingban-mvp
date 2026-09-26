@@ -14,9 +14,10 @@ export class LLMService {
     // ===== KV Cache 优化：三层缓存 =====
     // 第一层：System Prompt 固定前缀缓存
     // 固定文件列表 — 这些文件内容不常变化，缓存后避免每次从 IndexedDB 读取
+    // v3.11.0：PROFILE.md / BODY_METRICS.md 移出固定前缀（AI 会频繁写入，每写一次就失效整个前缀
+    // 的 KV 缓存），改为动态注入 —— 前缀变成纯静态（CLAUDE.md + rules/），缓存存活期大幅延长
     this._fixedFiles = [
-      'CLAUDE.md', 'PROFILE.md', 'BODY_METRICS.md',
-      'rules/learned-habits.md', 'rules/allergies.md',
+      'CLAUDE.md', 'rules/learned-habits.md', 'rules/allergies.md',
       'rules/preferences.md', 'rules/exercise.md'
     ];
     this._cachedPrefix = null;      // 缓存的固定前缀字符串
@@ -31,10 +32,9 @@ export class LLMService {
   // ===== 第一层：固定前缀缓存方法 =====
 
   // 构建固定前缀（从 IndexedDB 读取固定文件并拼接）
+  // 只含纯静态文件；PROFILE/BODY_METRICS 由 buildSystemPrompt 动态注入（见 v3.11.0 注释）
   async _buildFixedPrefix() {
     const claudeMd = await this.fm.readFile('CLAUDE.md');
-    const profile = await this.fm.readFile('PROFILE.md');
-    const metrics = await this.fm.readFile('BODY_METRICS.md');
     const learned = await this.fm.readFile('rules/learned-habits.md');
     const allergies = await this.fm.readFile('rules/allergies.md');
     const preferences = await this.fm.readFile('rules/preferences.md');
@@ -43,12 +43,8 @@ export class LLMService {
     return `${claudeMd || ''}
 
 ---
-# 用户档案（固定注入）
-${profile || '（暂无记录）'}
-
----
-# 身体指标（固定注入）
-${metrics || '（暂无记录）'}
+# AI 学习到的用户习惯（固定注入）
+${learned || '（暂无学习记录）'}
 
 ---
 # 过敏与忌口（固定注入）
@@ -60,11 +56,7 @@ ${preferences || '（暂无记录）'}
 
 ---
 # 运动情况（固定注入）
-${exercise || '（暂无记录）'}
-
----
-# AI 学习到的用户习惯（固定注入）
-${learned || '（暂无学习记录）'}`;
+${exercise || '（暂无记录）'}`;
   }
 
   // 获取固定前缀（带缓存）
@@ -156,6 +148,10 @@ ${learned || '（暂无学习记录）'}`;
     const fixedPrefix = await this._getFixedPrefix();
 
     // ===== 第二部分：动态内容（每次请求都变化，放在后面）=====
+
+    // 用户档案与身体指标 — v3.11.0 起动态注入（AI 频繁写入，放前缀会频繁失效 KV 缓存）
+    const profile = await this.fm.readFile('PROFILE.md');
+    const metrics = await this.fm.readFile('BODY_METRICS.md');
 
     // 构建详细时间信息
     const now = new Date();
@@ -250,30 +246,30 @@ ${learned || '（暂无学习记录）'}`;
       }
     }
 
-    // ===== 组装最终提示词：固定前缀 → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 =====
-    // 固定前缀在最前面，服务端 KV Cache 可以复用这部分
+    // ===== 组装最终提示词：固定前缀 → 用户档案/身体指标(动态) → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 =====
+    // 固定前缀在最前面且为纯静态（CLAUDE.md + rules/），服务端 KV Cache 可以长期复用这部分
     // 动态内容放在后面，变化不会影响前缀的缓存
     return `${fixedPrefix}
+
+---
+# 用户档案（动态注入）
+${profile || '（暂无记录）'}
+
+---
+# 身体指标（动态注入）
+${metrics || '（暂无记录）'}
 
 ---
 # 近 7 天对话摘要（动态注入）
 ${chatSection}
 
 ---
-# 当前时间（请严格以此为准，不要自行推算）
+# 当前时间（严格以此为准，不要自行推算日期/星期/周末）
 - 真实时间: ${timeStr}
-- 今天: ${dateStr} 星期${weekDay} ${isWeekend ? '（周末）' : '（工作日）'}
-- 昨天: ${yesterdayStr} 星期${yesterdayWeek}
-- 明天: ${tomorrowStr} 星期${tomorrowWeek} ${isTomorrowWeekend ? '（周末）' : '（工作日）'}
+- 今天: ${dateStr} 星期${weekDay}${isWeekend ? '（周末）' : '（工作日）'}｜昨天: ${yesterdayStr} 星期${yesterdayWeek}｜明天: ${tomorrowStr} 星期${tomorrowWeek}${isTomorrowWeekend ? '（周末）' : '（工作日）'}
 - 当前时段: ${period} — ${periodHint}
-- 模拟日期: ${simDate}（用于饮食记录、对话摘要等文件命名）
-
-**时间判断规则**：
-- 提到"今天"指 ${dateStr} 星期${weekDay}
-- 提到"明天"指 ${tomorrowStr} 星期${tomorrowWeek}${isTomorrowWeekend ? '（是周末）' : '（是工作日）'}
-- 提到"昨天"指 ${yesterdayStr} 星期${yesterdayWeek}
-- 提到"周末"时，判断当前是否已经是周末（${isWeekend ? '今天是周末' : '今天不是周末'}）
-- 不要凭印象判断工作日/周末，严格按上面的信息回答
+- 模拟日期（用于 diet/、chat/ 等文件命名）: ${simDate}
+- 用户提到"今天/昨天/明天/周末"时，严格按上面的信息回答
 
 ---
 # 近 7 天饮食记录（动态注入）

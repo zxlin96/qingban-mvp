@@ -142,13 +142,16 @@ export class ChatManager {
 
   // 添加用户消息（含图片，支持单张或多张）
   // content 保持纯文本给 LLM 用，_displayPhotos 存图片给 UI 显示用
-  addUserPhotoMessage(text, imageBase64) {
+  // recognition 可选：图片预识别文字（两阶段发送），getHistory 时以「[图片识别]」并入 LLM 上下文
+  addUserPhotoMessage(text, imageBase64, recognition = '') {
     const imgs = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
-    this.history.push({
+    const msg = {
       role: 'user',
       content: text,
       _displayPhotos: imgs
-    });
+    };
+    if (recognition) msg._recognition = recognition;
+    this.history.push(msg);
     this.saveHistory();
   }
 
@@ -190,10 +193,24 @@ export class ChatManager {
   getHistory() {
     return this.history.map(msg => {
       const clean = { role: msg.role, content: msg.content };
+      // 图片预识别文字并入上下文（_displayPhotos 为 UI 显示用，不发给 LLM）
+      if (msg._recognition && typeof clean.content === 'string') {
+        clean.content = clean.content
+          ? `${clean.content}\n[图片识别] ${msg._recognition}`
+          : `[图片识别] ${msg._recognition}`;
+      }
       // 如果 content 是数组（旧格式含 image_url），原样保留
       // 如果 content 是字符串（新格式纯文本），直接返回
       return clean;
     });
+  }
+
+  // 获取用于 LLM 请求的历史：弹出末尾的当前用户消息（它由 chatStream/chat 的 userMessage 参数携带，
+  // 不弹出会重复发送两遍 — 修复历史版本每条请求都双发最新消息的问题）
+  getHistoryForRequest() {
+    const h = this.getHistory();
+    if (h.length > 0 && h[h.length - 1].role === 'user') h.pop();
+    return h;
   }
 
   // 检查是否需要压缩（自动触发用）
@@ -368,36 +385,37 @@ export class ChatManager {
     }
   }
 
-  // 保存当日对话摘要到 chat/YYYY-MM-DD.md
+  // 保存对话摘要到 chat/YYYY-MM-DD.md
   // llmService 可选:传入且 LLM 成功时生成 300-500 字真摘要，否则降级全文拼接
-  async saveDailySummary(llmService) {
-    if (this.history.length === 0) return;
+  // history/date 可选:后台结算传入昨日快照（live 历史已切今天，不能读），默认读当前状态
+  async saveDailySummary(llmService, history = this.history, date = this.currentDate) {
+    if (history.length === 0) return;
 
-    const chatPath = `chat/${this.currentDate}.md`;
+    const chatPath = `chat/${date}.md`;
     let content;
     let mode;
 
     // 优先尝试真摘要
-    const trueSummary = await this._generateTrueSummary(this.history, this.currentDate, llmService);
+    const trueSummary = await this._generateTrueSummary(history, date, llmService);
 
     if (trueSummary) {
       content = trueSummary;
       mode = 'true_summary';
       console.log('[ChatManager] 摘要生成:', {
-        date: this.currentDate,
+        date,
         mode,
-        inputMessageCount: this.history.length,
+        inputMessageCount: history.length,
         outputChars: trueSummary.length
       });
     } else {
       // 降级：全文拼接
-      content = this._buildFullTextFallback(this.history, this.currentDate);
+      content = this._buildFullTextFallback(history, date);
       mode = 'fallback';
       console.log('[ChatManager] 摘要生成:', {
-        date: this.currentDate,
+        date,
         mode,
         reason: 'llm_unavailable_or_failed',
-        inputMessageCount: this.history.length,
+        inputMessageCount: history.length,
         outputChars: content.length
       });
     }
@@ -406,7 +424,7 @@ export class ChatManager {
 
     // 更新 INDEX.md
     await this.fm.appendFile('INDEX.md',
-      `- chat/${this.currentDate}.md — ${this.history.length}条对话`
+      `- chat/${date}.md — ${history.length}条对话`
     );
   }
 

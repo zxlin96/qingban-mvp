@@ -242,21 +242,7 @@ export class SparkLLM {
 
       // 普通消息 — 处理图片内容
       if (msg.role === 'user' && Array.isArray(msg.content)) {
-        const content = msg.content.map(c => {
-          if (c.type === 'image_url') {
-            // OpenAI image_url → Anthropic image
-            const url = c.image_url?.url || '';
-            const match = url.match(/^data:(image\/\w+);base64,(.+)$/);
-            if (match) {
-              return {
-                type: 'image',
-                source: { type: 'base64', media_type: match[1], data: match[2] }
-              };
-            }
-            return { type: 'text', text: '[图片]' };
-          }
-          return c; // text 类型直接用
-        });
+        const content = msg.content.map(c => SparkLLM._imageUrlToAnthropic(c));
         anthropicMessages.push({ role: msg.role, content });
         continue;
       }
@@ -314,6 +300,60 @@ export class SparkLLM {
         total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0)
       }
     };
+  }
+
+  // OpenAI image_url 部件 → Anthropic image 部件（data URL 转 base64 source；非 data URL 降级为文字占位）
+  static _imageUrlToAnthropic(c) {
+    if (c.type !== 'image_url') return c;
+    const url = c.image_url?.url || '';
+    const match = url.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (match) {
+      return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+    }
+    return { type: 'text', text: '[图片]' };
+  }
+
+  // ===== 图片预识别 — 两阶段发送的第一阶段 =====
+  // 图片单独发给视觉模型：不带系统提示词（省掉整个固定前缀），仅一句极简识别指令；
+  // 返回识别文字后由调用方与用户文字合并为纯文本消息走主对话（文本模型、无图片重复编码）。
+  // 失败抛错，由调用方回退为「原图+文字」直发。max_tokens 给 4096 余量（thinking 模式会消耗输出 token）。
+  static RECOGNIZE_HINT = '请识别图片内容，简要输出。若为食物：列出食物与分量，估算总热量（kcal）；若为体重秤/运动/其他：客观描述关键信息。只输出识别结果，不要给建议。';
+
+  async recognizeImages(images, { retries = 2, timeoutMs = 60000 } = {}) {
+    const settings = window.QINGBAN_SETTINGS || {};
+    const visionModel = settings.visionModel || 'k3';
+    const imgs = (images || []).filter(Boolean);
+    if (imgs.length === 0) return '';
+
+    const content = [{ type: 'text', text: SparkLLM.RECOGNIZE_HINT }];
+    for (const img of imgs) content.push({ type: 'image_url', image_url: { url: img } });
+
+    if (this.apkMode && this.apiFormat === 'anthropic') {
+      const payload = {
+        model: visionModel,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: content.map(c => SparkLLM._imageUrlToAnthropic(c)) }],
+        temperature: 0.2
+      };
+      const data = await this._request_anthropic(payload, retries, timeoutMs);
+      return (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim();
+    }
+
+    if (this.apkMode) {
+      const payload = { model: visionModel, messages: [{ role: 'user', content }], max_tokens: 4096, temperature: 0.2 };
+      const data = await this._request_openai(payload, retries, timeoutMs);
+      return (data.choices?.[0]?.message?.content || '').trim();
+    }
+
+    // 开发模式 — 走后端代理 /api/chat（OpenAI 格式，模型由服务端指定）
+    const resp = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 4096 })
+    });
+    const respText = await resp.text();
+    if (!resp.ok) throw new Error(`图片识别请求失败 (${resp.status}): ${String(respText).slice(0, 200)}`);
+    return JSON.parse(respText).choices?.[0]?.message?.content?.trim() || '';
   }
 
   // 主入口 — 供 LLMService.chat() 调用

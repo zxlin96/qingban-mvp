@@ -1,5 +1,61 @@
 # 轻伴 MVP 变更日志
 
+## 2026-09-26 (v3.11.1)
+
+### 修复 — Android 安装包版本号长期不更新
+
+- **问题**：系统安装确认框 / 设置→应用管理里显示的 `versionName` 自 v3.4.1 起一直是 "3.4.1"（versionCode 3）——发版约定的"四处版本号"漏了 `android/app/build.gradle` 这第五处，且 Capacitor 的 `npx cap sync` 不会自动同步 package.json 版本。应用内顶栏版本（APP_VERSION）一直正常
+- **修复**：新增 `scripts/sync-android-version.mjs` — 读 package.json 版本自动改写 build.gradle：`versionName` = semver 原值，`versionCode` = `major*10000 + minor*100 + patch`（单调递增，3.11.1 → 31101），支持 `--check` 校验模式
+- **接入**：`npm run sync` / `npm run verify` 追加该脚本（同步与校验双模式）；`build-all.ps1` Step 1 新增 1c 步骤；AGENTS.md 版本约定更新为"五处"（第五处自动同步，无需手动）
+- **本次**：versionName "3.4.1" → "3.11.1"，versionCode 3 → 31101；安装界面即刻可见正确版本
+- **涉及文件**：`scripts/sync-android-version.mjs`（新）、`package.json`、`build-all.ps1`、`android/app/build.gradle`、`AGENTS.md`
+
+## 2026-09-26 (v3.11.0)
+
+### 优化 — 系统提示词无损压缩（CLAUDE.md v12，前缀 -49%）
+
+- **行为评测集（先建后压）**：新增 `npm run prompt:eval`（`scripts/prompt-eval.mjs`）— 8 个标准输入（记饮食/记体重/说过敏/运动打卡/推荐习惯/要提醒/缺细节/纯闲聊）直连真实 LLM 跑完整工具循环（工具结果内存 mock），**只断言工具调用行为**（工具名集合 + write_file 目标路径，不比对文案）。v11 基线存 `scripts/prompt-eval-baseline.json`；批次 A（打卡/通知/ask_user/健康建议）、批次 B（数据写入规则/身体数据/核心原则）分批压缩、每批复跑，**两轮评测均 8/8 硬性行为通过**
+- **CLAUDE.md v11 → v12（6,242 → 3,495 字符，-44%）**，按"每个知识点只有一个权威来源"原则去重：
+  - 习惯打卡系统节与 4 个工具定义重复教学 → 压缩为每工具一行触发规则（953 → ~280）
+  - send_notification / ask_user 场景示例砍半（工具定义已含参数与枚举）
+  - "必须先 write_file"3 处重复强调 → 判断流程清单 + 一次最强表述；"触发关键词"清单删除（与判断流程 item 1 完全重复）
+  - 身体数据更新示例对话删除（步骤与公式保留）；健康生活小建议 7 类各压一短句
+  - **红线未动**：饮食文件格式模板一字未改（stats-manager 解析契约）、数据写入判断流程、数据原值保留规则
+  - **新增「文件地图」节（~230 字符）**：告知模型全部可查位置（diet/chat/habits/weekly/insights/.meta）+ "历史数据一律查文件，不要凭记忆编造" + 不确定路径先 read_file INDEX.md / search_files 按模式搜——把"按需读取"从偶尔想起变成默认直觉；配套评测新增 2 个召回用例（查上周饮食/查打卡报告，数据在注入窗口外，验证模型会主动用工具找）
+- **固定前缀纯静态化（7,602 → 4,095 字符，-46%）**：`PROFILE.md` / `BODY_METRICS.md` 移出 `_fixedFiles` 固定前缀改为动态注入 — 它们被 AI 频繁写入，每记一次体重就失效整个前缀 KV 缓存；移出后前缀 = CLAUDE.md + rules/（真静态），缓存存活期大幅延长。单元测试同步更新（PROFILE 写入不再失效缓存，rules/ 仍失效）
+- **时间判断块表格化**（llm-service.buildSystemPrompt）：今天/昨天/明天合并单行，信息等价，删重复转述（~500 → ~250）
+- **测量**：`scripts/measure-context.mjs` 改为测量真实内嵌模板（原 data/CLAUDE.md 是 3.5K 旧模板，与内嵌 6.2K 不同步导致此前测量偏低）；每次请求静态部分净省约 3,300 字符（≈2K+ tokens）
+- **清理**：删除 `data/CLAUDE.md`（运行时不用、纯误导），三目录孤儿同步清理；AGENTS.md 记忆说明更正
+- **真机回归**：REGRESSION.md 第 2 节新增 v12 行为核对项
+- **涉及文件**：`js/file-manager.js`、`js/llm-service.js`、`test/llm-service.test.js`、`scripts/prompt-eval.mjs`（新）、`scripts/measure-context.mjs`、`TODO.md`（全部完成）、`docs/REGRESSION.md`、`AGENTS.md` 及三目录同步副本
+
+## 2026-09-26 (v3.10.0)
+
+### 新增 — 跨天结算后台化（打开即聊，结算后台跑）
+
+- **前台/后台划分**：跨天（启动检测 + 运行中检测共用 `_startDayRollover`）改为两段式 —
+  - **前台（毫秒级，正确性必须）**：昨日历史快照落盘（`.meta/rollover-pending.json`，剥离 `_displayPhotos` base64 大图、保留 `_recognition`）→ 日期切今天 → 清空 live 历史 → 聊天 UI 就绪 + 顶栏状态条 + 简短问候。原则：凡"今天的新聊天不能等"且"纯本地毫秒级"的在前台
+  - **后台（顺序队列，不阻塞）**：昨日摘要(LLM，90s 步骤超时) → 数据完整性检查 → 21 天习惯刷新(LLM) → 昨日打卡报告 → 周度习惯总结(条件) → 记忆快照 → AI 周报(周日) → 重建索引 → 每日提醒刷新 → Auto Dream。原则：依赖昨日数据、可慢慢算的都在后台
+- **顶栏状态条**：`header` 下方细条「🌙 昨日结算中 · 保存昨日对话摘要（N 步完成）」呼吸灯动画；点击弹出步骤明细弹窗（⏳/✅/⚠️ 实时状态 + 失败补救指引）。全部成功 →「✓ 昨日结算完成」2.5s 淡出；有失败 →「⚠️ 部分失败，点击查看」保留可点。原全屏跨天遮罩不再自动显示（DOM 保留备用）
+- **摘要改从快照生成**：`ChatManager.saveDailySummary(llmService, history?, date?)` 参数化 — 后台结算传昨日快照，绝不读 live 状态（用户已在新的一天聊天，防止串日期）
+- **问候拆两段**：`showNewDayWelcomeQuick()`（简短问候，前台立发）+ `showNewDayWelcomeFull()`（含昨日总结和今日建议，后台摘要完成后调用）；结算完成时用户已开聊则只发「🌅 昨日结算完成」系统轻提示
+- **断点续跑**：结算中被杀 APP → 下次启动检测 pending 快照自动恢复后台队列（live 状态上次已切今天，不重复前台切换）；结算完成后删除 pending 文件
+- **KV 缓存收尾**：后台队列完成时统一失效固定前缀缓存（learned-habits 等被后台步骤更新后，后续对话立即使用新档案）
+- **测试**：+2 用例（saveDailySummary 快照参数不串日期 / 空快照不写文件），全量 110 用例通过
+- **涉及文件**：`js/chat-manager.js`、`js/app.js`、`index.html`、`css/style.css`、`docs/REGRESSION.md` 及三目录同步副本
+
+## 2026-09-26 (v3.9.0)
+
+### 新增 — 图片两阶段发送（提升沟通效率）
+
+- **图片预识别管道**：新 `SparkLLM.recognizeImages()` — 用户发图片/图片+文字时，图片先**单独**发给视觉模型：不带系统提示词（省掉整个 KV 固定前缀的传输），仅一句极简识别指令（`RECOGNIZE_HINT` 约 60 字；max_tokens 4096、temperature 0.2、2 次重试 / 60s 快速失败）
+- **识别文字并入主对话**：返回的识别文字以「[图片识别] …」与用户文字合并为**纯文本**消息走主对话 — 主对话不再切换视觉模型、工具循环各轮不再重复视觉编码图片、纯文本消息可命中 30s 响应缓存。识别文字存入历史消息 `_recognition` 字段：`getHistory()` 组装 LLM 上下文时并入，UI 气泡仍只显示用户原文，跨重启保留
+- **失败回退**：预识别失败/返回空时自动回退旧行为（图片数组直发、视觉模型接管），零回归风险；MockLLM 无该方法时同样回退
+- **状态条**：识别阶段显示「🔍 识别图片中 · Xs」，主请求发出后切「等待响应」
+- **修复：每条请求双发最新用户消息** — 旧版 `sendMessage` 先把用户消息写入历史，`chatStream` 又把当前消息追加一次，导致**每次请求最新一条用户消息都发送两遍**（token 浪费 + 上下文重复）。新增 `ChatManager.getHistoryForRequest()` 弹出末尾当前消息，`_streamRender` 改用
+- **测试**：+10 用例（recognizeImages 三格式 payload / 空列表不发请求 / 失败抛错；`_recognition` 存取组装 / getHistoryForRequest / saveHistory 往返），全量 108 用例通过
+- **涉及文件**：`js/spark-llm.js`、`js/chat-manager.js`、`js/app.js`、`docs/REGRESSION.md` 及三目录同步副本
+
 ## 2026-09-21 (v3.8.0)
 
 ### 新增 — 三套界面主题（按 ui-proposals.html 三方案落地）

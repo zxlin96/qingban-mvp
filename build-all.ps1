@@ -149,6 +149,15 @@ try {
         exit 1
     }
     $npxResult | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    # 1c. Android 包版本同步: package.json → build.gradle (versionName/versionCode)
+    $verResult = & node scripts/sync-android-version.mjs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Android 版本同步失败"
+        $verResult | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        Pop-Location
+        exit 1
+    }
+    $verResult | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     Write-OK "Web 资源同步完成"
 } catch {
     Write-Err "同步异常: $_"

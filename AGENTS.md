@@ -25,12 +25,13 @@ css/  →  www/css/  →  android/app/src/main/assets/public/css/
 
 ## 版本号与更新日志（关键）
 
-每次功能改动或修复后，必须同时更新**四处**：
+每次功能改动或修复后，必须同时更新**五处**：
 
 1. `js/app.js` 的 `APP_VERSION` 和 `APP_VERSION_DATE`（文件顶部，`const APP_VERSION = '3.4.x'`）
 2. `js/app.js` 的 `CHANGELOG` 数组顶部插入新条目（应用内"关于"页展示）
 3. `package.json` 的 `version`
 4. `CHANGELOG.md` 顶部新增条目（仓库记录）
+5. `android/app/build.gradle` 的 `versionName`/`versionCode` —— **由 `scripts/sync-android-version.mjs` 自动同步**（`npm run sync` / `npm run verify` / `build-all.ps1` 均已接入），无需手动改
 
 - 版本号语义化递增（如 3.4.7 → 3.4.8）。`CHANGELOG` 数组与 `CHANGELOG.md` 内容必须一致。
 - 改完 `js/app.js` 后按三目录同步约定同步到副本。
@@ -41,7 +42,7 @@ css/  →  www/css/  →  android/app/src/main/assets/public/css/
 - **后端**：`server.js` 单文件，`/api/chat`（非流式）、`/api/chat/stream`（SSE）、`/api/health`（健康检查），其余走静态文件服务。`cleanMessages()` 会剥离非标准字段（如 `_pendingAction`）避免讯飞拒绝。
 - **LLM 服务**：`js/spark-llm.js`（讯飞/OpenAI/Anthropic 多协议适配）、`js/llm-service.js`（KV Cache 三层缓存 + 工具调度）、`js/mock-llm.js`（离线 mock）。
 - **业务模块**：`chat-manager.js`、`diet-recorder.js`（饮食记录）、`habit-manager.js`（习惯打卡）、`file-manager.js`、`index-manager.js`、`profile-learner.js`、`notification-manager.js`、`auto-dream.js`、`on-demand-loader.js`、`settings.js`、`app-config.js`。
-- **AI 记忆**：`data/CLAUDE.md`（AI 角色指令）、`data/PROFILE.md`、`data/BODY_METRICS.md`、`data/preferences.md`、`data/allergies.md`、`data/exercise.md`。前端通过 `read_file`/`write_file` 工具读写这些文件。
+- **AI 记忆**：AI 角色指令内嵌于 `js/file-manager.js` 的 `_getClaudeMd()`（v12），用户数据文件（PROFILE/BODY_METRICS/rules 等）为 IndexedDB 虚拟文件，由 AI 通过 `read_file`/`write_file` 工具读写；`data/` 目录仅存用户数据模板（CLAUDE.md 已删，运行时不用）
 - **Capacitor**：`appId: com.qingban.mvp`，`androidScheme: https`，启用 `CapacitorHttp`、`allowMixedContent`。
 
 ## 合规限制
