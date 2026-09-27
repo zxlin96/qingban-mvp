@@ -280,3 +280,36 @@ describe('saveDailySummary 快照参数（跨天后台结算 v3.10.0）', () => 
     assert.equal(fm.files.size, before);
   });
 });
+
+describe('晚间草稿预生成决策（v3.12.0）', () => {
+  const evening = new Date(2026, 8, 26, 22, 30);
+
+  test('非晚间 / 无对话 → 不生成', () => {
+    assert.equal(ChatManager.pregenerateDraftDecision({ historyLen: 5, now: new Date(2026, 8, 26, 20, 0) }).reason, 'not_evening');
+    assert.equal(ChatManager.pregenerateDraftDecision({ historyLen: 0, now: evening }).reason, 'no_conversation');
+  });
+
+  test('晚间无草稿 / 有新消息 → 生成', () => {
+    assert.deepEqual(ChatManager.pregenerateDraftDecision({ historyLen: 5, now: evening }), { run: true, reason: 'ok' });
+    const marker = { date: '2026-09-26', historyLen: 3, lastAttempt: new Date(2026, 8, 26, 22, 0).toISOString() };
+    assert.equal(ChatManager.pregenerateDraftDecision({ marker, historyLen: 5, now: evening }).run, true);
+  });
+
+  test('草稿已覆盖全部消息 → 不生成；20 分钟内节流 → 不生成', () => {
+    const marker = { date: '2026-09-26', historyLen: 5, lastAttempt: new Date(2026, 8, 26, 22, 0).toISOString() };
+    assert.equal(ChatManager.pregenerateDraftDecision({ marker, historyLen: 5, now: evening }).reason, 'no_new_messages');
+    const marker2 = { date: '2026-09-26', historyLen: 3, lastAttempt: new Date(2026, 8, 26, 22, 0).toISOString() };
+    assert.equal(ChatManager.pregenerateDraftDecision({ marker: marker2, historyLen: 5, now: new Date(2026, 8, 26, 22, 10) }).reason, 'throttled');
+  });
+});
+
+describe('saveDailySummary skipIndex（晚间草稿不追加 INDEX）', () => {
+  test('skipIndex: true 时不写 INDEX.md', async () => {
+    const { fm, cm } = newCM();
+    cm.currentDate = '2026-09-26';
+    cm.addUserMessage('晚餐吃了沙拉');
+    await cm.saveDailySummary(undefined, cm.history, '2026-09-26', { skipIndex: true });
+    assert.ok(fm.files.get('chat/2026-09-26.md'));
+    assert.ok(!fm.files.has('INDEX.md'), '草稿模式不得追加索引');
+  });
+});

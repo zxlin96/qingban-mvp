@@ -1,5 +1,23 @@
 # 轻伴 MVP 变更日志
 
+## 2026-09-27 (v3.12.0)
+
+### 新增 — 昨日总结三层提前结算（早上打开即见）+ 结算可靠性
+
+> 源自 v3.11.1 真机首验反馈（09-27 早：结算耗时 3 分钟、21 天分析撞 90s 超时、状态条位置漂移）
+
+- **三层提前结算**：
+  - **层 1 · 晚间草稿**：22:00 后且当日有对话 → 复用 60s 检测定时器静默预生成当日摘要（`saveDailySummary` 新增 `skipIndex` 选项防 INDEX 重复行；20 分钟节流 + 按消息增量触发；标记存 `.meta/daily-draft.json`）
+  - **层 2 · 凌晨后台结算**：生效日 4:00 翻转，退后台时对齐 04:05 的 `setTimeout` 触发（60s 检测兜底）；结算后仍有失败步骤 → 15 分钟自动重跑失败步骤（跳过已完成步骤），**9:00 封顶、整夜至多 2 轮**；全部成功才删除断点文件
+  - **层 3 · 早打开兜底**（现有）：断点续跑恢复队列，按已完成状态跳过
+- **单一入口闸门**：新模块 `js/settlement-gate.js` 状态机（idle/running/retryScheduled）——后台对齐触发、夜间重试定时器、用户打开恢复、运行中跨天检测四个入口统一过闸；`retryScheduled` 被任何 `claim()` 接管时自动取消挂起的重试定时器，**用户主动打开与后台重试互不冲突，杜绝双跑**
+- **21 天分析降频（用户确认）**：跑当且仅当距上次成功刷新 ≥ 2 天 且期间有新对话摘要（状态存 `.meta/habits-refresh.json`，`ProfileLearner.shouldSkipRefresh/markRefreshed`）；跳过时明细显示"无新数据，已跳过"；菜单手动刷新不受限
+- **可靠性**：重步骤超时 90s → 150s；习惯总结与 AI 周报失败自动重试 1 次（间隔 10s）；失败原因写入队列步骤（`steps[i].error`）并在明细弹窗灰字/红字展示
+- **状态条修复**：移入聊天面板顶部（`.chat-panel` 首子元素，token-bar 之前）——根治 `.app` grid 自动放置导致的位置漂移（真机截图 1 出现在屏幕中部）；样式瘦身（高度 ~28px：padding 4px 12px、字号 11px、圆点 6px）
+- **明细文案**：步骤 label 转中性描述（修复"完成后仍显示正在…"）
+- **测试**：新增 `test/settlement-gate.test.js`（闸门冲突/窗口边界/轮数上限/真实定时器冒烟）、`test/profile-learner.test.js`（降频策略 6 用例）、chat-manager 草稿决策与 skipIndex 用例，全量 **125 用例通过**
+- **涉及文件**：`js/settlement-gate.js`（新）、`js/chat-manager.js`、`js/profile-learner.js`、`js/app.js`、`index.html`、`css/style.css`、`test/*`、`TODO.md`（完成）、`docs/REGRESSION.md` 及三目录同步副本
+
 ## 2026-09-26 (v3.11.1)
 
 ### 修复 — Android 安装包版本号长期不更新

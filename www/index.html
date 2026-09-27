@@ -186,12 +186,6 @@
     </div>
   </header>
 
-  <!-- 跨天后台结算状态条（顶栏下方，点击查看步骤明细；结算完成自动淡出） -->
-  <div class="rollover-strip" id="rolloverStrip" style="display:none;" role="status" title="点击查看结算明细">
-    <span class="rollover-strip-dot"></span>
-    <span id="rolloverStripText">昨日结算中…</span>
-  </div>
-
   <!-- Left Panel: File Browser -->
   <aside class="file-panel">
     <div class="panel-header">
@@ -205,6 +199,11 @@
 
   <!-- Center Panel: Chat -->
   <main class="chat-panel">
+    <!-- 跨天后台结算状态条（聊天区顶部，点击查看步骤明细；结算完成自动淡出） -->
+    <div class="rollover-strip" id="rolloverStrip" style="display:none;" role="status" title="点击查看结算明细">
+      <span class="rollover-strip-dot"></span>
+      <span id="rolloverStripText">昨日结算中…</span>
+    </div>
     <div class="token-bar" id="tokenBar" style="display:none;">
       <div class="token-bar-summary" id="tokenBarSummary" onclick="document.getElementById('tokenBar').classList.toggle('expanded')">
         <span class="token-bar-label">Token</span>

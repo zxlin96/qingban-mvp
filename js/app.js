@@ -3,15 +3,26 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.11.1';
-const APP_VERSION_DATE = '2026-09-26';
+const APP_VERSION = '3.12.0';
+const APP_VERSION_DATE = '2026-09-27';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
 // 跨天后台结算的断点续跑快照（含昨日历史快照 + 步骤状态，结算完成后删除）
 const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
+// 晚间草稿预生成标记（记录当天草稿覆盖到的 historyLen，跨天结算据此秒过摘要步骤）
+const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.12.0', date: '2026-09-27',
+    items: [
+      '新增：昨日总结三层提前结算 — 晚间 22:00+ 静默预生成草稿、凌晨 04:05 后台对齐结算（失败 15 分钟自愈重试至 9:00）、早打开断点续跑；早上打开即可见完整问候',
+      '新增：单一入口闸门（settlement-gate）— 后台重试与用户打开恢复互不冲突，杜绝双跑',
+      '优化：21 天习惯分析降频 — 距上次刷新 ≥2 天且有新摘要才跑（明细中显示"无新数据，已跳过"）；重步骤超时 90s→150s + 失败自动重试 1 次；明细弹窗显示失败原因',
+      '优化：结算状态条移入聊天区顶部并瘦身（高度约 28px），修复位置漂移；步骤文案转中性描述'
+    ]
+  },
   {
     ver: '3.11.1', date: '2026-09-26',
     items: [
@@ -374,6 +385,7 @@ import { HabitManager } from './habit-manager.js';
 import { IndexManager } from './index-manager.js';
 import { OnDemandLoader } from './on-demand-loader.js';
 import { BackupManager } from './backup-manager.js';
+import { SettlementGate } from './settlement-gate.js';
 import { StatsManager } from './stats-manager.js';
 
 class App {
@@ -390,6 +402,7 @@ class App {
     this.notificationManager = new NotificationManager(this.fm);
     this.habitManager = new HabitManager(this.fm);
     this.backupManager = new BackupManager(this.fm, APP_VERSION);
+    this._settlementGate = new SettlementGate();
     this.statsManager = new StatsManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
@@ -543,15 +556,17 @@ class App {
 
   // 后台定时检测日期变化（凌晨也会触发）
   _startDayCheckTimer() {
-    // 每 60 秒检查一次（APP 在前台时）
+    // 每 60 秒检查一次（APP 在前台时）——顺带做晚间草稿预生成判断
     this._dayCheckInterval = setInterval(() => {
       this._checkDayRollover();
+      this._maybePregenerateDraft();
     }, 60000);
 
     // 方式1：浏览器 visibilitychange 事件
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this._backgroundedAt = Date.now();
+        this._armNightlySettlementTimer(); // 退后台时对齐凌晨 04:05 的后台结算触发
       } else {
         this._checkDayRollover();
         this._checkBackgroundInterruption();
@@ -700,14 +715,16 @@ class App {
     }
   }
 
-  // ===== 跨天后台结算（v3.10.0）=====
+  // ===== 跨天后台结算（v3.10.0，v3.12.0 三层提前结算 + 单一入口闸门）=====
   // 前台（毫秒级，正确性必须）：快照昨日状态落盘 → 日期切今天 → 清空历史 → UI 就绪 + 状态条 + 简短问候
-  // 后台（顺序队列，不阻塞聊天）：昨日摘要(LLM) → 完整性检查 → 21天习惯(LLM) → 打卡报告
+  // 后台（顺序队列，不阻塞聊天）：昨日摘要(LLM) → 完整性检查 → 21天习惯(LLM，隔天降频) → 打卡报告
   //   → 周度总结(条件) → 记忆快照 → AI周报(周日) → 重建索引 → 提醒刷新 → Auto Dream
-  // 划分依据：凡"今天的新聊天不能等"且"纯本地毫秒级"的在前台；凡依赖昨日数据可慢慢算的都在后台。
+  // 三层提前结算：层1 晚间草稿（22:00+ 静默预生成）→ 层2 凌晨后台结算（04:05 对齐触发 + 失败 15 分钟
+  //   重试至 9:00，闸门防与用户打开冲突）→ 层3 早打开兜底（断点续跑，现有）。
   // 断点续跑：前台切换前把昨日快照写入 .meta/rollover-pending.json，后台被杀时下次启动恢复结算。
   async _startDayRollover(todayStr) {
-    if (this._rolloverBgActive) return;
+    if (!this._settlementGate.claim()) return;
+    this._settlementGate.resetRounds();
     this._rolloverBgActive = true;
 
     const yesterdayDate = this.chatManager.currentDate;
@@ -735,41 +752,60 @@ class App {
     // 顶栏状态条 + 简短问候（完整问候等后台摘要完成后再发）
     this._showRolloverStrip();
     this.showNewDayWelcomeQuick();
-    this._runRolloverQueueInBackground();
+    this._runRolloverQueueInBackground({ skipDone: false });
   }
 
-  // 断点续跑：上次结算被中断（live 状态已是今天），直接恢复后台队列
+  // 断点续跑（层3）：上次结算被中断（live 状态已是今天），恢复后台队列并跳过已完成步骤
   _resumeRolloverPending(pending) {
-    if (this._rolloverBgActive) return;
+    if (!this._settlementGate.claim()) return;
     this._rolloverBgActive = true;
     this._rolloverPending = pending;
     this._showRolloverStrip();
     this.showNewDayWelcomeQuick();
-    this._runRolloverQueueInBackground();
+    this._runRolloverQueueInBackground({ skipDone: true });
   }
 
-  _runRolloverQueueInBackground() {
+  _runRolloverQueueInBackground({ skipDone = false } = {}) {
     const pending = this._rolloverPending;
+    this._rolloverSkipDone = skipDone;
     // 不阻塞调用方：后台顺序执行，逐步更新状态条
     (async () => {
+      let failed = false;
       try {
         await this.handleDayRollover(pending.date, pending.history || []);
         // 收尾：固定记忆文件可能已被后台步骤更新（learned-habits 等），失效 KV 前缀缓存
         this.llmService._fixedFiles.forEach((p) => this.llmService._invalidatePrefixCache(p));
-        try { await this.fm.deleteFile(ROLLOVER_PENDING_KEY); } catch (_) {}
+        failed = (pending.queue.steps || []).some((s) => s.status === 'error');
+        // 全部成功才清除断点文件；有失败时保留供自动重试 / 下次打开续跑
+        if (!failed) {
+          try { await this.fm.deleteFile(ROLLOVER_PENDING_KEY); } catch (_) {}
+        }
         this._finishRolloverStrip();
-        // 用户还没开始聊 → 发完整新一天问候（含昨日总结）；已聊过 → 轻提示不打扰
+        // 用户还没开始聊 → 发完整新一天问候（含昨日总结）；已聊过且全部成功 → 轻提示
         if (this.chatManager.history.length === 0) {
           await this._withTimeout(this.showNewDayWelcomeFull(), 15000, 'showNewDayWelcomeFull');
-        } else {
+        } else if (!failed) {
           this.addMessage('system', `🌅 昨日结算完成：摘要已存入 chat/${pending.date}.md，习惯档案已更新。`);
         }
       } catch (e) {
         console.error('[DayRollover] 后台结算失败:', e.message);
+        failed = true;
         this._finishRolloverStrip(e.message);
       } finally {
+        this._settlementGate.release();
         this._rolloverBgActive = false;
         this._dayRolloverDone = true;
+        // 夜间失败自愈：4:00-9:00 窗口内 15 分钟后自动重跑失败步骤（整夜至多 2 轮）
+        if (failed) {
+          const scheduled = this._settlementGate.scheduleRetry(() => {
+            if (this._settlementGate.claim()) {
+              this._rolloverBgActive = true;
+              this._showRolloverStrip();
+              this._runRolloverQueueInBackground({ skipDone: true });
+            }
+          });
+          if (scheduled) console.log('[DayRollover] 存在失败步骤，15 分钟后自动重试（窗口至 9:00）');
+        }
       }
     })();
   }
@@ -803,16 +839,23 @@ class App {
     this._dtAddStep = (text) => {
       const q = this._rolloverPending && this._rolloverPending.queue;
       if (q) {
-        q.steps.push({ label: text, status: 'running' });
-        this._persistRolloverQueue();
+        // 重试/续跑时复用既有步骤条目（保留 done 状态供 handleDayRollover 跳过）；全新运行则新增
+        if (this._rolloverSkipDone && q.steps[this._dtStepIndex]) {
+          q.steps[this._dtStepIndex].label = text;
+        } else {
+          q.steps.push({ label: text, status: 'running' });
+          this._persistRolloverQueue();
+        }
       }
       this._dtStepIndex++;
       this._updateRolloverStripText(text);
     };
-    this._dtUpdateStep = (index, status) => {
+    this._dtUpdateStep = (index, status, errMsg = null, note = null) => {
       const q = this._rolloverPending && this._rolloverPending.queue;
       if (q && q.steps[index]) {
         q.steps[index].status = status;
+        if (errMsg !== null) q.steps[index].error = errMsg;
+        if (note !== null) q.steps[index].note = note;
         this._persistRolloverQueue();
       }
       if (this._rolloverDetailOpen) this._renderRolloverDetail();
@@ -859,10 +902,67 @@ class App {
       box.innerHTML = '<div class="rollover-detail-empty">正在准备结算步骤…</div>';
       return;
     }
-    const icon = (s) => (s === 'done' ? '✅' : s === 'error' ? '⚠️' : '⏳');
+    const icon = (s) => (s.status === 'done' ? '✅' : s.status === 'error' ? '⚠️' : '⏳');
     box.innerHTML = steps
-      .map((s) => `<div class="rollover-detail-row"><span class="rollover-detail-icon">${icon(s.status)}</span><span>${s.label}</span></div>`)
+      .map((s) => {
+        const sub = s.error
+          ? `<div class="rollover-detail-sub rollover-detail-error">${s.error}</div>`
+          : s.note
+            ? `<div class="rollover-detail-sub">${s.note}</div>`
+            : '';
+        return `<div class="rollover-detail-row"><span class="rollover-detail-icon">${icon(s.status)}</span><div class="rollover-detail-body"><div>${s.label}</div>${sub}</div></div>`;
+      })
       .join('');
+  }
+
+  // ===== 层1 · 晚间草稿预生成（22:00+ 静默生成当日摘要，跨天时秒过摘要步骤）=====
+  async _maybePregenerateDraft() {
+    try {
+      if (this._rolloverBgActive || this.isProcessing) return;
+      const now = new Date();
+      const today = this.chatManager.currentDate;
+      if (today !== this.chatManager._getToday()) return; // 熬夜时段不预生成
+      let marker = null;
+      try {
+        marker = JSON.parse((await this.fm.readFile(DRAFT_KEY)) || 'null');
+      } catch (_) {}
+      if (marker && marker.date !== today) marker = null; // 旧日期的草稿标记视为无
+      const decision = ChatManager.pregenerateDraftDecision({
+        marker,
+        historyLen: this.chatManager.history.length,
+        now,
+      });
+      if (!decision.run) return;
+      // 先写标记再生成：失败不会每分钟空转；用户继续聊（historyLen 增长）会自然触发重试
+      await this.fm.writeFile(DRAFT_KEY, JSON.stringify({
+        date: today,
+        historyLen: this.chatManager.history.length,
+        lastAttempt: now.toISOString(),
+      }));
+      await this._stepTimeout(
+        this.chatManager.saveDailySummary(this.llm, this.chatManager.history, today, { skipIndex: true }),
+        150000,
+        '晚间草稿'
+      );
+      console.log('[晚间草稿] 今日摘要已预生成:', today);
+    } catch (e) {
+      console.warn('[晚间草稿] 预生成失败（不影响跨天流程）:', e.message);
+    }
+  }
+
+  // ===== 层2 · 凌晨后台结算对齐触发（04:05，进程活着时最优；60s 检测兜底）=====
+  _armNightlySettlementTimer() {
+    if (this._nightlyTimer) clearTimeout(this._nightlyTimer);
+    const now = new Date();
+    const target = new Date(now);
+    target.setHours(4, 5, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    this._nightlyTimer = setTimeout(() => {
+      this._nightlyTimer = null;
+      // 幂等：当日已结算则 _checkDayRollover 直接跳过
+      this._checkDayRollover();
+      this._armNightlySettlementTimer();
+    }, target - now);
   }
 
   // 跨天处理（后台结算队列，由 _startDayRollover 驱动）：
@@ -870,110 +970,173 @@ class App {
   // → 记忆快照 → 重建索引 → 提醒刷新 → Auto Dream
   // v3.10.0 起：日期切换与清空历史已移到前台（_startDayRollover），此处不再操作 live 状态
   async handleDayRollover(yesterdayDate, yesterdayHistory = []) {
+    // 重试/恢复时跳过已完成步骤：按队列条目索引对齐（同一夜内步骤序列确定性一致）
+    const stepDone = (i) => !!(this._rolloverSkipDone && this._rolloverPending?.queue?.steps?.[i]?.status === 'done');
 
-    // 步骤 1: 保存昨日对话摘要（从快照生成 — live 历史已切今天，不能读）
-    if (this._dtAddStep) this._dtAddStep('正在保存昨日对话摘要...');
-    try {
-      await this._stepTimeout(this.chatManager.saveDailySummary(this.llm, yesterdayHistory, yesterdayDate), 90000, '昨日摘要');
+    // 步骤 1: 保存昨日对话摘要（从快照生成 — live 历史已切今天，不能读；晚间草稿已覆盖时秒过）
+    if (this._dtAddStep) this._dtAddStep('保存昨日对话摘要');
+    if (stepDone(0)) {
       if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
-    } catch (e) {
-      console.error('[DayRollover] 摘要失败:', e.message);
-      if (this._dtUpdateStep) this._dtUpdateStep(0, 'error');
+    } else {
+      try {
+        let draftHit = false;
+        try {
+          const marker = JSON.parse((await this.fm.readFile(DRAFT_KEY)) || 'null');
+          const draftFile = marker && marker.date === yesterdayDate
+            ? await this.fm.readFile(`chat/${yesterdayDate}.md`) : null;
+          draftHit = !!(draftFile && marker.historyLen >= yesterdayHistory.length);
+        } catch (_) {}
+        if (draftHit) {
+          console.log('[DayRollover] 晚间草稿已覆盖昨日全部消息，摘要步骤秒过');
+        } else {
+          await this._stepTimeout(this.chatManager.saveDailySummary(this.llm, yesterdayHistory, yesterdayDate), 150000, '昨日摘要');
+        }
+        if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
+      } catch (e) {
+        console.error('[DayRollover] 摘要失败:', e.message);
+        if (this._dtUpdateStep) this._dtUpdateStep(0, 'error', e.message);
+      }
     }
 
     // 步骤 2: 数据完整性检查
-    if (this._dtAddStep) this._dtAddStep('正在检查数据完整性...');
-    if (yesterdayHistory.length > 0) {
+    if (this._dtAddStep) this._dtAddStep('检查数据完整性');
+    if (stepDone(1)) {
+      if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
+    } else if (yesterdayHistory.length > 0) {
       try {
         await this._dataIntegrityCheck(yesterdayDate, yesterdayHistory);
         if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
       } catch (e) {
         console.error('[DayRollover] 数据检查失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(1, 'error');
+        if (this._dtUpdateStep) this._dtUpdateStep(1, 'error', e.message);
       }
     } else {
       if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
     }
 
     // 步骤 3: 刷新习惯总结（基于近 21 天对话摘要全量分析）
-    if (this._dtAddStep) this._dtAddStep('正在刷新习惯总结（近 21 天）...');
+    // v3.12.0 降频：距上次成功刷新 ≥ 2 天且期间有新对话摘要才跑；失败自动重试 1 次；超时 150s
+    if (this._dtAddStep) this._dtAddStep('刷新习惯总结（近 21 天）');
     const stepHabit = this._dtStepIndex - 1;
-    if (this.profileLearner) {
+    if (stepDone(stepHabit)) {
+      if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
+    } else if (this.profileLearner) {
       try {
-        const refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 90000, '习惯刷新');
-        console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
+        const skipInfo = await this.profileLearner.shouldSkipRefresh(yesterdayDate);
+        if (skipInfo.skip) {
+          console.log('[DayRollover] 习惯刷新跳过:', skipInfo.reason);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done', null, '无新数据，已跳过');
+        } else {
+          let refreshResult;
+          try {
+            refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
+          } catch (e1) {
+            console.warn('[DayRollover] 习惯刷新首次失败，10s 后重试:', e1.message);
+            await new Promise((r) => setTimeout(r, 10000));
+            refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
+          }
+          console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
+          await this.profileLearner.markRefreshed(yesterdayDate);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
+        }
       } catch (e) {
         console.error('[DayRollover] 习惯刷新失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'error');
+        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'error', e.message);
       }
     } else {
       if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
     }
 
     // 步骤 3.5: 保存昨日打卡报告
-    if (this._dtAddStep) this._dtAddStep('正在保存昨日打卡记录...');
+    if (this._dtAddStep) this._dtAddStep('保存昨日打卡记录');
     const stepHabitReport = this._dtStepIndex - 1;
-    try {
-      const habitReport = await this.habitManager.generateDailyReport(yesterdayDate);
-      await this.fm.writeFile(`habits/${yesterdayDate}.md`, habitReport);
+    if (stepDone(stepHabitReport)) {
       if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
-    } catch (e) {
-      console.error('[DayRollover] 打卡报告失败:', e.message);
-      if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'error');
+    } else {
+      try {
+        const habitReport = await this.habitManager.generateDailyReport(yesterdayDate);
+        await this.fm.writeFile(`habits/${yesterdayDate}.md`, habitReport);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
+      } catch (e) {
+        console.error('[DayRollover] 打卡报告失败:', e.message);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'error', e.message);
+      }
     }
 
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
     if (needWeekly) {
-      if (this._dtAddStep) this._dtAddStep('正在总结近一个月的习惯变化...');
+      if (this._dtAddStep) this._dtAddStep('总结近一个月的习惯变化');
       const stepWeekly = this._dtStepIndex - 1;
-      try {
-        await this._stepTimeout(this._weeklyHabitSummary(), 90000, '周度习惯总结');
+      if (stepDone(stepWeekly)) {
         if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 周度总结失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'error');
+      } else {
+        try {
+          await this._stepTimeout(this._weeklyHabitSummary(), 150000, '周度习惯总结');
+          if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 周度总结失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepWeekly, 'error', e.message);
+        }
       }
     }
 
     // 步骤 4.5: 记忆文件自动快照（滚动保留最近 7 份，防 AI 误写丢数据）
-    if (this._dtAddStep) this._dtAddStep('正在快照记忆文件...');
+    if (this._dtAddStep) this._dtAddStep('快照记忆文件');
     const stepSnap = this._dtStepIndex - 1;
-    try {
-      await this.backupManager.snapshotMemory();
+    if (stepDone(stepSnap)) {
       if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
-    } catch (e) {
-      console.error('[DayRollover] 记忆快照失败:', e.message);
-      if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'error');
+    } else {
+      try {
+        await this.backupManager.snapshotMemory();
+        if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
+      } catch (e) {
+        console.error('[DayRollover] 记忆快照失败:', e.message);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'error', e.message);
+      }
     }
 
-    // 步骤 4.6 (条件): AI 周报 — 昨日为周日时生成上周周报
+    // 步骤 4.6 (条件): AI 周报 — 昨日为周日时生成上周周报（失败自动重试 1 次）
     let yesterdayDow = -1;
     try { yesterdayDow = new Date(`${yesterdayDate}T00:00:00`).getDay(); } catch (_) {}
     if (yesterdayDow === 0) {
-      if (this._dtAddStep) this._dtAddStep('正在生成 AI 周报...');
+      if (this._dtAddStep) this._dtAddStep('生成 AI 周报');
       const stepWeeklyReport = this._dtStepIndex - 1;
-      try {
-        const report = await this._stepTimeout(this._generateWeeklyReport(yesterdayDate), 90000, 'AI 周报');
-        console.log('[DayRollover] AI 周报已生成:', report.path);
+      if (stepDone(stepWeeklyReport)) {
         if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'done');
-      } catch (e) {
-        console.error('[DayRollover] AI 周报失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'error');
+      } else {
+        try {
+          let report;
+          try {
+            report = await this._stepTimeout(this._generateWeeklyReport(yesterdayDate), 150000, 'AI 周报');
+          } catch (e1) {
+            console.warn('[DayRollover] AI 周报首次失败，10s 后重试:', e1.message);
+            await new Promise((r) => setTimeout(r, 10000));
+            report = await this._stepTimeout(this._generateWeeklyReport(yesterdayDate), 150000, 'AI 周报');
+          }
+          console.log('[DayRollover] AI 周报已生成:', report.path);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'done');
+        } catch (e) {
+          console.error('[DayRollover] AI 周报失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'error', e.message);
+        }
       }
     }
 
     // 步骤 5: 重建索引
-    if (this._dtAddStep) this._dtAddStep('正在重建记忆索引...');
+    if (this._dtAddStep) this._dtAddStep('重建记忆索引');
     const stepIndex = this._dtStepIndex - 1;
-    try {
-      await this.indexManager.rebuildIndex();
-      this.onDemandLoader?.invalidateIndexCache();
+    if (stepDone(stepIndex)) {
       if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
-    } catch (e) {
-      console.error('[DayRollover] 重建索引失败:', e.message);
-      if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'error');
+    } else {
+      try {
+        await this.indexManager.rebuildIndex();
+        this.onDemandLoader?.invalidateIndexCache();
+        if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
+      } catch (e) {
+        console.error('[DayRollover] 重建索引失败:', e.message);
+        if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'error', e.message);
+      }
     }
 
     // 步骤 6（已移除）: 清空历史 — v3.10.0 起移到前台（_startDayRollover 切日期时立即完成），

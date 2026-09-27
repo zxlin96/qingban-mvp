@@ -9,6 +9,39 @@ export class ProfileLearner {
     this.llm = llm;
     this.onDemandLoader = onDemandLoader;
     this.profilePath = 'rules/learned-habits.md';
+    this.refreshStatePath = '.meta/habits-refresh.json';
+  }
+
+  // ===== 21 天分析降频（v3.12.0）=====
+  // 跑当且仅当：距上次成功刷新 ≥ 2 天 且 期间有新对话摘要（chat/*.md 日期 > 上次刷新日期）
+  // 返回 { skip: bool, reason: string }
+  async shouldSkipRefresh(settleDate) {
+    try {
+      const raw = await this.fm.readFile(this.refreshStatePath);
+      const state = raw ? JSON.parse(raw) : null;
+      if (!state || !state.lastRefreshDate) return { skip: false, reason: 'first_run' };
+      const days = (new Date(`${settleDate}T00:00:00`) - new Date(`${state.lastRefreshDate}T00:00:00`)) / 86400000;
+      if (days < 2) return { skip: true, reason: `距上次刷新仅 ${days} 天` };
+      const all = await this.fm.listFiles();
+      const hasNewer = all.some((f) => {
+        const m = f.path.match(/^chat\/(\d{4}-\d{2}-\d{2})\.md$/);
+        return m && m[1] > state.lastRefreshDate;
+      });
+      if (!hasNewer) return { skip: true, reason: '无新对话摘要' };
+      return { skip: false, reason: 'ok' };
+    } catch (_) {
+      return { skip: false, reason: 'state_read_failed' };
+    }
+  }
+
+  // 刷新成功后记录状态（settleDate = 本次分析覆盖到的日期，即被结算的"昨天"）
+  async markRefreshed(settleDate) {
+    try {
+      await this.fm.writeFile(this.refreshStatePath, JSON.stringify({
+        lastRefreshDate: settleDate,
+        lastAt: new Date().toISOString(),
+      }));
+    } catch (_) { /* 状态记录失败不影响刷新本身 */ }
   }
 
   // 主入口:从某天的对话中学习,更新 learned-habits.md

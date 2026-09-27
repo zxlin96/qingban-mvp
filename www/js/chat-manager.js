@@ -388,7 +388,8 @@ export class ChatManager {
   // 保存对话摘要到 chat/YYYY-MM-DD.md
   // llmService 可选:传入且 LLM 成功时生成 300-500 字真摘要，否则降级全文拼接
   // history/date 可选:后台结算传入昨日快照（live 历史已切今天，不能读），默认读当前状态
-  async saveDailySummary(llmService, history = this.history, date = this.currentDate) {
+  // opts.skipIndex:晚间草稿预生成传 true——不追加 INDEX.md（跨天正式生成时才追加，避免重复行）
+  async saveDailySummary(llmService, history = this.history, date = this.currentDate, opts = {}) {
     if (history.length === 0) return;
 
     const chatPath = `chat/${date}.md`;
@@ -422,10 +423,28 @@ export class ChatManager {
 
     await this.fm.writeFile(chatPath, content);
 
-    // 更新 INDEX.md
-    await this.fm.appendFile('INDEX.md',
-      `- chat/${date}.md — ${history.length}条对话`
-    );
+    // 更新 INDEX.md（晚间草稿预生成时跳过——跨天正式生成会覆盖摘要并追加索引）
+    if (!opts.skipIndex) {
+      await this.fm.appendFile('INDEX.md',
+        `- chat/${date}.md — ${history.length}条对话`
+      );
+    }
+  }
+
+  // ===== 晚间草稿预生成决策（v3.12.0，纯函数可单测）=====
+  // 判断当前是否应该静默预生成当日摘要草稿：
+  //   22:00 后 + 当日有对话 + （无草稿或有新消息） + 20 分钟节流
+  // marker: { date, historyLen, lastAttempt } | null —— 调用方须先过滤：marker.date !== 当前日期时传 null
+  static pregenerateDraftDecision({ marker = null, historyLen = 0, now = new Date(), minHour = 22, throttleMs = 20 * 60 * 1000 } = {}) {
+    if (now.getHours() < minHour) return { run: false, reason: 'not_evening' };
+    if (historyLen <= 0) return { run: false, reason: 'no_conversation' };
+    if (marker && typeof marker.historyLen === 'number' && historyLen <= marker.historyLen) {
+      return { run: false, reason: 'no_new_messages' };
+    }
+    if (marker && marker.lastAttempt && (now - new Date(marker.lastAttempt)) < throttleMs) {
+      return { run: false, reason: 'throttled' };
+    }
+    return { run: true, reason: 'ok' };
   }
 
   // 获取上下文信息（用于 UI 显示）
