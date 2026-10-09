@@ -1,5 +1,42 @@
 # 轻伴 MVP 变更日志
 
+## 2026-10-10 (v3.13.2)
+
+### 优化 — 移除聊天底部快捷 chip
+
+> 精简聊天界面，移除输入框上方的快捷记录 chip（💧 喝水 250ml / ⚖️ 记体重 / 🍪 加餐）
+
+- **移除内容**：`index.html` 中的 `quick-chips` 容器及三个 `quick-chip` 按钮、`css/style.css` 中 `.quick-chips`/`.quick-chip` 全部样式、`js/app.js` 中 chip 点击事件绑定（一键填充文案逻辑）
+- **涉及文件**：`index.html`、`js/app.js`、`css/style.css`、`package.json`、`CHANGELOG.md` 及三目录同步副本
+
+## 2026-10-09 (v3.13.1)
+
+### 新增 — 模型设置新增「连接配置」分组
+
+> 在应用内「模型设置」UI 可配置大模型连接参数，运行时切换不同大模型服务，无需改代码或重新打包 APK
+
+- **新增配置项**：API 协议格式（openai/anthropic）、请求地址 BASE URL、API Key、请求超时（秒）、失败重试次数、自定义请求头（JSON）、上下文窗口大小（tokens）
+- **动态生效**：`SparkLLM._refreshConn()` 在每次请求前从 `QINGBAN_SETTINGS` 读取连接参数（优先）回退到 `QINGBAN_CONFIG`（内置默认），用户在设置 UI 修改后立即生效
+- **超时/重试可调**：`_request_openai`/`_request_anthropic` 的 retries/timeoutMs 默认值从 settings 读取（参数未传时），图片场景自动延长至至少 180s
+- **自定义请求头**：`_getCustomHeaders()` 解析 JSON 字符串并合并到所有请求（OpenAI/Anthropic/流式），支持代理认证等场景
+- **修复**：保存设置时丢失 `onDemandLoad`/`onDemandTokenBudget`/`settlement` 等未在 UI 暴露的字段（`_saveSettings` 现保留旧值）
+- **涉及文件**：`js/settings.js`、`js/spark-llm.js`、`js/app.js`、`index.html`、`package.json`、`CHANGELOG.md` 及三目录同步副本
+
+## 2026-10-09 (v3.13.0)
+
+### 新增 — 每日结算步骤可配置
+
+> 用户可自行勾选凌晨跨天结算需要执行哪些步骤，未勾选的步骤自动跳过
+
+- **结算设置面板**：菜单新增「结算设置」入口，10 个步骤独立开关：
+  - 对话与数据：昨日对话摘要、数据完整性检查、记忆文件快照、重建记忆索引
+  - 习惯与打卡：刷新习惯总结（近 21 天）、昨日打卡记录、周度习惯总结（每 7 天）
+  - 周报与提醒：AI 周报（周日）、刷新每日提醒（静默）、Auto Dream 自动触发（静默）
+- **配置存储**：`settings.js` 的 `DEFAULT_SETTINGS.settlement` 新增 10 个布尔开关（默认全 true，保持现有行为）；`loadSettings` 深合并 `settlement`/`reminders` 子对象，旧用户存档缺新开关时自动补默认值
+- **结算执行**：`handleDayRollover` 在方法开头快照配置（避免结算中途配置变化导致步骤序列错位），每个步骤前判断 `setlOn(key)`，关闭则跳过（不显示在明细弹窗）
+- **UI**：`settlementOverlay` 复用 `.settings-group`/`.settings-row`/`.settings-check` 现有样式；对「昨日摘要」加提示（关闭可能导致后续步骤数据不全）
+- **涉及文件**：`js/settings.js`、`js/app.js`、`index.html`、`package.json`、`CHANGELOG.md` 及三目录同步副本
+
 ## 2026-09-27 (v3.12.0)
 
 ### 新增 — 昨日总结三层提前结算（早上打开即见）+ 结算可靠性

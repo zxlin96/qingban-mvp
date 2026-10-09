@@ -167,6 +167,7 @@
       <div class="menu-item" id="menuCalendar"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span class="date-badge date-badge-clickable" id="dateBadge">加载中...</span></div>
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
       <div class="menu-item" id="menuReminders"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-bell"/></svg><span>提醒设置</span></div>
+      <div class="menu-item" id="menuSettlement"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span>结算设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
       <div class="menu-item" id="menuAutoDream"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-dream"/></svg><span>Auto Dream — 周报/月报</span></div>
       <div class="menu-item" id="menuRebuild"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>重建索引</span></div>
@@ -215,11 +216,7 @@
     <div class="chat-messages" id="chatMessages">
     </div>
     <div class="chat-input-wrapper">
-      <div class="quick-chips" id="quickChips">
-        <button class="quick-chip" data-text="喝了 250ml 水">💧 喝水 250ml</button>
-        <button class="quick-chip" data-text="刚称了体重，">⚖️ 记体重</button>
-        <button class="quick-chip" data-text="加餐吃了">🍪 加餐</button>
-      </div>
+
       <div id="photoPreview" class="photo-preview-bar"></div>
       <div class="chat-input">
         <button class="photo-btn" id="photoBtn" title="上传食物照片"><svg class="ico"><use href="#icon-camera"/></svg></button>
@@ -396,6 +393,42 @@
       </div>
 
       <div class="settings-group">
+        <div class="settings-group-title">连接配置 <span class="settings-hint">(留空=使用内置默认)</span></div>
+        <div class="settings-row">
+          <label>API 协议格式</label>
+          <select id="setApiFormat" class="settings-input">
+            <option value="">跟随默认</option>
+            <option value="openai">openai — OpenAI 兼容</option>
+            <option value="anthropic">anthropic — Anthropic 兼容</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>请求地址 (BASE URL)</label>
+          <input type="text" id="setApiBaseURL" class="settings-input" placeholder="如 https://api.kimi.com/coding">
+        </div>
+        <div class="settings-row">
+          <label>API Key</label>
+          <input type="password" id="setApiKey" class="settings-input" placeholder="留空使用内置 Key">
+        </div>
+        <div class="settings-row">
+          <label>请求超时 <span class="settings-hint">(秒)</span></label>
+          <input type="number" id="setRequestTimeout" class="settings-input" min="10" max="600" step="10" value="120">
+        </div>
+        <div class="settings-row">
+          <label>失败重试次数</label>
+          <input type="number" id="setRetryCount" class="settings-input" min="0" max="100" value="30">
+        </div>
+        <div class="settings-row">
+          <label>自定义请求头 <span class="settings-hint">(JSON 格式)</span></label>
+          <input type="text" id="setCustomHeaders" class="settings-input" placeholder='如 {"X-Custom":"value"}'>
+        </div>
+        <div class="settings-row">
+          <label>上下文窗口大小 <span class="settings-hint">(tokens)</span></label>
+          <input type="number" id="setMaxContextTokens" class="settings-input" min="4096" max="1048576" step="4096" value="1048576">
+        </div>
+      </div>
+
+      <div class="settings-group">
         <div class="settings-group-title">生成参数</div>
         <div class="settings-row">
           <label>温度 <span class="settings-hint">(0=严谨, 1=创意)</span></label>
@@ -494,6 +527,67 @@
         <button class="btn accent" id="remindersSave">保存</button>
       </div>
       <div class="settings-note">提醒为系统级通知，App 被关闭后依然有效。首次开启会请求通知权限；打卡提醒在 22:00 ~ 次日 7:00 静默。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Settlement Settings Modal (每日结算设置) -->
+<div class="file-viewer" id="settlementOverlay" style="display:none;">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <span class="title">每日结算设置</span>
+      <button class="btn" id="closeSettlement">关闭</button>
+    </div>
+    <div class="modal-body" style="padding:16px;max-height:70vh;overflow-y:auto;">
+      <div class="settings-note" style="margin-bottom:12px;">勾选需要执行的步骤，未勾选的步骤在凌晨跨天结算时自动跳过。「昨日摘要」是后续习惯分析/周报的数据基础，关闭可能导致后续步骤数据不全。</div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">对话与数据</div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlDailySummary" class="settings-check"> 昨日对话摘要 <span class="settings-hint">(chat/{日期}.md)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlIntegrityCheck" class="settings-check"> 数据完整性检查 <span class="settings-hint">(LLM 审查遗漏)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlMemorySnapshot" class="settings-check"> 记忆文件快照 <span class="settings-hint">(滚动保留 7 份)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlRebuildIndex" class="settings-check"> 重建记忆索引</label>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">习惯与打卡</div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlHabitRefresh" class="settings-check"> 刷新习惯总结 <span class="settings-hint">(近 21 天分析)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlHabitReport" class="settings-check"> 昨日打卡记录 <span class="settings-hint">(habits/{日期}.md)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlWeeklyHabitSummary" class="settings-check"> 周度习惯总结 <span class="settings-hint">(每 7 天)</span></label>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">周报与提醒</div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlWeeklyReport" class="settings-check"> AI 周报 <span class="settings-hint">(周日生成)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlRefreshReminders" class="settings-check"> 刷新每日提醒 <span class="settings-hint">(静默)</span></label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlAutoDream" class="settings-check"> Auto Dream 自动触发 <span class="settings-hint">(静默)</span></label>
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn" id="settlementReset">恢复默认</button>
+        <button class="btn accent" id="settlementSave">保存</button>
+      </div>
+      <div class="settings-note">保存后立即生效，下次跨天结算按此配置执行。</div>
     </div>
   </div>
 </div>

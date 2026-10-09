@@ -7,22 +7,38 @@
 export class SparkLLM {
   constructor() {
     this.callCount = 0;
+    this.endpoint = '/api/chat';
+    this.streamEndpoint = '/api/chat/stream';
+    this._refreshConn();
+  }
+
+  // 动态刷新连接配置 — 优先用 QINGBAN_SETTINGS 的连接参数，回退到 QINGBAN_CONFIG
+  // 用户在设置 UI 改了 baseURL/apiKey/apiFormat 后立即生效，无需重新初始化
+  _refreshConn() {
     const cfg = (typeof window !== 'undefined') ? window.QINGBAN_CONFIG : null;
-    this.apkMode = !!(cfg && cfg.apiKey && cfg.apiKey !== 'your-coding-plan-api-key');
-    if (this.apkMode) {
-      this.apiKey = cfg.apiKey;
-      this.baseURL = (cfg.baseURL || '').replace(/\/$/, '');
-      this.model = cfg.model || 'k3';
-      this.apiFormat = cfg.apiFormat || 'openai'; // 'openai' or 'anthropic'
-    } else {
-      this.endpoint = '/api/chat';
-      this.streamEndpoint = '/api/chat/stream';
-      this.apiFormat = 'openai';
-    }
+    const s = (typeof window !== 'undefined' && window.QINGBAN_SETTINGS) || {};
+    const apiKey = s.apiKey || (cfg && cfg.apiKey) || '';
+    const baseURL = (s.apiBaseURL || (cfg && cfg.baseURL) || '').replace(/\/$/, '');
+    const apiFormat = s.apiFormat || (cfg && cfg.apiFormat) || 'openai';
+    this.apkMode = !!(apiKey && apiKey !== 'your-coding-plan-api-key');
+    this.apiKey = apiKey;
+    this.baseURL = baseURL;
+    this.model = (cfg && cfg.model) || 'k3';
+    this.apiFormat = apiFormat;
+  }
+
+  // 解析自定义请求头（JSON 字符串 → 对象，解析失败返回空对象）
+  _getCustomHeaders() {
+    const s = (typeof window !== 'undefined' && window.QINGBAN_SETTINGS) || {};
+    if (!s.customHeaders) return {};
+    try { return JSON.parse(s.customHeaders); } catch (_) { return {}; }
   }
 
   // 统一的 HTTP 请求 — 带重试机制与整体超时保护
-  async _request_openai(payload, retries = 30, timeoutMs = 120000) {
+  async _request_openai(payload, retries, timeoutMs) {
+    const s = (typeof window !== 'undefined' && window.QINGBAN_SETTINGS) || {};
+    if (retries === undefined) retries = s.retryCount ?? 30;
+    if (timeoutMs === undefined) timeoutMs = (s.requestTimeout || 120) * 1000;
     let lastError = null;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -33,7 +49,8 @@ export class SparkLLM {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              ...this._getCustomHeaders()
             },
             body: JSON.stringify(payload),
             signal: controller.signal
@@ -74,7 +91,10 @@ export class SparkLLM {
   }
 
   // Anthropic 格式请求
-  async _request_anthropic(payload, retries = 30, timeoutMs = 120000) {
+  async _request_anthropic(payload, retries, timeoutMs) {
+    const s = (typeof window !== 'undefined' && window.QINGBAN_SETTINGS) || {};
+    if (retries === undefined) retries = s.retryCount ?? 30;
+    if (timeoutMs === undefined) timeoutMs = (s.requestTimeout || 120) * 1000;
     let lastError = null;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -86,7 +106,8 @@ export class SparkLLM {
             headers: {
               'x-api-key': this.apiKey,
               'anthropic-version': '2023-06-01',
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              ...this._getCustomHeaders()
             },
             body: JSON.stringify(payload),
             signal: controller.signal
@@ -320,6 +341,7 @@ export class SparkLLM {
   static RECOGNIZE_HINT = '请识别图片内容，简要输出。若为食物：列出食物与分量，估算总热量（kcal）；若为体重秤/运动/其他：客观描述关键信息。只输出识别结果，不要给建议。';
 
   async recognizeImages(images, { retries = 2, timeoutMs = 60000 } = {}) {
+    this._refreshConn();
     const settings = window.QINGBAN_SETTINGS || {};
     const visionModel = settings.visionModel || 'k3';
     const imgs = (images || []).filter(Boolean);
@@ -359,12 +381,14 @@ export class SparkLLM {
   // 主入口 — 供 LLMService.chat() 调用
   async chat(messages, tools, context) {
     this.callCount++;
+    this._refreshConn();
     const settings = window.QINGBAN_SETTINGS || {};
     const hasImages = this._hasImages(messages);
     const visionModel = settings.visionModel || 'k3';
     const chatModel = settings.chatModel || 'k3';
     const modelName = hasImages ? visionModel : chatModel;
     const temperature = settings.temperature ?? 0.7;
+    const imgTimeoutMs = hasImages ? Math.max((settings.requestTimeout || 120) * 1000, 180000) : undefined;
 
     console.log(`[LLM] 使用模型: ${modelName} (图片: ${hasImages ? '是' : '否'}) 格式: ${this.apiFormat} 温度: ${temperature}`);
 
@@ -394,7 +418,7 @@ export class SparkLLM {
 
       try {
         emitSent();
-        data = await this._request_anthropic(payload, 30, hasImages ? 180000 : 120000);
+        data = await this._request_anthropic(payload, undefined, imgTimeoutMs);
       } catch (e) {
         throw e;
       }
@@ -414,7 +438,7 @@ export class SparkLLM {
 
       try {
         emitSent();
-        data = await this._request_openai(payload, 30, hasImages ? 180000 : 120000);
+        data = await this._request_openai(payload, undefined, imgTimeoutMs);
       } catch (e) {
         if (!this.apkMode && e.message.includes('Failed to fetch')) {
           throw new Error('无法连接后端代理,请先运行 `node server.js`');
@@ -443,7 +467,7 @@ export class SparkLLM {
 
       try {
         emitSent();
-        data = await this._request_openai(payload, 30, hasImages ? 180000 : 120000);
+        data = await this._request_openai(payload, undefined, imgTimeoutMs);
       } catch (e) {
         if (e.message.includes('Failed to fetch')) {
           throw new Error('无法连接后端代理,请先运行 `node server.js`(或 npm start)');
@@ -475,6 +499,7 @@ export class SparkLLM {
   // 返回格式与 chat() 一致: { content, tool_calls, model, usage }
   async chatStream(messages, tools, context, onChunk, onThinkingChunk) {
     this.callCount++;
+    this._refreshConn();
     const settings = window.QINGBAN_SETTINGS || {};
     const hasImages = this._hasImages(messages);
     const visionModel = settings.visionModel || 'k3';
@@ -508,7 +533,7 @@ export class SparkLLM {
     const url = isProxy ? this.streamEndpoint : `${this.baseURL}/chat/completions`;
     const headers = isProxy
       ? { 'Content-Type': 'application/json' }
-      : { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' };
+      : { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', ...this._getCustomHeaders() };
 
     const resp = await this._fetchStreamWithRetry(url, {
       method: 'POST',
@@ -669,7 +694,8 @@ export class SparkLLM {
       headers: {
         'x-api-key': this.apiKey,
         'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...this._getCustomHeaders()
       },
       body: JSON.stringify(payload)
     });
@@ -786,6 +812,7 @@ export class SparkLLM {
   // 强制保留饮食/体重/打卡/过敏/偏好/运动/图片识别结果等关键事实数据原值
   // 成功返回摘要文本字符串；失败返回空字符串 ''（由调用方判定空即降级）
   async generateDailySummary(messages, date) {
+    this._refreshConn();
     const sysPrompt = `你是轻伴的每日对话摘要助手。请把以下当日对话压缩成 300-500 字的要点式摘要。
 
 ## 强制保留（原值，不得改写或省略）
@@ -854,6 +881,7 @@ export class SparkLLM {
 
   // 供 ChatManager.compactHistory() 调用 — 生成对话摘要
   async generateSummary(messages) {
+    this._refreshConn();
     const sysPrompt = '你是轻伴的摘要助手。请把以下对话压缩成简短摘要(150字内),保留:饮食记录、体重变化、用户诉求、AI给的关键建议。用要点形式。';
     const userContent = messages.map(m => {
       const text = typeof m.content === 'string'

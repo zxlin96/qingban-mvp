@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.12.0';
-const APP_VERSION_DATE = '2026-09-27';
+const APP_VERSION = '3.13.2';
+const APP_VERSION_DATE = '2026-10-10';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,27 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.13.2', date: '2026-10-10',
+    items: [
+      '优化：移除聊天输入框底部快捷 chip（喝水/记体重/加餐）— 精简界面，相关 HTML/CSS/JS 一并清理'
+    ]
+  },
+  {
+    ver: '3.13.1', date: '2026-10-09',
+    items: [
+      '新增：模型设置新增「连接配置」分组 — 可配置 API 协议格式（openai/anthropic）、请求地址 BASE URL、API Key、请求超时、重试次数、自定义请求头、上下文窗口大小，运行时切换不同大模型服务无需改代码或重新打包',
+      '优化：SparkLLM 连接参数动态刷新 — 在设置 UI 修改后立即生效（每次请求前 _refreshConn），超时/重试/自定义请求头从 QINGBAN_SETTINGS 读取',
+      '修复：保存设置时丢失 onDemandLoad/onDemandTokenBudget/settlement 等未在 UI 暴露的字段'
+    ]
+  },
+  {
+    ver: '3.13.0', date: '2026-10-09',
+    items: [
+      '新增：每日结算步骤可配置 — 菜单「结算设置」勾选需要执行的步骤（昨日摘要/数据检查/习惯刷新/打卡记录/周度总结/记忆快照/AI周报/重建索引/刷新提醒/AutoDream 共 10 项），未勾选的步骤在凌晨跨天结算时自动跳过',
+      '优化：settings.js 深合并 settlement/reminders 子对象 — 旧用户存档缺新增开关时自动补默认值，不再出现 undefined'
+    ]
+  },
   {
     ver: '3.12.0', date: '2026-09-27',
     items: [
@@ -973,99 +994,111 @@ class App {
     // 重试/恢复时跳过已完成步骤：按队列条目索引对齐（同一夜内步骤序列确定性一致）
     const stepDone = (i) => !!(this._rolloverSkipDone && this._rolloverPending?.queue?.steps?.[i]?.status === 'done');
 
+    // 结算步骤开关（结算开始时快照，避免中途配置变化导致步骤序列错位）
+    const cfg = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.settlement) || {};
+    const setlOn = (key) => cfg[key] !== false;
+
     // 步骤 1: 保存昨日对话摘要（从快照生成 — live 历史已切今天，不能读；晚间草稿已覆盖时秒过）
-    if (this._dtAddStep) this._dtAddStep('保存昨日对话摘要');
-    if (stepDone(0)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
-    } else {
-      try {
-        let draftHit = false;
-        try {
-          const marker = JSON.parse((await this.fm.readFile(DRAFT_KEY)) || 'null');
-          const draftFile = marker && marker.date === yesterdayDate
-            ? await this.fm.readFile(`chat/${yesterdayDate}.md`) : null;
-          draftHit = !!(draftFile && marker.historyLen >= yesterdayHistory.length);
-        } catch (_) {}
-        if (draftHit) {
-          console.log('[DayRollover] 晚间草稿已覆盖昨日全部消息，摘要步骤秒过');
-        } else {
-          await this._stepTimeout(this.chatManager.saveDailySummary(this.llm, yesterdayHistory, yesterdayDate), 150000, '昨日摘要');
-        }
+    if (setlOn('dailySummary')) {
+      if (this._dtAddStep) this._dtAddStep('保存昨日对话摘要');
+      if (stepDone(0)) {
         if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 摘要失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(0, 'error', e.message);
+      } else {
+        try {
+          let draftHit = false;
+          try {
+            const marker = JSON.parse((await this.fm.readFile(DRAFT_KEY)) || 'null');
+            const draftFile = marker && marker.date === yesterdayDate
+              ? await this.fm.readFile(`chat/${yesterdayDate}.md`) : null;
+            draftHit = !!(draftFile && marker.historyLen >= yesterdayHistory.length);
+          } catch (_) {}
+          if (draftHit) {
+            console.log('[DayRollover] 晚间草稿已覆盖昨日全部消息，摘要步骤秒过');
+          } else {
+            await this._stepTimeout(this.chatManager.saveDailySummary(this.llm, yesterdayHistory, yesterdayDate), 150000, '昨日摘要');
+          }
+          if (this._dtUpdateStep) this._dtUpdateStep(0, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 摘要失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(0, 'error', e.message);
+        }
       }
     }
 
     // 步骤 2: 数据完整性检查
-    if (this._dtAddStep) this._dtAddStep('检查数据完整性');
-    if (stepDone(1)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
-    } else if (yesterdayHistory.length > 0) {
-      try {
-        await this._dataIntegrityCheck(yesterdayDate, yesterdayHistory);
+    if (setlOn('integrityCheck')) {
+      if (this._dtAddStep) this._dtAddStep('检查数据完整性');
+      if (stepDone(1)) {
         if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 数据检查失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(1, 'error', e.message);
+      } else if (yesterdayHistory.length > 0) {
+        try {
+          await this._dataIntegrityCheck(yesterdayDate, yesterdayHistory);
+          if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 数据检查失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(1, 'error', e.message);
+        }
+      } else {
+        if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
       }
-    } else {
-      if (this._dtUpdateStep) this._dtUpdateStep(1, 'done');
     }
 
     // 步骤 3: 刷新习惯总结（基于近 21 天对话摘要全量分析）
     // v3.12.0 降频：距上次成功刷新 ≥ 2 天且期间有新对话摘要才跑；失败自动重试 1 次；超时 150s
-    if (this._dtAddStep) this._dtAddStep('刷新习惯总结（近 21 天）');
-    const stepHabit = this._dtStepIndex - 1;
-    if (stepDone(stepHabit)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
-    } else if (this.profileLearner) {
-      try {
-        const skipInfo = await this.profileLearner.shouldSkipRefresh(yesterdayDate);
-        if (skipInfo.skip) {
-          console.log('[DayRollover] 习惯刷新跳过:', skipInfo.reason);
-          if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done', null, '无新数据，已跳过');
-        } else {
-          let refreshResult;
-          try {
-            refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
-          } catch (e1) {
-            console.warn('[DayRollover] 习惯刷新首次失败，10s 后重试:', e1.message);
-            await new Promise((r) => setTimeout(r, 10000));
-            refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
+    if (setlOn('habitRefresh')) {
+      if (this._dtAddStep) this._dtAddStep('刷新习惯总结（近 21 天）');
+      const stepHabit = this._dtStepIndex - 1;
+      if (stepDone(stepHabit)) {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
+      } else if (this.profileLearner) {
+        try {
+          const skipInfo = await this.profileLearner.shouldSkipRefresh(yesterdayDate);
+          if (skipInfo.skip) {
+            console.log('[DayRollover] 习惯刷新跳过:', skipInfo.reason);
+            if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done', null, '无新数据，已跳过');
+          } else {
+            let refreshResult;
+            try {
+              refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
+            } catch (e1) {
+              console.warn('[DayRollover] 习惯刷新首次失败，10s 后重试:', e1.message);
+              await new Promise((r) => setTimeout(r, 10000));
+              refreshResult = await this._stepTimeout(this.profileLearner.refreshHabits(21), 150000, '习惯刷新');
+            }
+            console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
+            await this.profileLearner.markRefreshed(yesterdayDate);
+            if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
           }
-          console.log('[DayRollover] 习惯刷新:', refreshResult.summary);
-          await this.profileLearner.markRefreshed(yesterdayDate);
-          if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 习惯刷新失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'error', e.message);
         }
-      } catch (e) {
-        console.error('[DayRollover] 习惯刷新失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'error', e.message);
+      } else {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
       }
-    } else {
-      if (this._dtUpdateStep) this._dtUpdateStep(stepHabit, 'done');
     }
 
     // 步骤 3.5: 保存昨日打卡报告
-    if (this._dtAddStep) this._dtAddStep('保存昨日打卡记录');
-    const stepHabitReport = this._dtStepIndex - 1;
-    if (stepDone(stepHabitReport)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
-    } else {
-      try {
-        const habitReport = await this.habitManager.generateDailyReport(yesterdayDate);
-        await this.fm.writeFile(`habits/${yesterdayDate}.md`, habitReport);
+    if (setlOn('habitReport')) {
+      if (this._dtAddStep) this._dtAddStep('保存昨日打卡记录');
+      const stepHabitReport = this._dtStepIndex - 1;
+      if (stepDone(stepHabitReport)) {
         if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 打卡报告失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'error', e.message);
+      } else {
+        try {
+          const habitReport = await this.habitManager.generateDailyReport(yesterdayDate);
+          await this.fm.writeFile(`habits/${yesterdayDate}.md`, habitReport);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 打卡报告失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepHabitReport, 'error', e.message);
+        }
       }
     }
 
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
-    if (needWeekly) {
+    if (needWeekly && setlOn('weeklyHabitSummary')) {
       if (this._dtAddStep) this._dtAddStep('总结近一个月的习惯变化');
       const stepWeekly = this._dtStepIndex - 1;
       if (stepDone(stepWeekly)) {
@@ -1082,24 +1115,26 @@ class App {
     }
 
     // 步骤 4.5: 记忆文件自动快照（滚动保留最近 7 份，防 AI 误写丢数据）
-    if (this._dtAddStep) this._dtAddStep('快照记忆文件');
-    const stepSnap = this._dtStepIndex - 1;
-    if (stepDone(stepSnap)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
-    } else {
-      try {
-        await this.backupManager.snapshotMemory();
+    if (setlOn('memorySnapshot')) {
+      if (this._dtAddStep) this._dtAddStep('快照记忆文件');
+      const stepSnap = this._dtStepIndex - 1;
+      if (stepDone(stepSnap)) {
         if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 记忆快照失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'error', e.message);
+      } else {
+        try {
+          await this.backupManager.snapshotMemory();
+          if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 记忆快照失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepSnap, 'error', e.message);
+        }
       }
     }
 
     // 步骤 4.6 (条件): AI 周报 — 昨日为周日时生成上周周报（失败自动重试 1 次）
     let yesterdayDow = -1;
     try { yesterdayDow = new Date(`${yesterdayDate}T00:00:00`).getDay(); } catch (_) {}
-    if (yesterdayDow === 0) {
+    if (yesterdayDow === 0 && setlOn('weeklyReport')) {
       if (this._dtAddStep) this._dtAddStep('生成 AI 周报');
       const stepWeeklyReport = this._dtStepIndex - 1;
       if (stepDone(stepWeeklyReport)) {
@@ -1124,18 +1159,20 @@ class App {
     }
 
     // 步骤 5: 重建索引
-    if (this._dtAddStep) this._dtAddStep('重建记忆索引');
-    const stepIndex = this._dtStepIndex - 1;
-    if (stepDone(stepIndex)) {
-      if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
-    } else {
-      try {
-        await this.indexManager.rebuildIndex();
-        this.onDemandLoader?.invalidateIndexCache();
+    if (setlOn('rebuildIndex')) {
+      if (this._dtAddStep) this._dtAddStep('重建记忆索引');
+      const stepIndex = this._dtStepIndex - 1;
+      if (stepDone(stepIndex)) {
         if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
-      } catch (e) {
-        console.error('[DayRollover] 重建索引失败:', e.message);
-        if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'error', e.message);
+      } else {
+        try {
+          await this.indexManager.rebuildIndex();
+          this.onDemandLoader?.invalidateIndexCache();
+          if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 重建索引失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepIndex, 'error', e.message);
+        }
       }
     }
 
@@ -1143,14 +1180,18 @@ class App {
     // 保证用户开始聊天前 live 状态就是今天，结算与日常聊天互不干扰
 
     // 步骤 7 (静默): 刷新每日定点提醒 — 晨间问候文案用昨日最新数据重建
-    try {
-      await this._syncDailyReminders();
-    } catch (e) {
-      console.warn('[DayRollover] 每日提醒刷新失败:', e.message);
+    if (setlOn('refreshReminders')) {
+      try {
+        await this._syncDailyReminders();
+      } catch (e) {
+        console.warn('[DayRollover] 每日提醒刷新失败:', e.message);
+      }
     }
 
     // 步骤 8 (静默): Auto Dream 自动触发 — 本周无周报且数据足够时后台生成（不阻塞跨天主流程）
-    this._runAutoDreamSilent(this.chatManager.getEffectiveToday());
+    if (setlOn('autoDream')) {
+      this._runAutoDreamSilent(this.chatManager.getEffectiveToday());
+    }
 
     this._dayRolloverDone = true;
   }
@@ -1266,6 +1307,56 @@ class App {
     await this._syncDailyReminders();
     document.getElementById('remindersOverlay').style.display = 'none';
     this.showToast('提醒设置已保存', anyEnabled ? '系统级每日提醒已更新' : '已关闭全部提醒', 'success');
+  }
+
+  // ===== 每日结算设置面板 =====
+  // 配置项 key → checkbox id 映射（与 index.html settlementOverlay 一一对应）
+  static get SETTLEMENT_KEYS() {
+    return [
+      ['dailySummary', 'setlDailySummary'],
+      ['integrityCheck', 'setlIntegrityCheck'],
+      ['habitRefresh', 'setlHabitRefresh'],
+      ['habitReport', 'setlHabitReport'],
+      ['weeklyHabitSummary', 'setlWeeklyHabitSummary'],
+      ['memorySnapshot', 'setlMemorySnapshot'],
+      ['weeklyReport', 'setlWeeklyReport'],
+      ['rebuildIndex', 'setlRebuildIndex'],
+      ['refreshReminders', 'setlRefreshReminders'],
+      ['autoDream', 'setlAutoDream']
+    ];
+  }
+
+  showSettlement() {
+    const s = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.settlement) || {};
+    for (const [key, id] of App.SETTLEMENT_KEYS) {
+      const el = document.getElementById(id);
+      if (el) el.checked = s[key] !== false;
+    }
+    document.getElementById('settlementOverlay').style.display = 'flex';
+  }
+
+  _saveSettlement() {
+    const settlement = {};
+    for (const [key, id] of App.SETTLEMENT_KEYS) {
+      const el = document.getElementById(id);
+      settlement[key] = !!(el && el.checked);
+    }
+    const enabledCount = Object.values(settlement).filter(v => v).length;
+
+    window.QINGBAN_SETTINGS.settlement = settlement;
+    saveSettings(window.QINGBAN_SETTINGS);
+
+    document.getElementById('settlementOverlay').style.display = 'none';
+    this.showToast('结算设置已保存', `已启用 ${enabledCount}/10 个步骤，下次跨天结算生效`, 'success');
+  }
+
+  _resetSettlement() {
+    if (!confirm('确定恢复结算设置到默认（全部启用）吗？')) return;
+    if (window.QINGBAN_SETTINGS) {
+      delete window.QINGBAN_SETTINGS.settlement;
+      saveSettings(window.QINGBAN_SETTINGS);
+    }
+    this.showSettlement();
   }
 
   // 检查是否需要执行周度总结（每 7 天一次）
@@ -1820,14 +1911,6 @@ ${habits}
 
     input.addEventListener('input', () => this.autoResize(input));
 
-    // 快捷记录 chip — 一键填充常见记录文案（阶段四 · 4.5）
-    document.querySelectorAll('.quick-chip').forEach((chip) => {
-      chip.addEventListener('click', () => {
-        input.value = chip.dataset.text || '';
-        input.focus();
-        this.autoResize(input);
-      });
-    });
 
     // 拍照上传 — 点击弹出选择菜单
     const photoBtn = document.getElementById('photoBtn');
@@ -1917,6 +2000,22 @@ ${habits}
       }
     });
     document.getElementById('remindersSave').addEventListener('click', () => this._saveReminders());
+
+    // 菜单项 — 每日结算设置
+    document.getElementById('menuSettlement').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.showSettlement();
+    });
+    document.getElementById('closeSettlement').addEventListener('click', () => {
+      document.getElementById('settlementOverlay').style.display = 'none';
+    });
+    document.getElementById('settlementOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'settlementOverlay') {
+        document.getElementById('settlementOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('settlementSave').addEventListener('click', () => this._saveSettlement());
+    document.getElementById('settlementReset').addEventListener('click', () => this._resetSettlement());
 
     // ===== Ask User 弹窗事件 =====
     document.getElementById('askUserClose').addEventListener('click', () => this._resolveAskUser(null));
@@ -3695,10 +3794,18 @@ updated: ${profile.startDate}
     document.getElementById('setEffortLevel').value = s.effortLevel || 'max';
     document.getElementById('setHistoryDays').value = s.historyDays ?? 7;
     document.getElementById('setFileTruncate').value = s.fileTruncate || 800;
+    document.getElementById('setApiFormat').value = s.apiFormat || '';
+    document.getElementById('setApiBaseURL').value = s.apiBaseURL || '';
+    document.getElementById('setApiKey').value = s.apiKey || '';
+    document.getElementById('setRequestTimeout').value = s.requestTimeout || 120;
+    document.getElementById('setRetryCount').value = s.retryCount ?? 30;
+    document.getElementById('setCustomHeaders').value = s.customHeaders || '';
+    document.getElementById('setMaxContextTokens').value = s.maxContextTokens || 1048576;
     document.getElementById('settingsOverlay').style.display = 'flex';
   }
 
   _saveSettings() {
+    const old = window.QINGBAN_SETTINGS || {};
     const settings = {
       visionModel: document.getElementById('setVisionModel').value.trim() || 'k3',
       chatModel: document.getElementById('setChatModel').value.trim() || 'k3',
@@ -3709,7 +3816,17 @@ updated: ${profile.startDate}
       effortLevel: document.getElementById('setEffortLevel').value || 'max',
       historyDays: parseInt(document.getElementById('setHistoryDays').value) ?? 7,
       fileTruncate: parseInt(document.getElementById('setFileTruncate').value) || 800,
-      reminders: (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || undefined
+      apiFormat: document.getElementById('setApiFormat').value || '',
+      apiBaseURL: document.getElementById('setApiBaseURL').value.trim(),
+      apiKey: document.getElementById('setApiKey').value.trim(),
+      requestTimeout: parseInt(document.getElementById('setRequestTimeout').value) || 120,
+      retryCount: parseInt(document.getElementById('setRetryCount').value) ?? 30,
+      customHeaders: document.getElementById('setCustomHeaders').value.trim(),
+      maxContextTokens: parseInt(document.getElementById('setMaxContextTokens').value) || 1048576,
+      onDemandLoad: old.onDemandLoad ?? true,
+      onDemandTokenBudget: old.onDemandTokenBudget || 2000,
+      reminders: old.reminders || undefined,
+      settlement: old.settlement || undefined
     };
 
     // 限制范围
@@ -3718,6 +3835,9 @@ updated: ${profile.startDate}
     settings.maxOutputTokens = Math.max(1024, Math.min(32768, settings.maxOutputTokens));
     settings.historyDays = Math.max(0, Math.min(30, settings.historyDays));
     settings.fileTruncate = Math.max(100, Math.min(5000, settings.fileTruncate));
+    settings.requestTimeout = Math.max(10, Math.min(600, settings.requestTimeout));
+    settings.retryCount = Math.max(0, Math.min(100, settings.retryCount));
+    settings.maxContextTokens = Math.max(4096, Math.min(1048576, settings.maxContextTokens));
 
     window.QINGBAN_SETTINGS = settings;
     saveSettings(settings);
@@ -3728,7 +3848,8 @@ updated: ${profile.startDate}
     }
 
     document.getElementById('settingsOverlay').style.display = 'none';
-    this.addMessage('assistant', `设置已保存并生效 ✓\n\n- 视觉模型: \`${settings.visionModel}\`\n- 对话模型: \`${settings.chatModel}\`\n- 摘要模型: \`${settings.summaryModel}\`\n- 温度: ${settings.temperature}\n- 工具轮数: ${settings.maxToolRounds}\n- 输出上限: ${settings.maxOutputTokens} tokens\n- 推理强度: ${settings.effortLevel}\n- 历史天数: ${settings.historyDays}\n- 截断字数: ${settings.fileTruncate}`);
+    const connInfo = (settings.apiBaseURL || settings.apiKey) ? `\n- 连接: ${settings.apiBaseURL || '默认地址'} (${settings.apiFormat || '默认格式'})` : '';
+    this.addMessage('assistant', `设置已保存并生效 ✓\n\n- 视觉模型: \`${settings.visionModel}\`\n- 对话模型: \`${settings.chatModel}\`\n- 摘要模型: \`${settings.summaryModel}\`\n- 温度: ${settings.temperature}\n- 工具轮数: ${settings.maxToolRounds}\n- 输出上限: ${settings.maxOutputTokens} tokens\n- 上下文窗口: ${settings.maxContextTokens} tokens\n- 推理强度: ${settings.effortLevel}\n- 历史天数: ${settings.historyDays}\n- 截断字数: ${settings.fileTruncate}\n- 超时: ${settings.requestTimeout}s / 重试: ${settings.retryCount} 次${connInfo}`);
   }
 
   _resetSettings() {
@@ -3751,8 +3872,16 @@ updated: ${profile.startDate}
     document.getElementById('setEffortLevel').value = 'max';
     document.getElementById('setHistoryDays').value = 7;
     document.getElementById('setFileTruncate').value = 800;
+    document.getElementById('setApiFormat').value = '';
+    document.getElementById('setApiBaseURL').value = '';
+    document.getElementById('setApiKey').value = '';
+    document.getElementById('setRequestTimeout').value = 120;
+    document.getElementById('setRetryCount').value = 30;
+    document.getElementById('setCustomHeaders').value = '';
+    document.getElementById('setMaxContextTokens').value = 1048576;
 
     // 直接保存
+    const old = window.QINGBAN_SETTINGS || {};
     const settings = {
       visionModel: 'k3',
       chatModel: 'k3',
@@ -3764,7 +3893,16 @@ updated: ${profile.startDate}
       effortLevel: 'max',
       historyDays: 7,
       fileTruncate: 800,
-      reminders: (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.reminders) || undefined
+      apiFormat: '',
+      apiBaseURL: '',
+      apiKey: '',
+      requestTimeout: 120,
+      retryCount: 30,
+      customHeaders: '',
+      onDemandLoad: old.onDemandLoad ?? true,
+      onDemandTokenBudget: old.onDemandTokenBudget || 2000,
+      reminders: old.reminders || undefined,
+      settlement: old.settlement || undefined
     };
 
     window.QINGBAN_SETTINGS = settings;
@@ -3775,7 +3913,7 @@ updated: ${profile.startDate}
     }
 
     document.getElementById('settingsOverlay').style.display = 'none';
-    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 32768 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800`);
+    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 32768 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800\n- 连接配置已重置为默认`);
   }
 
   // ===== Ask User 底部弹窗 =====

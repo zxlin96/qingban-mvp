@@ -18,6 +18,13 @@ const DEFAULT_SETTINGS = {
   effortLevel: 'max',             // 推理强度（max=最高质量）
   onDemandLoad: true,             // 按需索引加载开关（true=按需加载历史，false=回退全量注入近N天）
   onDemandTokenBudget: 2000,      // 对话场景动态注入部分 token 预算上限
+  // 连接配置（空值 = 跟随 app-config.js 默认）
+  apiBaseURL: '',                 // 大模型 API 基础地址（如 https://api.kimi.com/coding）
+  apiKey: '',                     // API Key（留空则使用 app-config 内置 Key）
+  apiFormat: '',                  // API 协议格式 'openai' | 'anthropic'（空=跟随默认）
+  requestTimeout: 120,            // 请求超时（秒）
+  retryCount: 30,                 // 失败重试次数（429/5xx/网络错误）
+  customHeaders: '',              // 自定义请求头（JSON 字符串，如 {"X-Custom":"value"}）
   reminders: {                    // 系统级每日提醒（阶段四 · 主动陪伴）
     morningEnabled: true,         // 晨间问候（昨日体重/打卡回顾）
     morningTime: '08:00',
@@ -26,6 +33,18 @@ const DEFAULT_SETTINGS = {
     habitEveningTime: '20:00',
     eveningEnabled: true,         // 晚间复盘（睡前体重提醒）
     eveningTime: '21:30'
+  },
+  settlement: {                   // 每日结算步骤开关（凌晨跨天时按此跳过被关闭的步骤）
+    dailySummary: true,           // 保存昨日对话摘要（chat/{昨日}.md）
+    integrityCheck: true,         // 数据完整性检查（LLM 审查遗漏）
+    habitRefresh: true,           // 刷新习惯总结（近 21 天分析）
+    habitReport: true,            // 保存昨日打卡记录（habits/{昨日}.md）
+    weeklyHabitSummary: true,     // 周度习惯总结（每 7 天）
+    memorySnapshot: true,         // 记忆文件自动快照（滚动保留 7 份）
+    weeklyReport: true,           // AI 周报（昨日为周日时生成）
+    rebuildIndex: true,           // 重建记忆索引
+    refreshReminders: true,       // 刷新每日定点提醒（静默）
+    autoDream: true               // Auto Dream 自动触发（静默）
   }
 };
 
@@ -40,7 +59,11 @@ function loadSettings() {
         console.warn(`[Settings] 升级 maxOutputTokens: ${parsed.maxOutputTokens} → 32768`);
         parsed.maxOutputTokens = 32768;
       }
-      return { ...DEFAULT_SETTINGS, ...parsed };
+      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      // 深合并子对象：确保新增字段有默认值（旧用户存档缺新开关时不致 undefined）
+      merged.reminders = { ...DEFAULT_SETTINGS.reminders, ...(parsed.reminders || {}) };
+      merged.settlement = { ...DEFAULT_SETTINGS.settlement, ...(parsed.settlement || {}) };
+      return merged;
     }
   } catch (e) {
     console.warn('[Settings] 加载失败，使用默认值:', e.message);
