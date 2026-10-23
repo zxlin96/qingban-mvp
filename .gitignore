@@ -41,6 +41,7 @@ android/app/src/main/assets/public/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+nul
 
 # === Logs ===
 *.log
@@ -57,3 +58,4 @@ test_ps.txt
 .arts/
 .codegraph/
 .codeartsdoer/
+.zcode/
