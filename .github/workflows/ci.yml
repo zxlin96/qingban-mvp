@@ -87,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qingban-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/build-output/app/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       # 打 v* 标签时自动发布 Release，APK 作为附件
@@ -95,5 +95,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: android/build-output/app/outputs/apk/debug/*.apk
           generate_release_notes: true
