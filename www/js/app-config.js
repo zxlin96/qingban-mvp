@@ -3,7 +3,7 @@
 // 浏览器环境自动走本地代理（解决 CORS），APK 环境直连 Kimi
 const _isCapacitor = typeof window !== 'undefined' && (window.capacitor || (window.androidBridge));
 window.QINGBAN_CONFIG = {
-  apiKey: "sk-kimi-7t4VUX0QReh8fn0HBhOTAq81AGbXs6bT1wOgyGg9FHX4knGGHOSGN3RHe2LlYfuK",
+  apiKey: "",  // 不内置 Key（原内置 Key 已吊销）；请在「设置 → 连接配置」填写自己的 Key，仅存本机
   baseURL: _isCapacitor ? "https://api.kimi.com/coding" : "",  // 浏览器走同源代理
   model: "k3",
   apiFormat: "anthropic",
