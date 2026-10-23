@@ -59,6 +59,11 @@ jobs:
           node scripts/sync-web.mjs
           node scripts/sync-android-version.mjs
 
+      # capacitor-cordova-android-plugins 模块被 android/.gitignore 忽略（本地由 cap sync 生成），
+      # 全新 checkout 需先运行 Capacitor 同步生成该模块，并刷新 android assets 里的 web 资源
+      - name: Capacitor 同步（生成 cordova 插件模块）
+        run: npx cap sync android
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
