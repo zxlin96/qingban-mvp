@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.15.0';
+const APP_VERSION = '3.16.1';
 const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,18 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.16.1', date: '2026-10-24',
+    items: [
+      '安全：移除内置 Kimi API Key（原 Key 已在官方后台吊销失效）— 代码与 APK 不再携带任何密钥，API Key 改为在「设置 → 连接配置」中填写、仅存本机；浏览器开发模式不受影响（仍走本地代理）'
+    ]
+  },
+  {
+    ver: '3.16.0', date: '2026-10-24',
+    items: [
+      '优化：图片预识别携带辅助上下文 — 识别阶段注入用户食物种类清单（rules/food-types.md，前 1500 字）与当日对话记录（至多 2000 字），视觉模型可结合用户常吃食物与当天聊天内容更准地识别（家常菜名、上午提过的餐食不再凭空猜）；上下文构建失败自动降级为零上下文识别，不影响原流程'
+    ]
+  },
   {
     ver: '3.15.0', date: '2026-10-24',
     items: [
@@ -2256,6 +2268,38 @@ ${habits}
     });
   }
 
+  // 构建图片预识别的辅助上下文：用户食物种类清单 + 当日对话记录
+  // 供视觉模型结合"用户平时吃什么、今天聊了什么"识别图片（家常菜名、上午提过的餐食不再凭空猜）
+  // 任一部分读取失败只跳过该部分，全部为空时返回空串 — 识别仍按原极简提示词进行
+  async _buildRecognitionContext() {
+    const parts = [];
+    try {
+      const foodTypes = await this.fm.readFile('rules/food-types.md');
+      // 全部分类均为"(暂无记录)"的初始模板不注入，避免浪费 token
+      const hasEntry = foodTypes && foodTypes.split('\n').some(l => /^- /.test(l) && !l.includes('暂无记录'));
+      if (hasEntry) {
+        parts.push(`【用户食物种类清单（识别时优先对照）】\n${foodTypes.substring(0, 1500)}`);
+      }
+    } catch (_) { /* 清单读取失败不影响识别 */ }
+    try {
+      // 当前图片消息在识别完成后才入历史（addUserPhotoMessage），此处不会自引用
+      const history = this.chatManager.getHistory().filter(m => m.role !== 'system');
+      const MAX_CHARS = 2000;
+      const lines = [];
+      let total = 0;
+      for (let i = history.length - 1; i >= 0; i--) {
+        const text = typeof history[i].content === 'string' ? history[i].content.trim() : '';
+        if (!text) continue;
+        const line = `${history[i].role === 'user' ? '用户' : 'AI'}: ${text}`;
+        if (total + line.length > MAX_CHARS) break;
+        lines.unshift(line);
+        total += line.length;
+      }
+      if (lines.length > 0) parts.push(`【今日对话记录】\n${lines.join('\n')}`);
+    } catch (_) { /* 历史读取失败不影响识别 */ }
+    return parts.join('\n\n');
+  }
+
   // ===== 发送消息 =====
   async sendMessage() {
     if (this.isProcessing) {
@@ -2292,12 +2336,14 @@ ${habits}
 
     let recognition = '';
     if (hasPhotos) {
-      // 两阶段发送第一阶段：图片单独发给视觉模型预识别（极简提示词、不带系统提示词），
+      // 两阶段发送第一阶段：图片单独发给视觉模型预识别（极简提示词 + 辅助上下文：食物清单/当日对话），
       // 识别文字并入消息后主对话保持纯文本 — 不再每轮工具调用重复编码图片、不切换视觉模型、可命中响应缓存
+      this._reqStage = 'recognizing';
+      this._showReqStatus();
+      let recogContext = '';
+      try { recogContext = await this._buildRecognitionContext(); } catch (_) { /* 上下文构建失败按零上下文识别 */ }
       try {
-        this._reqStage = 'recognizing';
-        this._showReqStatus();
-        recognition = await this.llm.recognizeImages(photos);
+        recognition = await this.llm.recognizeImages(photos, recogContext ? { context: recogContext } : {});
       } catch (e) {
         console.warn('[sendMessage] 图片预识别失败，回退为原图+文字直发:', e.message);
       }
