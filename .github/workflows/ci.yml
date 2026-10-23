@@ -65,6 +65,13 @@ jobs:
           java-version: '21'
           cache: gradle
 
+      # 项目 gradle.properties 的 jvmargs 带 Windows 专用 -Djava.io.tmpdir=C:/...，
+      # 用户级 gradle.properties 优先级更高，用干净值覆盖以适配 Linux
+      - name: 覆盖 Windows 专用 Gradle 参数
+        run: |
+          mkdir -p ~/.gradle
+          printf 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\n' >> ~/.gradle/gradle.properties
+
       - name: Gradle 编译 APK
         working-directory: android
         run: |
