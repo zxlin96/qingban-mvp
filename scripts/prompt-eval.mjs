@@ -4,7 +4,7 @@
 //   node scripts/prompt-eval.mjs --only 记体重     只跑一个用例（连通性冒烟/调试）
 //   node scripts/prompt-eval.mjs                   用当前提示词跑全部用例，与基线对比
 //
-// 原理：用真实 LLM（app-config.js 的 Key）+ LLMService 完整工具循环（工具结果用内存 mock），
+// 原理：用真实 LLM（.env 的 PEV_* 连接配置，回退 app-config.js）+ LLMService 完整工具循环（工具结果用内存 mock），
 // 记录每个用例的「工具调用签名」（工具名集合 + write_file 目标路径），与基线对比。
 // 判定分两级：
 //   FAIL — 违反用例的硬性行为要求（expect 谓词），退出码 1
@@ -24,6 +24,18 @@ new Function('window', appConfigCode)(globalThis.window);
 if (!globalThis.window.QINGBAN_CONFIG.baseURL) {
   globalThis.window.QINGBAN_CONFIG.baseURL = 'https://api.kimi.com/coding';
 }
+// ===== 评测连接配置：优先 .env / 环境变量（PEV_*），回退 app-config.js（内置 Key 已移除，通常为空） =====
+try { process.loadEnvFile(); } catch (_) { /* .env 不存在时忽略 */ }
+{
+  const cfg = globalThis.window.QINGBAN_CONFIG;
+  if (process.env.PEV_API_KEY) cfg.apiKey = process.env.PEV_API_KEY;
+  if (process.env.PEV_BASE_URL) cfg.baseURL = process.env.PEV_BASE_URL;
+  if (process.env.PEV_API_FORMAT) cfg.apiFormat = process.env.PEV_API_FORMAT;
+  if (!cfg.apiKey) {
+    console.error('✗ 未配置评测 Key：请在 .env 中设置 PEV_API_KEY=sk-xxx，可选 PEV_BASE_URL / PEV_MODEL / PEV_API_FORMAT（anthropic|openai，与 BASE_URL 协议匹配），或通过同名环境变量传入');
+    process.exit(1);
+  }
+}
 // 评测确定性：温度 0、按需加载关闭（走可预期的全量注入分支）
 globalThis.window.QINGBAN_SETTINGS = {
   temperature: 0,
@@ -31,6 +43,11 @@ globalThis.window.QINGBAN_SETTINGS = {
   onDemandLoad: false,
   historyDays: 3,
 };
+// 模型名走 settings.chatModel/visionModel — spark-llm.chat() 不读 QINGBAN_CONFIG.model
+if (process.env.PEV_MODEL) {
+  globalThis.window.QINGBAN_SETTINGS.chatModel = process.env.PEV_MODEL;
+  globalThis.window.QINGBAN_SETTINGS.visionModel = process.env.PEV_MODEL;
+}
 
 const { FileManager } = await import(pathToFileURL(join(root, 'js', 'file-manager.js')));
 const { LLMService } = await import(pathToFileURL(join(root, 'js', 'llm-service.js')));

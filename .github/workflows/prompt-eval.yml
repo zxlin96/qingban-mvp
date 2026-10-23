@@ -1,0 +1,40 @@
+# prompt-eval.yml — 提示词行为评测（真实 LLM 调用，消耗 API 额度）
+# 仅手动触发：Actions → Prompt Eval → Run workflow（可选用例名单跑）；push/PR 不触发、不花钱
+# 首次使用（一次性配置）：
+#   1. 仓库 Settings → Secrets and variables → Actions → New repository secret：
+#      PEV_API_KEY = sk-xxx（必填，加密存储，日志中不可见）
+#   2. 同页 Variables 标签（非敏感配置，可选；不配则用 Kimi 默认）：
+#      PEV_BASE_URL / PEV_MODEL / PEV_API_FORMAT（anthropic|openai）
+#      例如 GLM：PEV_BASE_URL=https://opencode.ai/inference/openai/v1
+#               PEV_MODEL=glm-5.3-flash  PEV_API_FORMAT=openai
+# 注意：基线是 Kimi K3 录的，换模型跑出现 DIFF 属预期，需人工判断
+name: Prompt Eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: '只跑指定用例（用例名，如：记体重；留空跑全部并与基线对比）'
+        required: false
+        default: ''
+
+jobs:
+  prompt-eval:
+    name: 提示词评测（真实 LLM）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 无需 npm ci：评测只 import js/ 下的零依赖模块
+      - name: 运行提示词评测
+        env:
+          PEV_API_KEY: ${{ secrets.PEV_API_KEY }}
+          PEV_BASE_URL: ${{ vars.PEV_BASE_URL }}
+          PEV_MODEL: ${{ vars.PEV_MODEL }}
+          PEV_API_FORMAT: ${{ vars.PEV_API_FORMAT }}
+        run: node scripts/prompt-eval.mjs ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
