@@ -77,6 +77,15 @@ jobs:
           mkdir -p ~/.gradle
           printf 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\n' >> ~/.gradle/gradle.properties
 
+      # 注入本机 debug.keystore（加密 Secret），使 CI 产物与本地构建同签名 —
+      # 已装的本地构建包可直接覆盖升级、不丢数据；缺失时 AGP 会临时生成（导致签名冲突）
+      - name: 注入签名密钥
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+
       - name: Gradle 编译 APK
         working-directory: android
         run: |
