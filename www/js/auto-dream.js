@@ -463,6 +463,21 @@ export class AutoDream {
       }
     }
 
+    // 5. 蛋白质摄入水平（宏量营养素，v3.15.0）
+    let proteinDays = 0;
+    for (const day of dietData) {
+      if (day.content.match(/总蛋白质[：:]\s*[~≈约]?\s*\d+(?:\.\d+)?\s*(?:g|克)/)) proteinDays++;
+    }
+    const avgProtein = this._avgProtein(dietData);
+    if (proteinDays >= 5 && avgProtein > 0 && avgProtein < 60) {
+      patterns.push({
+        type: 'low_protein',
+        title: '蛋白质摄入偏低',
+        detail: `${proteinDays} 天有蛋白质记录，日均 ~${avgProtein}g，低于减脂期建议量（体重kg × 1.2~1.6g）`,
+        suggestion: '优先通过食物补足：鸡胸肉、鸡蛋、鱼虾、豆制品、乳制品；长期不足且饮食调整困难时，可考虑蛋白粉（遵医嘱）。'
+      });
+    }
+
     return patterns;
   }
 
@@ -472,6 +487,19 @@ export class AutoDream {
       const match = day.content.match(/total_calories:\s*~?(\d+)/);
       if (match) {
         total += parseInt(match[1]);
+        count++;
+      }
+    }
+    return count > 0 ? Math.round(total / count) : 0;
+  }
+
+  // 日均蛋白质（解析 diet 文件「总蛋白质: ~75g」行；无记录返回 0）
+  _avgProtein(dietData) {
+    let total = 0, count = 0;
+    for (const day of dietData) {
+      const match = day.content.match(/总蛋白质[：:]\s*[~≈约]?\s*(\d+(?:\.\d+)?)\s*(?:g|克)/);
+      if (match) {
+        total += parseFloat(match[1]);
         count++;
       }
     }
@@ -495,7 +523,7 @@ generated: ${new Date().toISOString()}
 - 记录天数: ${analysis.dayCount} / ${days}
 - 餐次总数: ${analysis.mealCount}
 - 总热量: ~${analysis.totalCalories} kcal
-- 日均热量: ~${analysis.avgCalories} kcal
+- 日均热量: ~${analysis.avgCalories} kcal${this._avgProtein(dietData) > 0 ? `\n- 日均蛋白质: ~${this._avgProtein(dietData)}g（减脂期建议 1.2~1.6g/kg 体重）` : ''}
 
 ## 饮食分析
 

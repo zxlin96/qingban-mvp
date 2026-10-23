@@ -4,6 +4,8 @@
 // 源文件未变化（按 updatedAt 签名）时直接命中缓存。历史数据零迁移，装上即可出图。
 // v2 增强（record_metrics 双写）：AI 写 diet/*.md 的同时调用 record_metrics 工具提交结构化
 // 数据到 .meta/metrics-manual.json，读数时双写数据优先于 MD 解析（解析保留兜底历史数据）。
+// v3 增强（宏量营养素）：diet 文件与 record_metrics 均支持蛋白质/碳水/脂肪克数，趋势面板出
+// 三大营养素堆叠图，周报数据段含宏量日均与「营养观察」缺口汇总（为补剂建议提供依据）。
 // 图表数据只从 IndexedDB 读取，不注入系统提示词（避免破坏 KV Cache 前缀命中）。
 
 const STATS_CACHE_KEY = '.meta/daily-stats.json';
@@ -40,28 +42,48 @@ export class StatsManager {
       .sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  // 解析单个 diet/YYYY-MM-DD.md → { total, meals } 或 null（无热量数据时）
-  // 模板: 分餐段 "## 早餐" + "- 估算热量: ~450 kcal"；"## 当日汇总" + "- 总估算热量: ~1180 kcal"
+  // 解析单个 diet/YYYY-MM-DD.md → { total, meals, protein, carbs, fat } 或 null（无热量数据时）
+  // 模板: 分餐段 "## 早餐" + "- 估算热量: ~450 kcal" + "- 估算营养: 蛋白质~15g / 碳水~60g / 脂肪~10g"；
+  //       "## 当日汇总" + "- 总估算热量/总蛋白质/总碳水/总脂肪"。宏量缺失时为 null（历史数据容错）
   static parseDietMd(md) {
     if (!md) return null;
     const num = (s) => {
       const m = s.match(/估算热量[::]\s*[~≈约]?\s*(\d+(?:\.\d+)?)\s*k?cal/i);
       return m ? parseFloat(m[1]) : null;
     };
+    // 容错提取营养素克数：匹配 "总蛋白质: ~75g"、"蛋白质~15g"、"碳水: 60克" 等写法
+    const macroNum = (sec, label) => {
+      const m = sec.match(new RegExp(`${label}\\s*[：:]?\\s*[~≈约]?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:g|克)`, 'i'));
+      return m ? parseFloat(m[1]) : null;
+    };
 
     let total = null;
     const meals = [];
+    let protein = null, carbs = null, fat = null;
+    let mealProtein = 0, mealCarbs = 0, mealFat = 0, hasMealMacro = false;
     const sections = md.split(/^##\s+/m);
     for (const sec of sections) {
       const title = sec.split('\n')[0].trim();
       if (title.startsWith('当日汇总')) {
         const tm = sec.match(/总估算热量[::]\s*[~≈约]?\s*(\d+(?:\.\d+)?)\s*k?cal/i);
         if (tm) total = parseFloat(tm[1]);
+        protein = macroNum(sec, '总蛋白质');
+        carbs = macroNum(sec, '总碳水');
+        fat = macroNum(sec, '总脂肪');
         continue;
       }
       if (MEAL_NAMES.some((n) => title.includes(n))) {
         const v = num(sec);
         if (v !== null && v > 0) meals.push(title);
+        const p = macroNum(sec, '蛋白质');
+        const c = macroNum(sec, '碳水');
+        const f = macroNum(sec, '脂肪');
+        if (p !== null || c !== null || f !== null) {
+          hasMealMacro = true;
+          mealProtein += p || 0;
+          mealCarbs += c || 0;
+          mealFat += f || 0;
+        }
       }
     }
 
@@ -70,7 +92,11 @@ export class StatsManager {
       // 无汇总段 — 容错：无法从纯文本求和（各餐只有热量数字），至少报告有记录
       total = null;
     }
-    return { total, meals };
+    // 汇总段缺宏量时，用各餐"估算营养"行求和兜底
+    if (protein === null && hasMealMacro) protein = Math.round(mealProtein);
+    if (carbs === null && hasMealMacro) carbs = Math.round(mealCarbs);
+    if (fat === null && hasMealMacro) fat = Math.round(mealFat);
+    return { total, meals, protein, carbs, fat };
   }
 
   // ===== 缓存与数据获取 =====
@@ -81,6 +107,7 @@ export class StatsManager {
     const metricsFile = all.find((f) => f.path === 'BODY_METRICS.md');
     const manualFile = all.find((f) => f.path === MANUAL_KEY);
     const signature = JSON.stringify({
+      v: 2, // v2: calories 条目新增 protein/carbs/fat，旧缓存签名不匹配自动重建
       diet: dietFiles.map((f) => `${f.path}:${f.updatedAt}`).sort(),
       metrics: metricsFile ? metricsFile.updatedAt : '',
       manual: manualFile ? manualFile.updatedAt : '',
@@ -100,14 +127,14 @@ export class StatsManager {
       if (date) dietDates.add(date);
       const parsed = StatsManager.parseDietMd(await this.fm.readFile(f.path));
       const merged = StatsManager.mergeCaloriesDay(parsed, manual[date]);
-      if (date && merged) calories.push({ date, total: merged.total, meals: merged.meals });
+      if (date && merged) calories.push({ date, total: merged.total, meals: merged.meals, protein: merged.protein ?? null, carbs: merged.carbs ?? null, fat: merged.fat ?? null });
     }
     // 双写数据存在但 diet 文件缺失的日期（AI 漏写 MD 或写失败时仍有结构化数据）
     for (const [date, day] of Object.entries(manual)) {
       if (dietDates.has(date)) continue;
       const mealNames = (day.meals || []).map((m) => m.name);
       if (mealNames.length > 0 || typeof day.total === 'number') {
-        calories.push({ date, total: typeof day.total === 'number' ? day.total : null, meals: mealNames });
+        calories.push({ date, total: typeof day.total === 'number' ? day.total : null, meals: mealNames, protein: day.protein_g ?? null, carbs: day.carbs_g ?? null, fat: day.fat_g ?? null });
       }
     }
     calories.sort((a, b) => a.date.localeCompare(b.date));
@@ -129,14 +156,21 @@ export class StatsManager {
     return { weights, calories };
   }
 
-  // ===== record_metrics 结构化双写（v2）=====
+  // ===== record_metrics 结构化双写（v2，v3 加宏量营养素）=====
 
-  // 提交某日的结构化热量/体重数据，写入 .meta/metrics-manual.json（事实数据，不随缓存重建丢失）
-  // 同日同餐同名同热量去重；total 缺省按餐次求和；weight 可单独提交
-  async recordMetrics({ date, meals, total, weight }, todayStr) {
+  // 提交某日的结构化热量/宏量营养素/体重数据，写入 .meta/metrics-manual.json（事实数据，不随缓存重建丢失）
+  // 同日同餐同名同热量去重；total/protein_g/carbs_g/fat_g 缺省按餐次求和；weight 可单独提交
+  async recordMetrics({ date, meals, total, weight, protein_g, carbs_g, fat_g }, todayStr) {
     const cleanMeals = (Array.isArray(meals) ? meals : [])
       .filter((m) => m && typeof m.name === 'string' && m.name.trim())
-      .map((m) => ({ name: m.name.trim(), kcal: Number(m.kcal) }))
+      .map((m) => {
+        const o = { name: m.name.trim(), kcal: Number(m.kcal) };
+        for (const k of ['protein_g', 'carbs_g', 'fat_g']) {
+          const v = Number(m[k]);
+          if (Number.isFinite(v) && v > 0) o[k] = Math.round(v * 10) / 10;
+        }
+        return o;
+      })
       .filter((m) => Number.isFinite(m.kcal) && m.kcal > 0);
     const hasWeight = typeof weight === 'number' && Number.isFinite(weight) && weight > 0;
 
@@ -156,12 +190,22 @@ export class StatsManager {
     day.total = (typeof total === 'number' && Number.isFinite(total) && total > 0)
       ? Math.round(total)
       : (sum > 0 ? Math.round(sum) : null);
+    // 宏量日汇总：显式传入优先，缺省按餐次求和
+    const sumMacro = (k) => day.meals.reduce((s, m) => s + (m[k] || 0), 0);
+    const dayMacro = (val, k) => {
+      if (typeof val === 'number' && Number.isFinite(val) && val > 0) return Math.round(val);
+      const s = sumMacro(k);
+      return s > 0 ? Math.round(s) : null;
+    };
+    day.protein_g = dayMacro(protein_g, 'protein_g');
+    day.carbs_g = dayMacro(carbs_g, 'carbs_g');
+    day.fat_g = dayMacro(fat_g, 'fat_g');
     if (hasWeight) day.weight = weight;
     day.updatedAt = new Date().toISOString();
 
     data[dateStr] = day;
     await this.fm.writeFile(MANUAL_KEY, JSON.stringify(data));
-    return { success: true, date: dateStr, meals: day.meals, total: day.total, weight: day.weight || null };
+    return { success: true, date: dateStr, meals: day.meals, total: day.total, weight: day.weight || null, protein_g: day.protein_g, carbs_g: day.carbs_g, fat_g: day.fat_g };
   }
 
   async _loadManual() {
@@ -174,10 +218,15 @@ export class StatsManager {
     }
   }
 
-  // 合并单日热量：双写数据优先于 MD 解析（餐次名合并去重，total 取双写值）
-  // mdDay: { total, meals: [名字...] } | null；manualDay: { meals: [{name, kcal}], total } | undefined
+  // 合并单日热量与宏量营养素：双写数据优先于 MD 解析（餐次名合并去重，total/宏量取双写值）
+  // mdDay: { total, meals, protein, carbs, fat } | null；manualDay: { meals: [{name, kcal, protein_g...}], total, protein_g... } | undefined
   static mergeCaloriesDay(mdDay, manualDay) {
     if (!manualDay) return mdDay || null;
+    // manual 完全无有效内容（无餐次/无热量/无宏量）→ 原样返回 MD 解析结果
+    const manualEmpty = (manualDay.meals || []).length === 0
+      && !(typeof manualDay.total === 'number' && manualDay.total > 0)
+      && !['protein_g', 'carbs_g', 'fat_g'].some((k) => typeof manualDay[k] === 'number' && manualDay[k] > 0);
+    if (manualEmpty) return mdDay || null;
     const names = new Set(mdDay?.meals || []);
     for (const m of manualDay.meals || []) {
       if (m && m.name) names.add(m.name);
@@ -190,7 +239,12 @@ export class StatsManager {
       total = mdDay.total;
     }
     if (meals.length === 0 && total === null) return mdDay || null;
-    return { total, meals };
+    const macro = (manualKey, mdKey) => {
+      if (typeof manualDay[manualKey] === 'number' && manualDay[manualKey] > 0) return manualDay[manualKey];
+      if (mdDay && typeof mdDay[mdKey] === 'number') return mdDay[mdKey];
+      return null;
+    };
+    return { total, meals, protein: macro('protein_g', 'protein'), carbs: macro('carbs_g', 'carbs'), fat: macro('fat_g', 'fat') };
   }
 
   _readCache() {
@@ -296,6 +350,47 @@ export class StatsManager {
 <div class="trend-caption">日均约 ${Math.round(rows.reduce((s, r) => s + (r.total || 0), 0) / rows.filter((r) => r.total).length)} kcal</div>`;
   }
 
+  // 三大营养素堆叠柱状图 — 最近 days 天（自下而上：碳水/脂肪/蛋白质，单位 g）
+  // weightKg 可选：传入时 caption 附蛋白质建议区间（减脂期 1.2~1.6g/kg 体重）
+  static buildMacroSvg(calories, { days = 7, today = null, weightKg = null } = {}) {
+    const W = 340, H = 160, L = 34, R = 14, T = 16, B = 24;
+    const iw = W - L - R, ih = H - T - B;
+    const end = today || this._todayStatic();
+    const dayList = [];
+    for (let i = days - 1; i >= 0; i--) dayList.push(this._shiftDate(end, -i));
+    const map = new Map((calories || []).map((c) => [c.date, c]));
+    const rows = dayList.map((d) => ({ date: d, ...(map.get(d) || {}) }));
+    const hasAny = rows.some((r) => r.protein != null || r.carbs != null || r.fat != null);
+    if (!hasAny) {
+      return '<div class="trend-empty">暂无营养素数据，记录饮食后自动估算蛋白质/碳水/脂肪</div>';
+    }
+    const maxVal = Math.max(150, ...rows.map((r) => (r.protein || 0) + (r.carbs || 0) + (r.fat || 0))) * 1.05;
+    const slot = iw / days;
+    const bw = Math.min(34, slot * 0.6);
+    const bars = rows.map((r, i) => {
+      const cx = L + slot * i + slot / 2;
+      const p = r.protein || 0, c = r.carbs || 0, f = r.fat || 0;
+      if (!p && !c && !f) {
+        return `<rect x="${(cx - bw / 2).toFixed(1)}" y="${(T + ih - 2).toFixed(1)}" width="${bw.toFixed(1)}" height="2" fill="var(--rule)" rx="1"><title>${r.date} 无营养数据</title></rect>
+          <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
+      }
+      const hC = (c / maxVal) * ih, hF = (f / maxVal) * ih, hP = (p / maxVal) * ih;
+      const yC = T + ih - hC, yF = yC - hF, yP = yF - hP;
+      const seg = (y, h, color, label, val) => (h < 1.5 ? '' :
+        `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}"><title>${r.date} ${label}约${Math.round(val)}g</title></rect>`);
+      return `${seg(yC, hC, 'var(--accent)', '碳水', c)}${seg(yF, hF, 'var(--accent2)', '脂肪', f)}${seg(yP, hP, 'var(--accent3)', '蛋白质', p)}
+        <text x="${cx.toFixed(1)}" y="${(yP - 4).toFixed(1)}" text-anchor="middle" class="trend-val">${Math.round(p + c + f)}g</text>
+        <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
+    }).join('');
+    const mRows = rows.filter((r) => r.protein != null || r.carbs != null || r.fat != null);
+    const avg = (k) => Math.round(mRows.reduce((s, r) => s + (r[k] || 0), 0) / mRows.length);
+    const goalHint = weightKg > 0 ? ` · 蛋白目标 ${(weightKg * 1.2).toFixed(0)}~${(weightKg * 1.6).toFixed(0)}g` : '';
+    return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+  ${bars}
+</svg>
+<div class="trend-caption"><span style="color:var(--accent3)">■蛋白质</span> <span style="color:var(--accent2)">■脂肪</span> <span style="color:var(--accent)">■碳水</span> · 日均 蛋白${avg('protein')}g / 碳水${avg('carbs')}g / 脂肪${avg('fat')}g${goalHint}</div>`;
+  }
+
   // 打卡热力图 — 最近 days 天（7 列 × N 行，颜色深浅 = 当日打卡条数）
   static buildHabitHeatmap(checkinsByDate, { days = 28, today = null } = {}) {
     const W = 340, H = 92, L = 6, T = 6, CELL = 11, GAP = 4;
@@ -325,15 +420,29 @@ export class StatsManager {
     return map;
   }
 
-  // 周报的数据摘要段（供提示词嵌入）
-  static buildWeeklyDataSection(weights, calories, habitSummary, endDate) {
+  // 周报的数据摘要段（供提示词嵌入）。macroNotes 可选：近 7 天 diet 文件中的「营养观察」行汇总
+  static buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes = '') {
     const start = this._shiftDate(endDate, -6);
     const cal = calories.filter((c) => c.date >= start && c.date <= endDate);
     const wt = weights.filter((w) => w.date >= start && w.date <= endDate);
     const calStr = cal.map((c) => `${c.date}：约${c.total !== null ? Math.round(c.total) : '?'}kcal${c.meals.length ? `（${c.meals.join('、')}）` : ''}`).join('\n') || '（无记录）';
     const wtStr = wt.map((w) => `${w.date}：${w.weight}kg`).join('\n') || '（无记录）';
+    const mDays = cal.filter((c) => c.protein != null || c.carbs != null || c.fat != null);
+    let macroStr;
+    if (mDays.length > 0) {
+      const avg = (k) => Math.round(mDays.reduce((s, c) => s + (c[k] || 0), 0) / mDays.length);
+      macroStr = `日均 蛋白质~${avg('protein')}g / 碳水~${avg('carbs')}g / 脂肪~${avg('fat')}g（${mDays.length}/7 天有营养记录）`;
+    } else {
+      macroStr = '（无营养素记录）';
+    }
     return `## 近 7 天热量摄入
 ${calStr}
+
+## 近 7 天三大营养素
+${macroStr}
+
+## 近 7 天营养观察（每日按食物组记录的缺口）
+${macroNotes || '（无记录）'}
 
 ## 近 7 天体重记录
 ${wtStr}

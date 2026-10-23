@@ -210,6 +210,184 @@ describe('SVG 图表生成', () => {
     assert.ok(section.includes('喝水'));
   });
 });
+
+// ===== 阶段五（v3.15.0）：宏量营养素 =====
+
+describe('parseDietMd 宏量营养素解析', () => {
+  const FULL_MACROS = `---
+date: 2026-10-20
+---
+
+## 早餐
+- 食物: 包子2个、豆浆1杯
+- 估算热量: ~450 kcal
+- 估算营养: 蛋白质~15g / 碳水~60g / 脂肪~10g
+
+## 午餐
+- 食物: 红烧排骨、米饭
+- 估算热量: ~650 kcal
+- 估算营养: 蛋白质~35g / 碳水~70g / 脂肪~25g
+
+## 当日汇总
+- 总估算热量: ~1100 kcal
+- 总蛋白质: ~50g
+- 总碳水: ~130g
+- 总脂肪: ~35g
+- 营养观察: 无奶制品（钙）
+- 记录餐次: 2 餐`;
+
+  test('汇总段有总营养素：直接取汇总值', () => {
+    const out = StatsManager.parseDietMd(FULL_MACROS);
+    assert.equal(out.total, 1100);
+    assert.equal(out.protein, 50);
+    assert.equal(out.carbs, 130);
+    assert.equal(out.fat, 35);
+  });
+
+  test('汇总段缺宏量：按各餐估算营养求和兜底', () => {
+    const noSummaryMacros = `## 早餐
+- 估算热量: ~450 kcal
+- 估算营养: 蛋白质~15g / 碳水~60g / 脂肪~10g
+
+## 晚餐
+- 估算热量: ~500 kcal
+- 估算营养: 蛋白质~25g / 碳水~40g / 脂肪~20g
+
+## 当日汇总
+- 总估算热量: ~950 kcal`;
+    const out = StatsManager.parseDietMd(noSummaryMacros);
+    assert.equal(out.protein, 40);
+    assert.equal(out.carbs, 100);
+    assert.equal(out.fat, 30);
+  });
+
+  test('历史格式（无任何营养行）：宏量为 null，不影响热量解析', () => {
+    const out = StatsManager.parseDietMd('## 早餐\n- 估算热量: ~400 kcal\n\n## 当日汇总\n- 总估算热量: ~400 kcal');
+    assert.equal(out.total, 400);
+    assert.equal(out.protein, null);
+    assert.equal(out.carbs, null);
+    assert.equal(out.fat, null);
+  });
+
+  test('容错写法：约/冒号/克单位均可解析', () => {
+    const md = `## 午餐
+- 估算热量: ~600 kcal
+- 估算营养: 蛋白质: 约30克 / 碳水: 65g / 脂肪：约20g
+
+## 当日汇总
+- 总估算热量: ~600 kcal
+- 总蛋白质: 约30g`;
+    const out = StatsManager.parseDietMd(md);
+    assert.equal(out.protein, 30);
+    assert.equal(out.carbs, 65);
+    assert.equal(out.fat, 20);
+  });
+});
+
+describe('recordMetrics 宏量营养素双写', () => {
+  function makeFm(initial = {}) {
+    const fm = mockFm(initial);
+    const mtimes = new Map();
+    fm.writeFile = async (p, c) => {
+      fm.files.set(p, c);
+      mtimes.set(p, `u${mtimes.size + 1}`);
+      return 'ok';
+    };
+    fm.listFiles = async () => [...fm.files.entries()]
+      .map(([path, content]) => ({ path, updatedAt: mtimes.get(path) || '', size: content.length }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    return fm;
+  }
+
+  test('餐次宏量存储，日总量缺省按餐次求和', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r = await sm.recordMetrics({
+      meals: [
+        { name: '早餐', kcal: 450, protein_g: 15, carbs_g: 60, fat_g: 10 },
+        { name: '午餐', kcal: 650, protein_g: 35, carbs_g: 70, fat_g: 25 },
+      ]
+    }, '2026-10-20');
+    assert.equal(r.total, 1100);
+    assert.equal(r.protein_g, 50);
+    assert.equal(r.carbs_g, 130);
+    assert.equal(r.fat_g, 35);
+    const saved = JSON.parse(fm.files.get('.meta/metrics-manual.json'))['2026-10-20'];
+    assert.equal(saved.meals[0].protein_g, 15);
+  });
+
+  test('显式日总量优先于求和', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r = await sm.recordMetrics({
+      meals: [{ name: '晚餐', kcal: 600, protein_g: 30 }],
+      protein_g: 32, carbs_g: 55, fat_g: 22
+    }, '2026-10-20');
+    assert.equal(r.protein_g, 32);
+    assert.equal(r.carbs_g, 55);
+    assert.equal(r.fat_g, 22);
+  });
+
+  test('无宏量时日总量为 null（不误存 0）', async () => {
+    const fm = makeFm();
+    const sm = new StatsManager(fm);
+    const r = await sm.recordMetrics({ meals: [{ name: '午餐', kcal: 650 }] }, '2026-10-20');
+    assert.equal(r.protein_g, null);
+    assert.equal(r.fat_g, null);
+  });
+
+  test('mergeCaloriesDay：双写宏量优先于 MD 解析', () => {
+    const md = { total: 1100, meals: ['早餐', '午餐'], protein: 50, carbs: 130, fat: 35 };
+    const manual = { meals: [{ name: '午餐', kcal: 650 }], total: 1200, protein_g: 55, carbs_g: null, fat_g: null };
+    const out = StatsManager.mergeCaloriesDay(md, manual);
+    assert.equal(out.total, 1200);
+    assert.equal(out.protein, 55, '双写 protein_g 优先');
+    assert.equal(out.carbs, 130, '双写缺失回退 MD');
+    assert.equal(out.fat, 35);
+  });
+});
+
+describe('宏量图表与周报数据段', () => {
+  test('buildMacroSvg：有数据输出堆叠柱与图例，无数据输出空态', () => {
+    const calories = [{ date: '2026-10-20', total: 1100, meals: ['早餐'], protein: 50, carbs: 130, fat: 35 }];
+    const svg = StatsManager.buildMacroSvg(calories, { today: '2026-10-20', weightKg: 78 });
+    assert.ok(svg.includes('trend-svg'));
+    assert.ok(svg.includes('蛋白质'));
+    assert.ok(svg.includes('94~125g'), '蛋白质建议区间 78kg×1.2~1.6');
+    const partial = StatsManager.buildMacroSvg(calories, { today: '2026-10-20' });
+    assert.ok(!partial.includes('目标'), '无体重时不显示目标区间');
+    const empty = StatsManager.buildMacroSvg([{ date: '2026-10-20', total: 1100, meals: [] }], { today: '2026-10-20' });
+    assert.ok(empty.includes('trend-empty'));
+  });
+
+  test('buildWeeklyDataSection：宏量日均与营养观察汇总', () => {
+    const section = StatsManager.buildWeeklyDataSection(
+      [],
+      [
+        { date: '2026-10-19', total: 1100, meals: ['早餐'], protein: 50, carbs: 130, fat: 35 },
+        { date: '2026-10-20', total: 1300, meals: ['午餐'], protein: 70, carbs: 150, fat: 45 },
+      ],
+      '',
+      '2026-10-20',
+      '2026-10-19：无奶制品（钙）\n2026-10-20：无深海鱼（omega-3）'
+    );
+    assert.ok(section.includes('蛋白质~60g'));
+    assert.ok(section.includes('碳水~140g'));
+    assert.ok(section.includes('2/7 天有营养记录'));
+    assert.ok(section.includes('无奶制品（钙）'));
+    assert.ok(section.includes('无深海鱼（omega-3）'));
+  });
+
+  test('buildWeeklyDataSection：无营养记录时如实说明', () => {
+    const section = StatsManager.buildWeeklyDataSection(
+      [],
+      [{ date: '2026-10-20', total: 1100, meals: ['早餐'] }],
+      '', '2026-10-20'
+    );
+    assert.ok(section.includes('（无营养素记录）'));
+    assert.ok(section.includes('（无记录）'));
+  });
+});
 // ===== 阶段四：record_metrics 结构化双写 =====
 
 describe('mergeCaloriesDay 双写合并', () => {

@@ -444,24 +444,30 @@ ${habitSection}`;
         type: 'function',
         function: {
           name: 'record_metrics',
-          description: '记录当日结构化热量与体重数据（趋势统计专用）。在把饮食记录写入 diet/YYYY-MM-DD.md 之后必须调用本工具双写结构化数据；单独称重时也可直接调用并只传 weight。同一餐重复调用会自动去重。',
+          description: '记录当日结构化热量/宏量营养素与体重数据（趋势统计专用）。在把饮食记录写入 diet/YYYY-MM-DD.md 之后必须调用本工具双写结构化数据；单独称重时也可直接调用并只传 weight。同一餐重复调用会自动去重。',
           parameters: {
             type: 'object',
             properties: {
               date: { type: 'string', description: '记录日期 YYYY-MM-DD，不传默认今天' },
               meals: {
                 type: 'array',
-                description: '餐次热量列表，如 [{"name":"午餐","kcal":650}]',
+                description: '餐次热量列表，如 [{"name":"午餐","kcal":650,"protein_g":35,"carbs_g":70,"fat_g":25}]',
                 items: {
                   type: 'object',
                   properties: {
                     name: { type: 'string', description: '餐次名：早餐/午餐/晚餐/加餐/夜宵/零食' },
-                    kcal: { type: 'number', description: '该餐估算热量 kcal' }
+                    kcal: { type: 'number', description: '该餐估算热量 kcal' },
+                    protein_g: { type: 'number', description: '该餐蛋白质估算 g（可选，与 diet 文件中的估算营养一致）' },
+                    carbs_g: { type: 'number', description: '该餐碳水估算 g（可选）' },
+                    fat_g: { type: 'number', description: '该餐脂肪估算 g（可选）' }
                   },
                   required: ['name', 'kcal']
                 }
               },
               total: { type: 'number', description: '当日总热量 kcal，可省略（省略时按餐次自动求和）' },
+              protein_g: { type: 'number', description: '当日蛋白质总量 g，可省略（省略时按餐次自动求和）' },
+              carbs_g: { type: 'number', description: '当日碳水总量 g，可省略（省略时按餐次自动求和）' },
+              fat_g: { type: 'number', description: '当日脂肪总量 g，可省略（省略时按餐次自动求和）' },
               weight: { type: 'number', description: '体重 kg（称重时传入，可单独使用）' }
             },
             required: ['meals']
@@ -602,7 +608,7 @@ ${habitSection}`;
           } else {
             result = 'record_metrics 回调未注册';
           }
-          displayName = `record_metrics(${args.date || 'today'}, ${Array.isArray(args.meals) ? args.meals.length : 0}餐${args.weight ? ', ' + args.weight + 'kg' : ''})`;
+          displayName = `record_metrics(${args.date || 'today'}, ${Array.isArray(args.meals) ? args.meals.length : 0}餐${args.weight ? ', ' + args.weight + 'kg' : ''}${args.protein_g ? ', 蛋白' + args.protein_g + 'g' : ''})`;
           break;
 
         default:

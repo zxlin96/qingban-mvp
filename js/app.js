@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.14.0';
+const APP_VERSION = '3.15.0';
 const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,16 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.15.0', date: '2026-10-24',
+    items: [
+      '新增：营养分析全面加强 — 饮食记录从"仅热量"扩展为三大宏量营养素（每餐估算蛋白质/碳水/脂肪克数），当日汇总新增总营养素与「营养观察」（按食物组定性标记微量元素缺口，为补剂判断提供依据）',
+      '新增：营养目标体系 — 蛋白质 1.2~1.6g/kg 等公式写入 BODY_METRICS.md「营养目标」节；对话中可问"营养分析/缺什么/要不要补剂"，AI 汇总近 7 天饮食给结论（食物优先、持续缺口才提补剂、遵医嘱）',
+      '新增：record_metrics 工具支持宏量营养素双写（餐次与日总量），趋势面板新增「三大营养素（近 7 天）」堆叠柱状图（附蛋白质建议区间）',
+      '新增：AI 周报新增「营养素与补剂」段 — 汇总近 7 天宏量日均与营养观察缺口，输出食物优先改善建议与补剂参考；昨日总结饮食线包含三大营养素概要',
+      '优化：21 天 AutoDream 分析纳入日均蛋白质，持续偏低时给洞察提示'
+    ]
+  },
   {
     ver: '3.14.0', date: '2026-10-24',
     items: [
@@ -1790,13 +1800,13 @@ ${habits}
 请用以下格式输出（不要超过 300 字）：
 
 ### 📊 昨日总结
-- 饮食：[昨天吃了什么、总热量、是否超标]
+- 饮食：[昨天吃了什么、总热量、蛋白质/碳水/脂肪概要、是否超标]
 - 运动：[昨天是否有运动]
 - 体重：[最新体重和变化趋势]
 - 亮点：[做得好的地方，用鼓励的语气]
 
 ### 💡 今日建议
-- 饮食：[2-3 条具体建议，基于昨天的饮食情况]
+- 饮食：[2-3 条具体建议，基于昨天的饮食情况；若昨日记录有「营养观察」缺口（如无奶制品/蔬果少），优先建议对应食物]
 - 运动：[1-2 条建议，考虑用户的运动能力和限制]
 - 提醒：[1 条温馨提醒，比如喝水、注意某事]
 
@@ -4678,6 +4688,7 @@ updated: ${profile.startDate}
   async _renderTrend() {
     const weightBox = document.getElementById('trendWeightBox');
     const calBox = document.getElementById('trendCalorieBox');
+    const macroBox = document.getElementById('trendMacroBox');
     const habitBox = document.getElementById('trendHabitBox');
     weightBox.innerHTML = '<div class="trend-empty">加载中...</div>';
     try {
@@ -4685,6 +4696,9 @@ updated: ${profile.startDate}
       const today = this.chatManager._getToday();
       weightBox.innerHTML = StatsManager.buildWeightSvg(weights, { today });
       calBox.innerHTML = StatsManager.buildCaloriesSvg(calories, { today });
+      // 三大营养素图：用最新体重换算蛋白质建议区间（1.2~1.6g/kg）
+      const latestWeight = weights.length > 0 ? weights[weights.length - 1].weight : null;
+      macroBox.innerHTML = StatsManager.buildMacroSvg(calories, { today, weightKg: latestWeight });
       // 热力图直接读打卡原始 JSON，不走 stats 缓存
       let checkins = [];
       try {
@@ -4694,6 +4708,7 @@ updated: ${profile.startDate}
     } catch (e) {
       weightBox.innerHTML = '<div class="trend-empty">加载失败: ' + e.message + '</div>';
       calBox.innerHTML = '';
+      macroBox.innerHTML = '';
       habitBox.innerHTML = '';
     }
   }
@@ -4719,15 +4734,33 @@ updated: ${profile.startDate}
       console.warn('[周报] 习惯数据读取失败:', e.message);
     }
 
-    const dataSection = StatsManager.buildWeeklyDataSection(weights, calories, habitSummary, endDate);
-    const prompt = `你是轻伴的周报助手。请基于以下真实数据生成本周（${startDate} ~ ${endDate}）减重周报，300-450 字。
+    // 近 7 天「营养观察」行汇总（diet 文件中 AI 按食物组记录的微量元素缺口，供补剂建议参考）
+    let macroNotes = '';
+    try {
+      const files = await this.fm.listFiles();
+      const notes = [];
+      for (const f of files) {
+        const m = f.path.match(/^diet\/(\d{4}-\d{2}-\d{2})\.md$/);
+        if (!m || m[1] < startDate || m[1] > endDate) continue;
+        const md = await this.fm.readFile(f.path);
+        const obs = md.match(/-\s*营养观察[：:]\s*(.+)/);
+        if (obs) notes.push(`${m[1]}：${obs[1].trim()}`);
+      }
+      macroNotes = notes.join('\n');
+    } catch (e) {
+      console.warn('[周报] 营养观察汇总失败:', e.message);
+    }
+
+    const dataSection = StatsManager.buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes);
+    const prompt = `你是轻伴的周报助手。请基于以下真实数据生成本周（${startDate} ~ ${endDate}）减重周报，350-500 字。
 
 ${dataSection}
 
 ## 要求
 1. 数据必须原值引用，不得编造数据中不存在的信息
-2. 结构：热量摄入解读 → 体重变化 → 习惯完成情况 → 下周 1-3 条具体可执行的建议
-3. 语气温暖、不评判；数据缺失的维度如实说明"本周未记录"，不要臆测`;
+2. 结构：热量摄入解读 → 营养素与补剂 → 体重变化 → 习惯完成情况 → 下周 1-3 条具体可执行的建议
+3. 「营养素与补剂」段：解读三大营养素日均与蛋白质是否达标（减脂期建议 1.2~1.6g/kg 体重）；结合「营养观察」指出微量元素缺口（如钙/omega-3/维C/B族/铁）；补剂建议**食物优先**，仅对持续出现的缺口用"可以考虑XX补剂"的措辞，注明个体差异、遵医嘱，不做诊断、不推荐剂量
+4. 语气温暖、不评判；数据缺失的维度如实说明"本周未记录"，不要臆测`;
 
     const result = await this.llm.chat([{ role: 'user', content: prompt }], null, { currentDate: this.chatManager._getToday() });
     const content = (result && result.content) || '【周报生成失败，请重试】';
