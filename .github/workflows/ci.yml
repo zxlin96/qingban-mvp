@@ -26,11 +26,13 @@ jobs:
 
       - run: npm ci
 
-      # 门禁：三目录同步与版本号一致性（防止只改源未同步的提交）
+      # 门禁：android assets 目录未入库（gitignore），全新 checkout 不存在 —— 先 sync 生成，
+      # 再校验版本号一致性，最后用 git diff 把关已提交的 www/ 副本与 js/ 源一致（改源未同步即失败）
       - name: 三目录同步校验
         run: |
-          node scripts/sync-web.mjs --check
+          node scripts/sync-web.mjs
           node scripts/sync-android-version.mjs --check
+          git diff --exit-code -- www/ || { echo '✗ www/ 与 js/ 不同步：请本地运行 npm run sync 后提交'; exit 1; }
 
       - name: 单元测试
         run: node --test test/*.test.js
