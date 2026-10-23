@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.13.2';
-const APP_VERSION_DATE = '2026-10-10';
+const APP_VERSION = '3.14.0';
+const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,26 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.14.0', date: '2026-10-24',
+    items: [
+      '新增：食物种类记忆 — 新记忆文件 rules/food-types.md（主食/蛋白质/蔬菜/水果/饮品/零食加餐/外卖外食/其他分类），AI 记录饮食发现新食物自动归类追加（清单已固定注入系统提示词，无需额外读取），推荐食物优先选用户熟悉的、种类单一时温和建议多样化',
+      '新增：食物种类结算兜底 — 跨天结算数据完整性检查新增第 6 项（对话中出现的新食物 vs food-types.md），遗漏时自动补写',
+      '新增：记忆面板新增「食物种类」分组；food-types.md 纳入每日记忆快照（误删可回滚）'
+    ]
+  },
+  {
+    ver: '3.13.4', date: '2026-10-13',
+    items: [
+      '优化：设置页连接配置增加填写提示 — BASE URL 标注"不要带末尾 /chat/completions，程序会自动拼接"，模型选择组标注"需与 API 服务端模型名一致"，避免误填导致 404'
+    ]
+  },
+  {
+    ver: '3.13.3', date: '2026-10-11',
+    items: [
+      '修复：工具调用轮次耗尽时不再丢弃已生成内容 — chat/chatStream 兜底返回保留 finalContent 并附准确提示，文案从误导性的"处理超时"改为"已处理 N 轮工具调用但未完成"；加诊断日志记录工具调用链便于排查 AI 循环'
+    ]
+  },
   {
     ver: '3.13.2', date: '2026-10-10',
     items: [
@@ -1591,6 +1611,7 @@ ${summaries.join('\n\n---\n\n')}
     const currentMetrics = await this.fm.readFile('BODY_METRICS.md') || '(无)';
     const currentAllergies = await this.fm.readFile('rules/allergies.md') || '(无)';
     const currentPreferences = await this.fm.readFile('rules/preferences.md') || '(无)';
+    const currentFoodTypes = await this.fm.readFile('rules/food-types.md') || '(无)';
     const currentExercise = await this.fm.readFile('rules/exercise.md') || '(无)';
 
     const prompt = `请审查以下昨天的对话记录，检查是否有应该记录但遗漏的数据。
@@ -1615,6 +1636,9 @@ ${currentAllergies}
 ### rules/preferences.md（饮食偏好）
 ${currentPreferences}
 
+### rules/food-types.md（食物种类）
+${currentFoodTypes}
+
 ### rules/exercise.md（运动情况）
 ${currentExercise}
 
@@ -1625,6 +1649,7 @@ ${currentExercise}
 3. **过敏/忌口**：用户提到新的过敏或忌口，但 allergies.md 里没有 → 需要更新
 4. **饮食偏好**：用户提到口味/习惯，但 preferences.md 里没有 → 需要更新
 5. **运动情况**：用户提到运动/能力/限制，但 exercise.md 里没有 → 需要更新
+6. **食物种类**：对话中出现新食物（尤其图片识别结果），但 food-types.md 对应分类里没有 → 需要更新
 
 ## 输出格式
 请用 JSON 格式输出检查结果，列出需要更新的文件和内容：
@@ -2924,6 +2949,7 @@ ${habits}
       { label: 'AI 学到的习惯', paths: ['rules/learned-habits.md'] },
       { label: '过敏与忌口', paths: ['rules/allergies.md'] },
       { label: '饮食偏好', paths: ['rules/preferences.md'] },
+      { label: '食物种类', paths: ['rules/food-types.md'] },
       { label: '运动情况', paths: ['rules/exercise.md'] },
       { label: 'AI 指令', paths: ['CLAUDE.md'] },
     ];

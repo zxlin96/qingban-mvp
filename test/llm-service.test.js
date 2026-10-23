@@ -56,6 +56,22 @@ describe('固定前缀缓存失效（回归：v3.3.0 KV Cache）', () => {
     const p3 = await svc._getFixedPrefix();
     assert.ok(p3.startsWith('改过的内容'));
   });
+
+  test('write_file 修改 rules/food-types.md 失效缓存（v3.14.0 食物种类记忆）', async () => {
+    const { fm, svc } = newSvc({ 'rules/food-types.md': '# 食物种类' });
+    svc._cachedPrefix = 'P';
+    svc._prefixCacheValid = true;
+    await svc.executeTool(toolCall('write_file', { path: 'rules/food-types.md', content: '# 食物种类\n- 包子' }, 'w4'));
+    assert.equal(svc._prefixCacheValid, false, 'food-types.md 是固定注入文件，写入必须失效前缀缓存');
+    assert.ok(fm.files.get('rules/food-types.md').includes('包子'));
+  });
+
+  test('_buildFixedPrefix 注入食物种类段', async () => {
+    const { svc } = newSvc({ 'CLAUDE.md': 'CLAUDE', 'rules/food-types.md': '# 食物种类\n- 包子（早餐常吃）' });
+    const prefix = await svc._buildFixedPrefix();
+    assert.ok(prefix.includes('# 食物种类（固定注入）'));
+    assert.ok(prefix.includes('包子'), '食物种类内容必须进入固定前缀');
+  });
 });
 
 describe('响应缓存（LRU + TTL）', () => {
@@ -204,5 +220,73 @@ describe('chat() 主流程（Function Calling 循环 + 响应缓存）', () => {
     assert.ok(sys.content.startsWith('固定开头CLAUDE'), '固定内容必须在提示词最前');
     assert.ok(sys.content.includes('# 当前时间'));
     assert.ok(sys.content.includes('# 今日打卡状态'));
+  });
+});
+describe('工具调用轮次耗尽 — 保留已生成内容（回归：v3.13.3）', () => {
+  function makeLLM(responses) {
+    const calls = [];
+    return {
+      calls,
+      chat: async (messages) => {
+        calls.push(messages);
+        return responses[(calls.length - 1) % responses.length];
+      },
+    };
+  }
+
+  test('chat() 达到上限时返回累积内容而非丢弃', async () => {
+    const { svc } = newSvc({ 'PROFILE.md': '档案' });
+    svc.maxToolRounds = 3;
+    const llm = makeLLM([
+      { content: '第一轮内容', tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, 'c1')], model: 'k3', usage: {} },
+      { content: '第二轮内容', tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, 'c2')], model: 'k3', usage: {} },
+      { content: '第三轮内容', tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, 'c3')], model: 'k3', usage: {} },
+    ]);
+    svc.llm = llm;
+    const out = await svc.chat('测试', [], {});
+    assert.ok(out.content.includes('第一轮内容'), '应保留第一轮已生成内容');
+    assert.ok(out.content.includes('第二轮内容'), '应保留第二轮已生成内容');
+    assert.ok(out.content.includes('第三轮内容'), '应保留第三轮已生成内容');
+    assert.ok(out.content.includes('已处理 3 轮工具调用但未完成'), '文案应准确描述轮次耗尽而非误导性"处理超时"');
+    assert.equal(out.model, 'k3');
+  });
+
+  test('chat() 达到上限且无内容时返回准确提示', async () => {
+    const { svc } = newSvc({ 'PROFILE.md': '档案' });
+    svc.maxToolRounds = 2;
+    const llm = makeLLM([
+      { content: '', tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, 'c1')], model: 'k3', usage: {} },
+      { content: '', tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, 'c2')], model: 'k3', usage: {} },
+    ]);
+    svc.llm = llm;
+    const out = await svc.chat('测试', [], {});
+    assert.ok(out.content.includes('已处理 2 轮工具调用但未完成'), '无内容时应返回准确提示');
+    assert.ok(!out.content.includes('处理超时'), '不应再使用误导性"处理超时"文案');
+  });
+
+  test('chatStream() 达到上限时返回累积流式内容而非丢弃', async () => {
+    const { svc } = newSvc({ 'PROFILE.md': '档案' });
+    svc.maxToolRounds = 2;
+    const calls = [];
+    svc.llm = {
+      chatStream: async (messages, tools, context, onChunk) => {
+        const idx = calls.length;
+        calls.push(messages);
+        const text = `流式第${idx + 1}轮`;
+        if (onChunk) onChunk(text, text);
+        return {
+          content: text,
+          tool_calls: [toolCall('read_file', { path: 'PROFILE.md' }, `c${idx + 1}`)],
+          model: 'k3',
+          usage: {},
+          stop_reason: 'tool_calls',
+        };
+      },
+    };
+    const out = await svc.chatStream('测试', [], {}, () => {});
+    assert.ok(out.content.includes('流式第1轮'), '应保留第一轮流式内容');
+    assert.ok(out.content.includes('流式第2轮'), '应保留第二轮流式内容');
+    assert.ok(out.content.includes('已处理 2 轮工具调用但未完成'), '文案应准确描述轮次耗尽');
+    assert.equal(out.model, 'k3');
   });
 });

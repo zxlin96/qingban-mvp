@@ -16,6 +16,7 @@ export const SNAPSHOT_FILES = [
   'rules/learned-habits.md',
   'rules/allergies.md',
   'rules/preferences.md',
+  'rules/food-types.md',
   'rules/exercise.md',
 ];
 const SNAPSHOT_DIR = '.meta/backups';

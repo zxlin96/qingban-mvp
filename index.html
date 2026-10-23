@@ -377,7 +377,7 @@
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">模型选择</div>
+        <div class="settings-group-title">模型选择 <span class="settings-hint">(需与 API 服务端模型名一致)</span></div>
         <div class="settings-row">
           <label>视觉模型（图片识别）</label>
           <input type="text" id="setVisionModel" class="settings-input" placeholder="k3">
@@ -405,6 +405,7 @@
         <div class="settings-row">
           <label>请求地址 (BASE URL)</label>
           <input type="text" id="setApiBaseURL" class="settings-input" placeholder="如 https://api.kimi.com/coding">
+          <span class="settings-hint">不要带末尾 /chat/completions，程序会自动拼接</span>
         </div>
         <div class="settings-row">
           <label>API Key</label>

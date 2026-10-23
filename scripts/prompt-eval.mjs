@@ -49,6 +49,7 @@ function buildFm() {
   files.set('BODY_METRICS.md', `---\nupdated: ${dstr}\nversion: 1\n---\n\n# 身体指标追踪\n\n## 最新数据\n- 日期: ${dstr}\n- 体重: 79.4kg\n- BMI: 30.3\n\n## 体重趋势\n| 日期 | 体重 | 变化 |\n|------|------|------|\n| 09-20 | 80.2 | - |\n| 09-25 | 79.4 | -0.8 |`);
   files.set('rules/allergies.md', fmc._getAllergiesMd());
   files.set('rules/preferences.md', fmc._getPreferencesMd());
+  files.set('rules/food-types.md', fmc._getFoodTypesMd());
   files.set('rules/exercise.md', fmc._getExerciseMd());
   files.set('rules/learned-habits.md', fmc._getLearnedHabitsMd());
   files.set(`diet/${dstr}.md`, '## 早餐\n- 食物: 鸡蛋1个、牛奶1杯\n- 估算热量: ~250 kcal\n\n## 当日汇总\n- 总估算热量: ~250 kcal');
@@ -69,6 +70,7 @@ function buildFm() {
 // ===== 用例集：只断言工具调用行为 =====
 const CASES = [
   { name: '记饮食', msg: '中午吃了红烧排骨盖饭，米饭一碗', expect: (s) => s.tools.includes('write_file') && s.writePaths.some((p) => p.startsWith('diet/')) },
+  { name: '新食物记忆', msg: '晚饭吃了藜麦沙拉和三文鱼', expect: (s) => s.tools.includes('write_file') && s.writePaths.includes('rules/food-types.md') },
   { name: '记体重', msg: '今天称了78.5公斤', expect: (s) => s.tools.includes('write_file') && s.writePaths.includes('BODY_METRICS.md') },
   { name: '说过敏', msg: '对了，我对芒果过敏', expect: (s) => s.tools.includes('write_file') && s.writePaths.includes('rules/allergies.md') },
   { name: '运动打卡', msg: '刚才跑步30分钟，好累', expect: (s) => s.tools.includes('checkin_habit') },

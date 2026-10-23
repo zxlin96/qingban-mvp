@@ -118,6 +118,7 @@ export class FileManager {
     const userTemplateFiles = {
       'rules/allergies.md': this._getAllergiesMd(),
       'rules/preferences.md': this._getPreferencesMd(),
+      'rules/food-types.md': this._getFoodTypesMd(),
       'rules/exercise.md': this._getExerciseMd(),
       'rules/learned-habits.md': this._getLearnedHabitsMd(),
     };
@@ -143,6 +144,7 @@ export class FileManager {
       'BODY_METRICS.md': this._getBodyMetricsMd(),
       'rules/allergies.md': this._getAllergiesMd(),
       'rules/preferences.md': this._getPreferencesMd(),
+      'rules/food-types.md': this._getFoodTypesMd(),
       'rules/exercise.md': this._getExerciseMd(),
       'rules/learned-habits.md': this._getLearnedHabitsMd(),
       'INDEX.md': this._getIndexMd(),
@@ -151,7 +153,7 @@ export class FileManager {
 
   _getClaudeMd() {
     return `---
-version: 12
+version: 13
 ---
 
 # 轻伴 AI 角色指令
@@ -173,7 +175,7 @@ version: 12
 **回复前必须先检查是否需要 write_file：命中下面任一条就立即写文件再回复。绝对不允许只回复"好的，已记录"而不实际调用 write_file——这是严重失职。**
 
 ### 判断流程（每次收到用户消息时）：
-1. 提到饮食（吃了/喝了/早餐/午餐/晚餐/夜宵/加餐/零食/点外卖/发食物照片——哪怕随口一句）→ **立即调用** read_file + write_file 更新 diet/日期.md
+1. 提到饮食（吃了/喝了/早餐/午餐/晚餐/夜宵/加餐/零食/点外卖/发食物照片——哪怕随口一句）→ **立即调用** read_file + write_file 更新 diet/日期.md；若出现"食物种类清单"中没有的食物，再 write_file 追加到 rules/food-types.md 对应分类（清单已自动加载，无需 read_file）
 2. 提到体重（"称了XX""体重XX"）→ **立即调用** read_file + write_file 更新 BODY_METRICS.md
 3. 提到过敏/忌口 → rules/allergies.md；口味/饮食习惯 → rules/preferences.md；运动情况/能力/限制 → rules/exercise.md；生活规律/常去场所/作息 → rules/learned-habits.md
 4. 以上都不是 → 直接回复用户
@@ -208,6 +210,10 @@ date: YYYY-MM-DD
 - 总估算热量: ~1180 kcal
 - 记录餐次: 3 餐
 \`\`\`
+
+### 食物种类记忆（rules/food-types.md，已自动加载）
+- 记录饮食或聊天中发现新食物 → write_file 追加到对应分类（主食/蛋白质/蔬菜/水果/饮品/零食加餐/外卖外食/其他），格式：\`- 食物名（备注：频率/场景，可选）\`；已记录的不重复添加
+- 推荐食物时优先从清单里选用户熟悉的；发现某分类长期空缺或种类单一时，温和建议饮食多样化
 
 ### 身体数据更新（必须通过 write_file 写入）
 用户提到体重时：read_file BODY_METRICS.md → 在"体重趋势"表末尾**追加**新行（不删除旧行）：| MM-DD | 体重 | 变化 |（"变化" = 本次体重 - 上次体重，首次记录写"-"）→ 同步更新"最新数据"区的日期、体重、BMI（= 体重 / (身高/100)²）、基础代谢 → write_file 写回完整文件 → 再回复用户（如"比上次轻了1.5kg，太棒了！"）
@@ -367,6 +373,41 @@ version: 1
 - (暂无记录)`;
   }
 
+  _getFoodTypesMd() {
+    return `---
+version: 1
+---
+
+# 食物种类
+
+> 此文件由 AI 在对话中自动更新。记录饮食发现新食物时，AI 会归类写入此处。
+> 每次对话自动加载，用于个性化推荐与饮食多样性分析。
+
+## 主食
+- (暂无记录)
+
+## 蛋白质
+- (暂无记录)
+
+## 蔬菜
+- (暂无记录)
+
+## 水果
+- (暂无记录)
+
+## 饮品
+- (暂无记录)
+
+## 零食加餐
+- (暂无记录)
+
+## 外卖外食
+- (暂无记录)
+
+## 其他
+- (暂无记录)`;
+  }
+
   _getLearnedHabitsMd() {
     return `---
 version: 1
@@ -404,7 +445,7 @@ version: 1
 
   _getIndexMd() {
     return `---
-version: 3
+version: 4
 ---
 
 # 轻伴文件索引
@@ -418,6 +459,7 @@ version: 3
 ## 规则文件
 - rules/allergies.md — 过敏与忌口（待记录）
 - rules/preferences.md — 饮食偏好（待记录）
+- rules/food-types.md — 食物种类（待记录）
 - rules/exercise.md — 运动情况（待记录）
 
 ## 习惯打卡数据

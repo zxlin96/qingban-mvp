@@ -64,11 +64,12 @@ describe('snapshotMemory 自动快照', () => {
       'PROFILE.md': '档案v1',
       'BODY_METRICS.md': '体重',
       'rules/allergies.md': '花生',
+      'rules/food-types.md': '# 食物种类\n- 包子',
       'CLAUDE.md': '系统文件不入快照',
     });
     const r = await bm.snapshotMemory(new Date(2026, 8, 18, 14, 30));
     assert.equal(r.stamp, '2026-09-18_1430');
-    assert.deepEqual(r.saved.sort(), ['BODY_METRICS.md', 'PROFILE.md', 'rules/allergies.md']);
+    assert.deepEqual(r.saved.sort(), ['BODY_METRICS.md', 'PROFILE.md', 'rules/allergies.md', 'rules/food-types.md']);
     assert.equal(fm.files.get('.meta/backups/2026-09-18_1430/PROFILE.md'), '档案v1');
     assert.ok(![...fm.files.keys()].some((p) => p.includes('CLAUDE.md') && p.includes('backups')), '系统文件不快照');
   });
@@ -106,5 +107,6 @@ describe('snapshotMemory 自动快照', () => {
     assert.deepEqual(snaps.map((s) => s.stamp), ['2026-09-18_2105', '2026-09-18_0800']);
     assert.ok(snaps[0].files.includes('PROFILE.md'));
     assert.ok(SNAPSHOT_FILES.includes('rules/preferences.md'));
+    assert.ok(SNAPSHOT_FILES.includes('rules/food-types.md'), 'v3.14.0 食物种类记忆必须纳入快照');
   });
 });

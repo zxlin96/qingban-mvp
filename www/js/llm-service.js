@@ -18,7 +18,7 @@ export class LLMService {
     // 的 KV 缓存），改为动态注入 —— 前缀变成纯静态（CLAUDE.md + rules/），缓存存活期大幅延长
     this._fixedFiles = [
       'CLAUDE.md', 'rules/learned-habits.md', 'rules/allergies.md',
-      'rules/preferences.md', 'rules/exercise.md'
+      'rules/preferences.md', 'rules/food-types.md', 'rules/exercise.md'
     ];
     this._cachedPrefix = null;      // 缓存的固定前缀字符串
     this._prefixCacheValid = false;  // 缓存是否有效
@@ -38,6 +38,7 @@ export class LLMService {
     const learned = await this.fm.readFile('rules/learned-habits.md');
     const allergies = await this.fm.readFile('rules/allergies.md');
     const preferences = await this.fm.readFile('rules/preferences.md');
+    const foodTypes = await this.fm.readFile('rules/food-types.md');
     const exercise = await this.fm.readFile('rules/exercise.md');
 
     return `${claudeMd || ''}
@@ -53,6 +54,10 @@ ${allergies || '（暂无记录）'}
 ---
 # 饮食偏好（固定注入）
 ${preferences || '（暂无记录）'}
+
+---
+# 食物种类（固定注入）
+${foodTypes || '（暂无记录）'}
 
 ---
 # 运动情况（固定注入）
@@ -686,9 +691,11 @@ ${habitSection}`;
     messages = this._stripHistoryImages(messages);
 
     const tools = this.getToolDefinitions();
+    let finalContent = '';
 
     for (let round = 0; round < this.maxToolRounds; round++) {
       const response = await this.llm.chat(messages, tools, context);
+      finalContent += response.content || '';
 
       // 累加 token 用量
       if (response.usage) {
@@ -735,12 +742,21 @@ ${habitSection}`;
       }
     }
 
-    // 超过最大轮次，返回默认回复
+    // 超过最大轮次 — 保留已生成的部分内容，避免用户白等
     // 有工具调用的回复不写入缓存
     this._pendingCacheKey = null;
+    console.warn('[LLMService] chat 达到最大工具调用轮次', {
+      maxToolRounds: this.maxToolRounds,
+      tools: this.toolCallLog.map(t => t.tool),
+      hasPartialContent: !!finalContent
+    });
     return {
-      content: '抱歉，处理超时了，请重试。',
-      toolCalls: this.toolCallLog
+      content: finalContent
+        ? finalContent + '\n\n⚠️ （已处理 ' + this.maxToolRounds + ' 轮工具调用但未完成，以上为已生成的部分内容，可重新发送消息继续）'
+        : '抱歉，已处理 ' + this.maxToolRounds + ' 轮工具调用但未完成，请重试。',
+      toolCalls: this.toolCallLog,
+      model: this._lastModel || 'unknown',
+      usage: this._lastUsage
     };
   }
 
@@ -868,10 +884,19 @@ ${habitSection}`;
       // 使多轮工具调用产生的文本能完整拼接显示
     }
 
-    // 超过最大轮次
+    // 超过最大轮次 — 保留已生成的部分内容，避免用户白等
+    console.warn('[LLMService] chatStream 达到最大工具调用轮次', {
+      maxToolRounds: this.maxToolRounds,
+      tools: this.toolCallLog.map(t => t.tool),
+      hasPartialContent: !!finalContent
+    });
     return {
-      content: '抱歉，处理超时了，请重试。',
-      toolCalls: this.toolCallLog
+      content: finalContent
+        ? finalContent + '\n\n⚠️ （已处理 ' + this.maxToolRounds + ' 轮工具调用但未完成，以上为已生成的部分内容，可重新发送消息继续）'
+        : '抱歉，已处理 ' + this.maxToolRounds + ' 轮工具调用但未完成，请重试。',
+      toolCalls: this.toolCallLog,
+      model: this._lastModel || 'unknown',
+      usage: this._lastUsage
     };
   }
 
