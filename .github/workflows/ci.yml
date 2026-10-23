@@ -82,7 +82,7 @@ jobs:
       - name: 注入签名密钥
         run: |
           mkdir -p ~/.android
-          printf '%s' '${{ secrets.DEBUG_KEYSTORE_BASE64 }}' | base64 -d > ~/.android/debug.keystore
+          printf '%s' '${{ secrets.TEST_BISECT }}' | base64 -d > ~/.android/debug.keystore
 
       - name: Gradle 编译 APK
         working-directory: android
