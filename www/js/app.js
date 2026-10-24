@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.16.2';
+const APP_VERSION = '3.16.3';
 const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.16.3', date: '2026-10-24',
+    items: [
+      '修复：打卡热力图格子挤在左上角显示不全 — v3.6.0 起格子仅 11px、只占画布宽度 30%（右侧大片空白），现按画布宽度反推格子尺寸并居中铺满，视觉与体重/热量图对齐'
+    ]
+  },
   {
     ver: '3.16.2', date: '2026-10-24',
     items: [

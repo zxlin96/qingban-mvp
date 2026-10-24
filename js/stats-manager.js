@@ -394,7 +394,13 @@ export class StatsManager {
 
   // 打卡热力图 — 最近 days 天（7 列 × N 行，颜色深浅 = 当日打卡条数）
   static buildHabitHeatmap(checkinsByDate, { days = 28, today = null } = {}) {
-    const W = 340, H = 92, L = 6, T = 6, CELL = 11, GAP = 4;
+    const W = 340, GAP = 8, T = 6;
+    const rows = Math.ceil(days / 7);
+    // 格子尺寸按画布宽度反推并水平居中铺满卡片（v3.6.0 旧版 11px 格子仅占画布 30%，挤在左上角）
+    const CELL = Math.floor((W - 2 * 10 - 6 * GAP) / 7);
+    const gridW = 7 * CELL + 6 * GAP;
+    const L = Math.round((W - gridW) / 2);
+    const H = T + rows * CELL + (rows - 1) * GAP + 10;
     const end = today || this._todayStatic();
     const dayList = [];
     for (let i = days - 1; i >= 0; i--) dayList.push(this._shiftDate(end, -i));
@@ -405,7 +411,7 @@ export class StatsManager {
       const n = countMap.get(d) || 0;
       const opacity = n === 0 ? 0 : n === 1 ? 0.35 : n === 2 ? 0.65 : 1;
       const fill = n === 0 ? 'var(--bg3)' : 'var(--accent)';
-      return `<rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="2.5" fill="${fill}"${n ? ` fill-opacity="${opacity}"` : ''}><title>${d}：${n} 次打卡</title></rect>`;
+      return `<rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="6" fill="${fill}"${n ? ` fill-opacity="${opacity}"` : ''}><title>${d}：${n} 次打卡</title></rect>`;
     }).join('');
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">${rects}</svg>
 <div class="trend-caption">最近 ${days} 天 · 颜色越深当日打卡越多</div>`;

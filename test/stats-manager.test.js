@@ -190,6 +190,8 @@ describe('SVG 图表生成', () => {
     const svg = StatsManager.buildHabitHeatmap(counts, { today: '2026-09-18' });
     assert.equal((svg.match(/<rect /g) || []).length, 28);
     assert.ok(svg.includes('2026-09-18：2 次打卡'));
+    const cell = svg.match(/<rect [^>]*width="(\d+)"/);
+    assert.ok(cell && Number(cell[1]) >= 30, '格子尺寸按画布反推铺满（回归：旧版 11px 格子仅占画布 30%）');
   });
 
   test('_shiftDate 跨月与月初回退', () => {
