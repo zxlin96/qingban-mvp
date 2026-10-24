@@ -1,0 +1,878 @@
+// scale-manager.js
+// 蓝牙体脂秤直连 — 蚂蚁阿福 AFU-BH-TZ-B1（沃莱代工）
+// 分两层：
+//   1. AfuB1：纯协议层（帧构造/解析/CRC/体成分公式），零依赖可单测
+//   2. ScaleManager：BLE 会话状态机（扫描→连接→订阅→称重→提交），走
+//      window.Capacitor.Plugins.BluetoothLe 桥接（@capacitor-community/bluetooth-le），
+//      仅 APK 原生环境可用，浏览器 Web 版自动降级提示。
+// 协议与体脂率/体成分公式依据 openScale 项目（GPL-3.0）公开的逆向成果
+// （AfuB1Lib/AfuB1Handler，抓包自官方阿福 App）按字节规范重新实现；
+// 金标准测试用例（test/scale-manager.test.js）与 openScale 的抓包帧逐字节对齐。
+//
+// 会话流程（对应 openScale AfuB1Handler 的逆向结论）：
+//   握手（时间同步+2x sync-request，过早发 profile 会把秤切进称重模式并阻塞历史导出）
+//   → 空闲时 0x8e 导出全部历史（逐条 ACK）
+//   → 上秤 0x51 实时流 → 锁定位=1 后 ACK
+//   → 等秤静默 2s（人已下秤）→ 重新 sync + getWeighAgain(0x4b/0x5b)+chunk 请求
+//   → 秤推送新的 0x54 存储记录（体重+阻抗）→ 计算/落盘/断开
+// 注意：秤只吐「体重+阻抗」，体脂率/水分/肌肉/骨量/内脏脂肪/蛋白质全部是
+// App 端用官方公式算出来的（下方 bodyFatPercent/bodyComposition）。
+
+// ===== AFU B1 协议常量 =====
+
+export const AFU = {
+  // 广播携带的 GATT service（扫描过滤用），蓝牙名含 "AFU"
+  SERVICE_UUID: '0000fc50-0000-1000-8000-00805f9b34fb',
+  // 写通道：特征 af000002（挂在与特征同 UUID 前缀的 service 下，连接后从 GATT 树定位）
+  WRITE_SERVICE: 'af000000-9f2d-4c8a-8d6f-6a7b45f90000',
+  WRITE_CHARACTERISTIC: 'af000002-9f2d-4c8a-8d6f-6a7b45f90000',
+  FRAME_SIZE: 20,
+  // 帧类型（raw[18]）
+  WIRE_STORED_RECORD: 0x54,   // 秤→手机：存储/历史记录
+  WIRE_IMPEDANCE_RESULT: 0x52, // 秤→手机：单次阻抗结果
+  WIRE_LIVE_WEIGHT: 0x51,      // 秤→手机：实时体重
+  WIRE_CONTROL: 0x5f,          // 双向：控制帧（0x12 ACK / 0x14 chunk / 0x16 时间同步）
+  WIRE_SYNC_REQUEST: 0x62,     // 手机→秤
+  WIRE_USER_PROFILE: 0x61,     // 手机→秤
+  // 子命令（raw[2]）
+  CMD_TIME_SYNC: 0x16,
+  CMD_SYNC_REQUEST: 0x04,
+  CMD_ACK: 0x12,
+  CMD_BODY_COMP_CHUNK: 0x14,
+  CMD_HISTORY_DUMP: 0x8e,
+  // profile 变体（raw[2] of 0x61），openByte 为抓包原样的 af XX 字节
+  PROFILE_VARIANTS: {
+    INITIAL: { code: 0x3f, openByte: 0xb6 },
+    GET_WEIGH_AGAIN_1: { code: 0x4b, openByte: 0xb6 },
+    GET_WEIGH_AGAIN_2: { code: 0x5b, openByte: 0xd9 },
+    FINAL: { code: 0x68, openByte: 0xd9 }
+  },
+  // 体重存储在（字节交换后的）标志字低 18 位，单位克
+  WEIGHT_G_MASK: 0x3ffff,
+  // 会话时序（毫秒）
+  IDLE_DELAY_MS: 2000,     // 秤静默多久算「人已下秤」
+  IDLE_POLL_MS: 250,
+  COMMIT_TIMEOUT_MS: 15000, // 提交后等新 0x54 的上限，超时回退实时锁定值
+  SCAN_TIMEOUT_MS: 20000,
+  CONNECT_TIMEOUT_MS: 15000
+};
+
+// ===== 工具 =====
+
+const f32 = Math.fround; // 对应 Kotlin Float（单精度）；f64 中间值按 fround 边界还原
+
+// 32 位字节反转（官方 App 的 ConvertIntEndian）
+function convertIntEndian(v) {
+  return (((v & 0xff) << 24) | ((v & 0xff00) << 8) | ((v >>> 8) & 0xff00) | (v >>> 24)) | 0;
+}
+
+function le16(b, off) {
+  return (b[off] | (b[off + 1] << 8)) & 0xffff;
+}
+
+function le32(b, off) {
+  return ((b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) | 0) >>> 0;
+}
+
+function be32(b, off) {
+  return (((b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]) | 0) >>> 0;
+}
+
+// Kotlin: Math.rint —— 四舍六入五成双（此处输入恒为正）
+function rint(x) {
+  const fl = Math.floor(x);
+  const d = x - fl;
+  if (d === 0.5) return fl % 2 === 0 ? fl : fl + 1;
+  return d < 0.5 ? fl : fl + 1;
+}
+
+export function bytesToHex(bytes) {
+  return Array.from(bytes).map(n => n.toString(16).padStart(2, '0')).join('');
+}
+
+export function hexToBytes(hex) {
+  const out = [];
+  for (let i = 0; i + 1 < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+}
+
+// ===== 协议层（纯函数） =====
+
+export const AfuB1 = {
+
+  convertIntEndian,
+
+  // CRC：raw[2..18] 求和取低 5 位
+  crc(bytes) {
+    let sum = 0;
+    for (let i = 2; i < 19; i++) sum += bytes[i] & 0xff;
+    return sum & 0x1f;
+  },
+
+  crcValid(bytes) {
+    return this.crc(bytes) === (bytes[19] & 0x1f);
+  },
+
+  // 帧组装：AF 45 [子命令] [15字节body] [帧类型] [CRC]
+  buildFrame(cmd, wireType, body) {
+    if (!Array.isArray(body) || body.length !== 15) throw new Error('AFU frame body must be 15 bytes');
+    const b = new Array(AFU.FRAME_SIZE).fill(0);
+    b[0] = 0xaf; b[1] = 0x45; b[2] = cmd & 0xff;
+    for (let i = 0; i < 15; i++) b[3 + i] = body[i] & 0xff;
+    b[18] = wireType & 0xff;
+    b[19] = this.crc(b) & 0xff;
+    return b;
+  },
+
+  // 时间戳槽：ConvertIntEndian(now) 按大端字节序铺 4 字节（存储记录里却是小端 LE32，原样保留）
+  _time4(nowEpochSeconds) {
+    const v = convertIntEndian(nowEpochSeconds >>> 0);
+    return [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+  },
+
+  buildTimeSync(nowEpochSeconds) {
+    return this.buildFrame(AFU.CMD_TIME_SYNC, AFU.WIRE_CONTROL,
+      [...this._time4(nowEpochSeconds), 0x20, ...new Array(10).fill(0)]);
+  },
+
+  // 两次 sync-request 的 body 字节抓包自官方 App（openByte/计数器字节可能与会话相关）
+  buildSyncRequest(variant) {
+    const body = variant === 'SECOND'
+      ? [0x01, 0x03, 0xa5, 0xf8, 0x11, 0x1d, 0x02, 0x00, 0x04, 0xb4, 0xc6, 0x1b, 0x1d, 0x01, 0x00]
+      : [0x00, 0x01, 0xaf, 0xb6, 0x17, 0x1d, 0x01, 0x00, 0x02, 0xb4, 0xc6, 0x1b, 0x56, 0x01, 0x00];
+    return this.buildFrame(AFU.CMD_SYNC_REQUEST, AFU.WIRE_SYNC_REQUEST, body);
+  },
+
+  buildUserProfile(variantName, nowEpochSeconds, user, age, sex, targetKg) {
+    const variant = AFU.PROFILE_VARIANTS[variantName];
+    const targetX100 = Math.round(targetKg * 100) & 0xffff;
+    const body = [
+      ...this._time4(nowEpochSeconds), 0x00, user & 0xff,
+      0xaf, variant.openByte, 0x17, age & 0xff, sex & 0xff,
+      targetX100 & 0xff, (targetX100 >>> 8) & 0xff, 0x03, 0x00
+    ];
+    return this.buildFrame(variant.code, AFU.WIRE_USER_PROFILE, body);
+  },
+
+  buildHistoryDumpRequest(nowEpochSeconds, user, age, sex, targetKg) {
+    const targetX100 = Math.round(targetKg * 100) & 0xffff;
+    const body = [
+      ...this._time4(nowEpochSeconds), 0x00, user & 0xff,
+      0xaf, 0xde, 0x17, age & 0xff, sex & 0xff,
+      targetX100 & 0xff, (targetX100 >>> 8) & 0xff, 0x03, 0x00
+    ];
+    return this.buildFrame(AFU.CMD_HISTORY_DUMP, AFU.WIRE_USER_PROFILE, body);
+  },
+
+  buildAck(replyWireType, correlationIndex = 0) {
+    return this.buildFrame(AFU.CMD_ACK, AFU.WIRE_CONTROL,
+      [replyWireType & 0xff, 0x00, correlationIndex & 0xff, ...new Array(12).fill(0)]);
+  },
+
+  buildChunkRequest() {
+    return this.buildFrame(AFU.CMD_BODY_COMP_CHUNK, AFU.WIRE_CONTROL, new Array(15).fill(0));
+  },
+
+  // 解析一帧（Uint8Array/数组）。非 AFU 帧（长度/头/CRC/方向不符）返回 null。
+  parse(raw) {
+    if (!raw || raw.length !== AFU.FRAME_SIZE) return null;
+    if ((raw[0] & 0xff) !== 0xaf || (raw[1] & 0xff) !== 0x45) return null;
+    if (!this.crcValid(raw)) return null;
+    const cmd = raw[2] & 0xff;
+    const wire = raw[18] & 0xff;
+
+    if (wire === AFU.WIRE_STORED_RECORD) {
+      const flags = convertIntEndian(be32(raw, 7));
+      return {
+        type: 'stored',
+        historyType: cmd & 0x03,
+        sequence: (cmd >>> 2) & 0x3f,
+        timestampEpochSeconds: le32(raw, 3),
+        weightGrams: flags & AFU.WEIGHT_G_MASK,
+        hasElectrode: !!((flags >>> 24) & 1),
+        hasHeartRate: !!((flags >>> 25) & 1),
+        locked: !!((flags >>> 31) & 1),
+        resistanceOhms: le16(raw, 13),
+        wireType: wire, ackReplyByte: AFU.WIRE_STORED_RECORD
+      };
+    }
+    if (wire === AFU.WIRE_LIVE_WEIGHT) {
+      const flags = convertIntEndian(be32(raw, 2));
+      return {
+        type: 'live',
+        weightGrams: flags & AFU.WEIGHT_G_MASK,
+        mode: raw[6] & 0xff,
+        locked: !!((flags >>> 31) & 1),
+        wireType: wire, ackReplyByte: AFU.WIRE_LIVE_WEIGHT
+      };
+    }
+    if (wire === AFU.WIRE_IMPEDANCE_RESULT) {
+      return {
+        type: 'impedance',
+        valid: cmd === 0x01,
+        adcOhms: le16(raw, 4),
+        wireType: wire, ackReplyByte: AFU.WIRE_IMPEDANCE_RESULT
+      };
+    }
+    if (wire === AFU.WIRE_CONTROL) {
+      if (cmd === AFU.CMD_BODY_COMP_CHUNK) {
+        return { type: 'chunk', chunkIndex: raw[3] & 0xff, payload: Array.from(raw.slice(4, 18)), wireType: wire, ackReplyByte: AFU.CMD_BODY_COMP_CHUNK };
+      }
+      if (cmd === AFU.CMD_ACK) {
+        return { type: 'ack', replyCmd: raw[3] & 0xff, replyOp: raw[4] & 0xff, wireType: wire, ackReplyByte: 0 };
+      }
+      return { type: 'control', cmd, wireType: wire, ackReplyByte: 0 };
+    }
+    return null; // 0x61/0x62 是手机→秤方向，秤不会发
+  },
+
+  // ===== 体成分公式（移植自官方 App 逆向；fround 边界与原实现一致，不可省） =====
+
+  // 体脂率 %：sex 1=男 0=女；阻抗 0 → null；结果裁剪到 [5,80] 并四舍六入五成双保留 1 位
+  bodyFatPercent(weightKg, heightCm, age, sex, impedanceOhm) {
+    if (impedanceOhm === 0) return null;
+    const h = f32(heightCm / 100.0);
+    const hd = +h;
+    const h2 = hd * hd;
+    let r;
+    if (sex === 1) {
+      const h2f = +f32(h * f32(h * -486583.0));
+      r = 1625303.0 / impedanceOhm / impedanceOhm;
+      r += 9.146 * weightKg / h2 / impedanceOhm;
+      r += h2f / weightKg / impedanceOhm + 61.8;
+      r += -251.193 * h2 / weightKg / age;
+      r += impedanceOhm * -0.0139;
+      r += age * 0.05975;
+    } else {
+      const h2f = +f32(h * f32(h * -382280.0));
+      r = -186.422 * h2 / weightKg + 58.82;
+      r += h2f / weightKg / impedanceOhm;
+      r += 128.005 * weightKg / hd / impedanceOhm;
+      r += -0.0728 * weightKg / hd;
+      r += 7816.359 / hd / impedanceOhm;
+      r += -3.333 * weightKg / h2 / age;
+    }
+    const clamped = Math.min(80, Math.max(5, f32(r)));
+    return rint(clamped * 10.0) / 10.0;
+  },
+
+  // 由 体重+体脂率 推其余成分；输入超出验证范围返回 null
+  bodyComposition(sex, age, heightCm, weightKg, bodyFatPercent) {
+    if (sex > 1 || age < 10 || age > 99) return null;
+    if (heightCm < 90 || heightCm > 240 || weightKg < 10 || weightKg > 200) return null;
+
+    const bf = +bodyFatPercent;
+    const w = +weightKg;
+    const h = +heightCm;
+
+    if ((bf <= 4.0 && bf <= 3.999) || (bf >= 75.0 && (bf <= 74.999 || bf > 75.001))) return null;
+    const bandLow = bf <= 4.0;
+    const bandHigh = bf >= 75.0;
+
+    const bmi = f32(w * 10000.0 / f32(h * h));
+
+    // 由 BMI+实测体脂率反解内部脂肪率
+    let num, denom;
+    if (sex === 0) {
+      if (age <= 15) {
+        num = +f32(f32(f32(-556421.0 / bmi) + 17387.0));
+        denom = bf - 44.19;
+      } else {
+        num = +f32(f32(f32(-518695.0 / bmi) + 15802.0));
+        denom = bf - 42.86 + age * -0.057;
+      }
+    } else {
+      if (age <= 15) {
+        num = +f32(f32(f32(-506791.0 / bmi) + 12009.0));
+        denom = bf - 63.25 + age * 1.121;
+      } else {
+        num = +f32(f32(f32(-460857.0 / bmi) + 10645.0));
+        denom = bf - 37.74 + age * -0.0511;
+      }
+    }
+    const recomputedBf = f32(num / denom);
+
+    let c0;
+    if (bandLow) c0 = f32(sex === 0 ? 66.5 : 66.0);
+    else if (bandHigh) c0 = f32(sex === 0 ? 18.0 : 15.0);
+    else if (sex === 0) {
+      let s2 = f32(3752.4 * h); s2 = f32(s2 * h);
+      let s3 = f32(444.93 + f32(556707.0 / recomputedBf));
+      s2 = f32(s2 / recomputedBf); s3 = f32(s3 / weightKg); s2 = f32(s2 / 10000.0);
+      const sa = f32(10276.0 / recomputedBf);
+      s2 = f32(s3 + s2);
+      c0 = f32(24.305 + f32(s2 - sa));
+    } else {
+      let s2 = f32(3705.3 * h); s2 = f32(s2 * h);
+      let s3 = f32(299.43 + f32(696819.0 / recomputedBf));
+      s2 = f32(s2 / recomputedBf); s3 = f32(s3 / weightKg); s2 = f32(s2 / 10000.0);
+      const sa = f32(10770.0 / recomputedBf);
+      s2 = f32(s3 + s2);
+      c0 = f32(29.61 + f32(s2 - sa));
+    }
+    const c4 = f32(c0 * w / 100.0);
+
+    // 骨量
+    const boneMassKg = (bandLow || bandHigh)
+      ? f32(w * (bandLow ? (sex === 0 ? 5.8 : 5.0) : (sex === 0 ? 1.6 : 1.3)) / 100.0)
+      : f32(+f32(w * (sex === 0 ? 0.061 : 0.052)) * +f32(100.0 - bf) / 100.0);
+
+    // 骨骼肌率 s1 与总肌肉率 s4
+    let s1, s4;
+    if (bandLow) {
+      s1 = f32(sex === 0 ? 56.6 : 59.0);
+      s4 = f32(sex === 0 ? 90.2 : 91.0);
+    } else if (bandHigh) {
+      s1 = f32(sex === 0 ? 15.1 : 17.9);
+      s4 = f32(sex === 0 ? 23.4 : 23.7);
+    } else {
+      s1 = sex === 0 ? f32(f32(c0 * 0.857) - 0.36) : f32(c0 * 0.895);
+      const mf = f32(sex === 0 ? 0.939 : 0.948);
+      s4 = f32(mf * f32(100.0 - bf));
+    }
+    // Kotlin 原式为 ((s1 * w).toFloat() / 100.0).toFloat() * 100.0 / w —— 末段在 Double 上进行
+    const skeletalMusclePercent = f32(f32(s1 * w) / 100.0) * 100.0 / w;
+
+    const muscleKg = f32(f32(s4 * w) / 100.0);
+    const proteinRate = f32((muscleKg - c4) * 100.0 / w);
+
+    // 内脏脂肪指数
+    let vfal;
+    if (bandLow) vfal = 1;
+    else if (bandHigh) vfal = 30;
+    else if (sex === 1) {
+      const bf64 = +recomputedBf;
+      let acc = 77.216 / bf64 + 0.068;
+      acc *= w;
+      const d17 = acc + 0.5;
+      let d5 = +f32(-5489.0 / recomputedBf) + 2.8;
+      d5 *= h; d5 *= h;
+      let d6 = d17 + d5 / 10000.0;
+      d6 += 6096.3 / bf64;
+      const raw = Math.trunc(-1.22 + (d6 + 0.1668 * age));
+      vfal = raw <= 0 ? 1 : (raw > 30 ? 30 : raw);
+    } else {
+      const bf64 = +recomputedBf;
+      let acc = 71.92 / bf64 + 0.0876;
+      acc *= w;
+      const d17 = acc + 0.5;
+      let d5 = +f32(-1261.7 / +recomputedBf) - 2.88;
+      d5 *= h; d5 *= h;
+      let d6 = d17 + d5 / 10000.0;
+      d6 += -1545.6 / bf64;
+      const raw = Math.trunc(5.9 + (d6 + 0.068 * age));
+      vfal = raw <= 0 ? 1 : (raw > 30 ? 30 : raw);
+    }
+
+    const bonePct = boneMassKg * 100.0 / w;
+    const fatFreeMassKg = f32(w + f32(f32(w * bf) / -100.0));
+
+    return {
+      waterPercent: 100.0 - bf - bonePct - proteinRate,
+      skeletalMusclePercent,
+      boneMassKg,
+      visceralFatIndex: vfal,
+      proteinPercent: proteinRate,
+      fatFreeMassKg
+    };
+  }
+};
+
+// ===== PROFILE.md 解析（秤 profile 帧 + 体成分 + BMR 都需要） =====
+
+// 宽容解析；缺项用默认值（男/30岁/170cm/目标65kg）
+export function parseProfileMd(md) {
+  const out = { sex: 1, age: 30, heightCm: 170, targetKg: 65, name: '' };
+  if (!md) return out;
+  const pick = (re) => {
+    const m = md.match(re);
+    return m ? m[1] : null;
+  };
+  const gender = pick(/性别[：:]\s*(男|女)/);
+  if (gender) out.sex = gender === '男' ? 1 : 0;
+  const age = pick(/年龄[：:]\s*(\d{1,3})/);
+  if (age) out.age = Math.min(120, Math.max(10, parseInt(age, 10)));
+  const height = pick(/身高[：:]\s*(\d{2,3})/);
+  if (height) out.heightCm = Math.min(250, Math.max(90, parseInt(height, 10)));
+  const target = pick(/目标体重[：:]\s*(\d{2,3}(?:\.\d+)?)/) || pick(/初始体重[：:]\s*(\d{2,3}(?:\.\d+)?)/);
+  if (target) out.targetKg = Math.min(200, Math.max(25, parseFloat(target)));
+  const name = pick(/昵称[：:]\s*([^\n]+)/);
+  if (name) out.name = name.trim();
+  return out;
+}
+
+// ===== BODY_METRICS.md 落盘 =====
+
+// 把一次称重写入 BODY_METRICS.md：体重趋势表追加一行 + 重写「最新数据」区。
+// 与 AI 的写入格式完全一致（CLAUDE.md 规范：| MM-DD | 体重 | 变化 |），
+// AI 每轮对话都会被注入该文件内容，落盘即对 AI 可见。
+// now: Date（可注入测试时间）。historyRecords: 会话开始时导出的历史记录（可选，补表用）。
+export async function recordBodyMeasurement(fm, measurement, profile, now = new Date(), historyRecords = []) {
+  const existing = await fm.readFile('BODY_METRICS.md') || '';
+  const md = measurement.timestamp ? new Date(measurement.timestamp * 1000) : now;
+  const mmdd = `${String(md.getMonth() + 1).padStart(2, '0')}-${String(md.getDate()).padStart(2, '0')}`;
+  const yyyy = String(md.getFullYear()).padStart(4, '0');
+  const weightKg = measurement.weightKg;
+  const kg1 = Math.round(weightKg * 10) / 10;
+
+  // 解析现有趋势行（与 stats-manager 同口径）
+  const rowRe = /^\s*\|\s*(\d{2}-\d{2})\s*\|\s*(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s*\|.*$/gm;
+  const rows = [];
+  let m;
+  while ((m = rowRe.exec(existing)) !== null) rows.push({ md: m[1], weight: parseFloat(m[2]) });
+  const dup = rows.some(r => r.md === mmdd && Math.abs(r.weight - kg1) < 0.05);
+
+  // 组装新表体：旧行 + 补历史 + 本次（变化列随后统一重算）
+  const tableRows = rows.map(r => `| ${r.md} | ${r.weight.toFixed(1)} |`);
+  for (const rec of historyRecords) {
+    const d = rec.timestampEpochSeconds ? new Date(rec.timestampEpochSeconds * 1000) : now;
+    const rd = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const rk = Math.round((rec.weightGrams / 1000) * 10) / 10;
+    if (!tableRows.some(t => t.startsWith(`| ${rd} |`) && t.includes(`| ${rk.toFixed(1)}`))) {
+      tableRows.push(`| ${rd} | ${rk.toFixed(1)} |`);
+    }
+  }
+  // 变化基准 = 补录历史之后的实际上一行（新增行之前）
+  const prevWeight = tableRows.length > 0
+    ? parseFloat(tableRows[tableRows.length - 1].match(/\|\s*\d{2}-\d{2}\s*\|\s*(\d+(?:\.\d+)?)\s*\|/)[1])
+    : null;
+  if (!dup) tableRows.push(`| ${mmdd} | ${kg1.toFixed(1)} |`);
+  const diff = prevWeight === null ? null : Math.round((kg1 - prevWeight) * 10) / 10;
+
+  // 体重变化列：与 AI 写法一致（相对上一行），重算每行变化
+  const finalRows = [];
+  let lastW = null;
+  for (const line of tableRows) {
+    const wm = line.match(/^\|\s*(\d{2}-\d{2})\s*\|\s*(\d+(?:\.\d+)?)\s*\|/);
+    if (!wm) continue;
+    const w = parseFloat(wm[2]);
+    const c = lastW === null ? '-' : `${(Math.round((w - lastW) * 10) / 10) > 0 ? '+' : ''}${(Math.round((w - lastW) * 10) / 10).toFixed(1)}`;
+    finalRows.push(`| ${wm[1]} | ${w.toFixed(1)} | ${c} |`);
+    lastW = w;
+  }
+
+  // 最新数据区（含体成分时一并写入，AI 可直接读到）
+  const bmi = (weightKg / Math.pow(profile.heightCm / 100, 2)).toFixed(1);
+  const bmr = profile.sex === 1
+    ? Math.round(10 * weightKg + 6.25 * profile.heightCm - 5 * profile.age + 5)
+    : Math.round(10 * weightKg + 6.25 * profile.heightCm - 5 * profile.age - 161);
+  const dateStr = `${yyyy}-${mmdd}`;
+  const lines = [
+    `- 日期: ${dateStr}`,
+    `- 体重: ${kg1.toFixed(1)}kg`,
+    `- BMI: ${bmi}`,
+    `- 基础代谢: ~${bmr} kcal`
+  ];
+  if (measurement.impedanceOhm) lines.push(`- 阻抗: ${Math.round(measurement.impedanceOhm)}Ω（体脂秤测量）`);
+  if (measurement.bodyFatPercent != null) {
+    lines.push(`- 体脂率: ${measurement.bodyFatPercent.toFixed(1)}%（体脂秤）`);
+    const c = measurement.composition;
+    if (c) {
+      lines.push(`- 骨骼肌率: ${c.skeletalMusclePercent.toFixed(1)}%`);
+      lines.push(`- 体水分率: ${c.waterPercent.toFixed(1)}%`);
+      lines.push(`- 蛋白质率: ${c.proteinPercent.toFixed(1)}%`);
+      lines.push(`- 骨量: ${c.boneMassKg.toFixed(2)}kg`);
+      lines.push(`- 内脏脂肪指数: ${c.visceralFatIndex}`);
+    }
+  }
+  const latestBlock = `## 最新数据\n${lines.join('\n')}`;
+
+  // 重建文件：替换「最新数据」区 + 「体重趋势」表（其他区原样保留）
+  const tableBlock = `## 体重趋势\n| 日期 | 体重 | 变化 |\n|------|------|------|\n${finalRows.map(r => r + '\n').join('')}`.trimEnd();
+  let content;
+  if (existing) {
+    content = existing
+      .replace(/## 最新数据[\s\S]*?(?=\n## |\n*$)/, latestBlock)
+      .replace(/## 体重趋势\n\|[^\n]*\|\n\|[-\s|]*\|\n(?:\|.*\n?)*/, tableBlock);
+    // 表体替换失败（AI 写法偏差等）→ 整节重建；节缺失 → 追加到文件末尾
+    if (!dup && !content.includes(`| ${mmdd} | ${kg1.toFixed(1)} |`)) {
+      content = content.replace(/## 体重趋势[\s\S]*?(?=\n## |\n*$)/, tableBlock);
+      if (!content.includes('## 体重趋势')) {
+        content = content.trimEnd() + '\n\n' + tableBlock + '\n';
+      }
+    }
+  } else {
+    content = `---\nupdated: ${dateStr}\n---\n\n# 身体指标追踪\n\n${latestBlock}\n\n${tableBlock}\n`;
+  }
+
+  await fm.writeFile('BODY_METRICS.md', content.trimEnd() + '\n');
+  return { prevWeight, diff, bmi, bmr, addedRow: !dup, dateStr };
+}
+
+// ===== BLE 会话管理 =====
+
+export class ScaleManager {
+  constructor(fileManager) {
+    this.fm = fileManager;
+    this._session = null;
+  }
+
+  // 原生蓝牙插件（Web 环境无桥接返回 null）
+  static plugin() {
+    return (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins
+      && window.Capacitor.Plugins.BluetoothLe) || null;
+  }
+
+  isAvailable() {
+    return !!ScaleManager.plugin();
+  }
+
+  // 会话进行中（防重复开称）
+  isBusy() {
+    return !!(this._session && !this._session.done);
+  }
+
+  // 主流程：扫描 → 连接 → 订阅 → 握手 → 等称重 → 提交 → 返回结果
+  // hooks: { onStatus(stage, detail), onLiveWeight(kg), onHistory(count) }
+  async startSession(hooks = {}) {
+    if (this.isBusy()) throw new Error('已有称重进行中');
+    const ble = ScaleManager.plugin();
+    if (!ble) throw new Error('此功能需要安装版 App（浏览器不支持蓝牙），请使用轻伴 APK');
+
+    const session = {
+      ble, hooks, done: false,
+      deviceId: null, listeners: [], writeService: null,
+      // 状态机标志（对应 openScale AfuB1Handler）
+      handshakeSent: false, profileSent: false, historyDumpSent: false,
+      liveSeen: false, weightFinal: false, commitInProgress: false, commitStartedAt: 0,
+      committedSeen: false, lastLiveWeightG: null,
+      lastFrameAt: 0, weighStartedAt: 0,
+      historyRecords: [], profile: null, timers: []
+    };
+    // 结果 promise 在会话创建时就挂好（通知可能早于后续步骤到达）
+    session.resultPromise = new Promise((resolve, reject) => {
+      session.resultResolve = resolve;
+      session.resultReject = reject;
+    });
+    // 早退路径（连接失败等）由 startSession 直接抛错，这里的空 catch 只防未处理 rejection 告警
+    session.resultPromise.catch(() => {});
+    session.writeChain = Promise.resolve(); // GATT 写串行化（并发写会交错）
+    this._session = session;
+    const status = (stage, detail) => { try { hooks.onStatus && hooks.onStatus(stage, detail); } catch (_) {} };
+
+    try {
+      status('init', '请求蓝牙权限…');
+      await ble.initialize({ androidNeverForLocation: true });
+      const enabled = await ble.isEnabled();
+      if (!enabled || !enabled.value) {
+        status('enable', '蓝牙未开启，请求开启…');
+        try { await ble.requestEnable(); } catch (_) { throw new Error('蓝牙未开启'); }
+      }
+
+      // ---- 扫描 ----
+      status('scan', '正在搜索体脂秤…请确认秤已唤醒（轻踩一下激活）');
+      const device = await this._scanForScale(session);
+      session.deviceId = device.deviceId;
+      status('connect', `找到 ${device.name || device.deviceId}，连接中…`);
+
+      // ---- 连接（Android 侧连接后自动做服务发现） ----
+      await this._withTimeout(ble.connect({ deviceId: session.deviceId }), AFU.CONNECT_TIMEOUT_MS, '连接超时');
+      const gatt = await ble.getServices({ deviceId: session.deviceId });
+      this._setupChannels(session, gatt);
+
+      // 用户档案（体成分计算与 profile 帧都要用）
+      const profileMd = await this.fm.readFile('PROFILE.md');
+      session.profile = parseProfileMd(profileMd);
+
+      // ---- 订阅所有 notify/indicate 特征（秤在其中一个上回报） ----
+      for (const ch of session.notifyChars) {
+        const key = `notification|${session.deviceId}|${ch.service}|${ch.characteristic}`;
+        const handle = await ble.addListener(key, (event) => this._onNotify(session, event));
+        session.listeners.push(handle);
+        await ble.startNotifications({ deviceId: session.deviceId, service: ch.service, characteristic: ch.characteristic });
+      }
+
+      // ---- 握手：时间同步 + 2x sync-request；随后请求历史导出 ----
+      session.lastFrameAt = Date.now();
+      await this._sendHandshake(session);
+      await this._requestHistoryDump(session);
+      status('ready', '已连接 ✓ 轻站上秤开始测量');
+
+      // 总超时兜底：3 分钟内未完成则报错
+      this._armOverallTimeout(session, 180000);
+      return await session.resultPromise;
+    } catch (err) {
+      await this.stopSession('error');
+      throw err;
+    }
+  }
+
+  // 扫描 AFU 秤（service 0xfc50 过滤 + 名字含 AFU）
+  _scanForScale(session) {
+    const { ble } = session;
+    return new Promise(async (resolve, reject) => {
+      let settled = false;
+      const cleanup = async () => {
+        try { await ble.stopLEScan(); } catch (_) {}
+        try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
+      };
+      const timer = setTimeout(async () => {
+        if (settled) return;
+        settled = true;
+        await cleanup();
+        reject(new Error('未找到体脂秤：请踩一下秤唤醒蓝牙，再重试'));
+      }, AFU.SCAN_TIMEOUT_MS);
+
+      try {
+        session._scanHandle = await ble.addListener('onScanResult', async (result) => {
+          const dev = result && (result.device || result);
+          const name = (dev && (dev.name || dev.localName)) || (result && result.localName) || '';
+          const id = dev && (dev.deviceId || dev.id);
+          if (!id) return;
+          if (!String(name).toUpperCase().includes('AFU')) return;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          await cleanup();
+          resolve({ deviceId: id, name });
+        });
+        await ble.requestLEScan({ services: [AFU.SERVICE_UUID], allowDuplicates: false });
+      } catch (e) {
+        if (!settled) { settled = true; clearTimeout(timer); await cleanup(); reject(e); }
+      }
+    });
+  }
+
+  // 从 GATT 树定位写通道 + 全部可订阅特征
+  _setupChannels(session, gattResult) {
+    const services = (gattResult && gattResult.services) || [];
+    const writeChar = AFU.WRITE_CHARACTERISTIC;
+    let writeService = null;
+    const notifyChars = [];
+    for (const svc of services) {
+      const svcUuid = String(svc.uuid || '').toLowerCase();
+      for (const ch of svc.characteristics || []) {
+        const uuid = String(ch.uuid || '').toLowerCase();
+        if (uuid === writeChar) writeService = svcUuid || AFU.WRITE_SERVICE;
+        const props = ch.properties || {};
+        if (props.notify || props.indicate) {
+          notifyChars.push({ service: svcUuid, characteristic: uuid });
+        }
+      }
+    }
+    if (!writeService) writeService = AFU.WRITE_SERVICE; // GATT 树拿不到时按规范默认
+    session.writeService = writeService;
+    session.notifyChars = notifyChars;
+    if (notifyChars.length === 0) throw new Error('体脂秤未提供数据通道（特征订阅失败）');
+  }
+
+  // 写帧（串行：ACK/握手/提交可能并发触发，GATT 写必须排队）
+  _writeFrame(session, frameBytes) {
+    const { ble } = session;
+    const run = () => ble.write({
+      deviceId: session.deviceId,
+      service: session.writeService,
+      characteristic: AFU.WRITE_CHARACTERISTIC,
+      value: bytesToHex(frameBytes)
+    });
+    session.writeChain = session.writeChain.then(run, run);
+    return session.writeChain;
+  }
+
+  // 握手：时间同步 + 2x sync-request（不能先发 profile，否则秤切进称重模式阻塞历史）
+  async _sendHandshake(session) {
+    const now = Math.floor(Date.now() / 1000);
+    await this._writeFrame(session, AfuB1.buildTimeSync(now));
+    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'));
+    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'));
+    session.handshakeSent = true;
+  }
+
+  async _sendSyncPair(session) {
+    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'));
+    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'));
+  }
+
+  async _sendProfile(session, variantName) {
+    const p = session.profile;
+    await this._writeFrame(session, AfuB1.buildUserProfile(
+      variantName, Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg));
+  }
+
+  async _requestHistoryDump(session) {
+    const p = session.profile;
+    await this._writeFrame(session, AfuB1.buildHistoryDumpRequest(
+      Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg));
+  }
+
+  // 通知回调（hex → 帧 → 状态机）
+  _onNotify(session, event) {
+    const hexStr = event && event.value;
+    if (typeof hexStr !== 'string' || !hexStr) return;
+    let frame;
+    try { frame = AfuB1.parse(hexToBytes(hexStr)); } catch (_) { return; }
+    if (!frame) return;
+    session.lastFrameAt = Date.now();
+
+    switch (frame.type) {
+      case 'live': this._onLive(session, frame); break;
+      case 'stored': this._onStored(session, frame); break;
+      case 'impedance':
+        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0)).catch(() => {});
+        break;
+      case 'chunk': // 加密报告分片，内容不可解；必须 ACK 否则秤会重发卡住流程
+        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0)).catch(() => {});
+        break;
+      default: break; // ack/control：无需处理
+    }
+  }
+
+  // 实时体重 0x51
+  _onLive(session, frame) {
+    session.liveSeen = true;
+    if (!session.weighStartedAt) session.weighStartedAt = Date.now();
+    session.lastLiveWeightG = frame.weightGrams;
+    try { session.hooks.onLiveWeight && session.hooks.onLiveWeight(frame.weightGrams / 1000); } catch (_) {}
+
+    if (!session.profileSent && session.handshakeSent) {
+      session.profileSent = true;
+      this._sendProfile(session, 'INITIAL').catch(() => {});
+    }
+    // 锁定位=1：体重已定 → ACK + 等下秤后提交
+    if (frame.locked && !session.weightFinal && session.handshakeSent) {
+      session.weightFinal = true;
+      this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_LIVE_WEIGHT, 0)).catch(() => {});
+      this._startCommitFlow(session);
+    }
+  }
+
+  // 存储记录 0x54
+  _onStored(session, frame) {
+    // 先 ACK（导出模式下不 ACK 秤不发下一条；correlation 带上序号）
+    this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_STORED_RECORD, frame.sequence)).catch(() => {});
+
+    // 空闲收到记录但导出请求还没落地（连接初期的 0x8e 可能被秤忽略）→ 首条记录时补发
+    if (!session.liveSeen && !session.historyDumpSent) {
+      session.historyDumpSent = true;
+      this._requestHistoryDump(session).catch(() => {});
+    }
+
+    // 本次称重的新记录？（提交中 + 时间在本轮称重内 + 体重与锁定值吻合）
+    if (this._isFreshCommitted(session, frame)) {
+      session.committedSeen = true;
+      this._finish(session, {
+        weightKg: frame.weightGrams / 1000,
+        impedanceOhm: frame.resistanceOhms || null,
+        timestamp: frame.timestampEpochSeconds,
+        source: 'stored'
+      });
+      return;
+    }
+
+    // 其余为历史记录（含秤空闲时反复重发的当前锁定记录——去重后入库）
+    const rec = {
+      timestampEpochSeconds: frame.timestampEpochSeconds,
+      weightGrams: frame.weightGrams,
+      resistanceOhms: frame.resistanceOhms
+    };
+    const dup = session.historyRecords.some(r =>
+      r.timestampEpochSeconds === rec.timestampEpochSeconds && r.weightGrams === rec.weightGrams);
+    if (!dup) {
+      session.historyRecords.push(rec);
+      try { session.hooks.onHistory && session.hooks.onHistory(session.historyRecords.length); } catch (_) {}
+    }
+  }
+
+  _isFreshCommitted(session, frame) {
+    if (!session.commitInProgress || !session.weighStartedAt) return false;
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const ts = frame.timestampEpochSeconds;
+    if (ts < Math.floor(session.weighStartedAt / 1000) - 60) return false;
+    if (Math.abs(nowSecs - ts) > 600) return false;
+    const live = session.lastLiveWeightG;
+    if (live == null) return false;
+    return Math.abs(frame.weightGrams - live) <= 1000;
+  }
+
+  // 锁定后：等秤静默（人下秤）→ 重新 sync + getWeighAgain 拉新记录；超时回退锁定值
+  _startCommitFlow(session) {
+    const status = session.hooks.onStatus;
+    const tick = async () => {
+      if (session.done || session.committedSeen) return;
+      const idle = Date.now() - session.lastFrameAt > AFU.IDLE_DELAY_MS;
+      if (idle && !session.commitInProgress) {
+        session.commitInProgress = true;
+        session.commitStartedAt = Date.now();
+        try { status && status('commit', '测量完成 ✓ 正在同步数据…'); } catch (_) {}
+        try {
+          await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)));
+          await this._sendSyncPair(session);
+          await this._sendProfile(session, 'GET_WEIGH_AGAIN_1');
+          await this._sendProfile(session, 'GET_WEIGH_AGAIN_2');
+          await this._writeFrame(session, AfuB1.buildChunkRequest());
+        } catch (_) { /* 写失败由超时兜底 */ }
+      }
+      // 提交超时：用锁定实时值兜底（无阻抗）
+      if (session.commitInProgress && session.commitStartedAt
+        && Date.now() - session.commitStartedAt > AFU.COMMIT_TIMEOUT_MS
+        && session.lastLiveWeightG != null) {
+        session.committedSeen = true;
+        this._finish(session, {
+          weightKg: session.lastLiveWeightG / 1000,
+          impedanceOhm: null,
+          timestamp: null,
+          source: 'live-fallback'
+        });
+        return;
+      }
+      session.timers.push(setTimeout(tick, AFU.IDLE_POLL_MS));
+    };
+    session.timers.push(setTimeout(tick, AFU.IDLE_POLL_MS));
+  }
+
+  // 收尾：计算体成分 → resolve → 尽量复位秤 → 断开
+  async _finish(session, raw) {
+    if (session.done) return;
+    session.done = true;
+    session.timers.forEach(clearTimeout);
+    session.resultResolve && session.resultResolve({ ...raw, historyRecords: session.historyRecords });
+
+    // 尽力复位秤（FINAL profile + 时间同步 + sync，武装下一次称重）
+    try {
+      await this._sendProfile(session, 'FINAL');
+      await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)));
+      await this._sendSyncPair(session);
+    } catch (_) {}
+    await this._cleanupConnection(session);
+  }
+
+  async _cleanupConnection(session) {
+    const { ble } = session;
+    for (const h of session.listeners) { try { await h.remove(); } catch (_) {} }
+    session.listeners = [];
+    if (session.deviceId) { try { await ble.disconnect({ deviceId: session.deviceId }); } catch (_) {} }
+  }
+
+  _armOverallTimeout(session, ms) {
+    setTimeout(() => {
+      if (!session.done) {
+        session.done = true;
+        session.timers.forEach(clearTimeout);
+        this._cleanupConnection(session);
+        session.resultReject(new Error('称重超时：请重站上秤并保持静止，再重试'));
+      }
+    }, ms);
+  }
+
+  _withTimeout(promise, ms, label) {
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms))
+    ]);
+  }
+
+  // 主动停止/出错清理
+  async stopSession(reason = 'stopped') {
+    const session = this._session;
+    if (!session) return;
+    session.timers.forEach(clearTimeout);
+    if (!session.done) {
+      session.done = true;
+      try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
+      try { await session.ble.stopLEScan(); } catch (_) {}
+      await this._cleanupConnection(session);
+      session.resultReject && session.resultReject(new Error(reason === 'error' ? '连接中断，请重试' : '已取消称重'));
+    }
+    this._session = null;
+  }
+}

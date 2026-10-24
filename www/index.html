@@ -144,6 +144,10 @@
       <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
       <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
     </symbol>
+    <symbol id="icon-scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="3"/>
+      <path d="M8 10a4 4 0 0 1 8 0"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -167,6 +171,7 @@
       <div class="menu-item" id="menuCalendar"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span class="date-badge date-badge-clickable" id="dateBadge">加载中...</span></div>
       <div class="menu-item" id="menuSettings"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-refresh"/></svg><span>模型设置</span></div>
       <div class="menu-item" id="menuReminders"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-bell"/></svg><span>提醒设置</span></div>
+      <div class="menu-item" id="menuScale"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-scale"/></svg><span>蓝牙体脂秤</span></div>
       <div class="menu-item" id="menuSettlement"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-calendar"/></svg><span>结算设置</span></div>
       <div class="menu-item" id="menuChangelog"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-clipboard"/></svg><span>更新日志 <span class="menu-ver" id="menuVersion">v?</span></span></div>
       <div class="menu-item" id="menuAutoDream"><svg class="ico" style="width:16px;height:16px;"><use href="#icon-dream"/></svg><span>Auto Dream — 周报/月报</span></div>
@@ -635,6 +640,32 @@
         <div id="backupSnapshotList" class="backup-snapshot-list"></div>
         <div class="settings-note">每次跨天自动快照 PROFILE / 身体指标 / rules 等关键记忆文件；AI 误写记忆时可将指定快照回滚。</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scale Modal (蓝牙体脂秤) -->
+<div class="file-viewer" id="scaleOverlay" style="display:none;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <span class="title">蓝牙体脂秤</span>
+      <button class="btn" id="scaleCloseBtn">关闭</button>
+    </div>
+    <div class="modal-body" style="padding:16px;max-height:72vh;overflow-y:auto;">
+      <div class="settings-group">
+        <div class="settings-group-title">⚖️ 蓝牙称重</div>
+        <div id="scaleStatus" style="font-size:13px;color:var(--text2);line-height:1.6;padding:6px 0;">支持蚂蚁阿福 AFU-BH-TZ-B1（沃莱代工）。点击开始后，赤脚站上秤并保持静止，直到提示完成。</div>
+        <div id="scaleLive" style="display:none;text-align:center;margin:10px 0 4px;">
+          <span id="scaleLiveValue" style="font-size:44px;font-weight:700;color:var(--text1);">--.-</span>
+          <span style="font-size:15px;color:var(--muted2);"> kg</span>
+        </div>
+        <div id="scaleResult" style="display:none;font-size:13px;color:var(--text1);line-height:1.7;background:var(--bg2);border-radius:10px;padding:10px 12px;margin-top:6px;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="btn accent" id="scaleStartBtn" style="flex:1;padding:10px;font-size:14px;">🔗 开始称重</button>
+          <button class="btn" id="scaleCancelBtn" style="display:none;padding:10px;font-size:14px;">取消</button>
+        </div>
+      </div>
+      <div class="settings-note">体重与阻抗通过蓝牙直读，体脂率/肌肉/水分等按官方公式在本地计算；结果写入 BODY_METRICS.md 后自动交给 AI 分析（秤内历史记录也会一并补入体重趋势表）。浏览器网页版不支持蓝牙，需使用 APK。</div>
     </div>
   </div>
 </div>

@@ -1,5 +1,20 @@
 # 轻伴 MVP 变更日志
 
+## 2026-10-25 (v3.18.0)
+
+### 新增 — 蓝牙体脂秤直连（蚂蚁阿福 AFU-BH-TZ-B1 · 沃莱代工）
+
+> 体脂秤数据不再需要手动口述：菜单新增「蓝牙体脂秤」，APK 内通过 BLE 直读测量数据，落盘后自动交给 AI 分析
+
+- **新增 `js/scale-manager.js`**：AFU B1 协议全量移植（20 字节定长帧/CRC/握手/历史导出/实时流/提交拉取），秤只吐「体重+阻抗」，体脂率/骨骼肌率/水分率/蛋白质率/骨量/内脏脂肪按官方 App 逆向公式本地计算（f32 舍入边界与参考实现逐位一致）；协议与公式依据 openScale 项目（GPL-3.0）公开的逆向成果重新实现，个人使用无碍、分发需注意许可证
+- **AI 触发链路**：称重完成 → `recordBodyMeasurement` 以 AI 同款格式写入 BODY_METRICS.md（趋势表追加 + 最新数据区重写 + 秤内历史补录）→ 自动以「[体脂秤同步]」用户消息触发对话；BODY_METRICS.md 本就每轮动态注入系统提示词，AI 即刻可读并分析
+- **CLAUDE.md v14 → v15**：新增规则——「[体脂秤同步]」消息数据已由系统写入，AI 直接读取分析、不得重复 write_file
+- **UI**：功能菜单新增「蓝牙体脂秤」入口 + 称重弹窗（实时体重大字、状态提示、结果卡、取消/重称）；`sendMessage` 支持 overrideText 供系统触发路径复用全套对话管线（流式渲染/token 统计/工具日志）
+- **原生接入**：`@capacitor-community/bluetooth-le@8.3.0`（项目首个社区插件），经 `window.Capacitor.Plugins.BluetoothLe` 桥接调用（与 LocalNotifications 同模式，无需打包器）；AndroidManifest 声明 `BLUETOOTH_SCAN` 并覆盖为 `neverForLocation`（Android 12+ 免位置权限，其余权限由插件清单合并）
+- **浏览器网页版不支持蓝牙**（WebView/浏览器无 BLE 桥接），弹窗内明确提示，仅 APK 可用
+- 新增 `test/scale-manager.test.js` 29 项：帧构造/解析与 openScale 官方抓包逐字节对齐、体成分参考值逐位一致（含 fround 单精度输入）、BODY_METRICS 落盘（追加/去重/历史补录/首记录）、PROFILE 解析、无桥接环境降级
+- **涉及文件**：`js/scale-manager.js`（新增）、`js/app.js`、`js/file-manager.js`、`index.html`、`package.json`、`android/app/src/main/AndroidManifest.xml`、`test/scale-manager.test.js`（新增）及三目录同步副本
+
 ## 2026-10-24 (v3.17.0)
 
 ### 优化 — 界面现代化清新化

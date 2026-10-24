@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.17.0';
-const APP_VERSION_DATE = '2026-10-24';
+const APP_VERSION = '3.18.0';
+const APP_VERSION_DATE = '2026-10-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.18.0', date: '2026-10-25',
+    items: [
+      '新增：蓝牙体脂秤直连（蚂蚁阿福 AFU-BH-TZ-B1 · 沃莱）— 菜单新增「蓝牙体脂秤」，蓝牙直读体重+阻抗，体脂率/骨骼肌/水分/骨量/内脏脂肪按官方公式本地计算，写入 BODY_METRICS.md 后自动触发 AI 读取分析，秤内历史一并补入趋势表；29 个协议单测与 openScale 抓包帧逐字节对齐；浏览器网页版不支持蓝牙（仅 APK 可用）'
+    ]
+  },
   {
     ver: '3.17.0', date: '2026-10-24',
     items: [
@@ -469,6 +475,7 @@ import { OnDemandLoader } from './on-demand-loader.js';
 import { BackupManager } from './backup-manager.js';
 import { SettlementGate } from './settlement-gate.js';
 import { StatsManager } from './stats-manager.js';
+import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1 } from './scale-manager.js';
 
 class App {
   constructor() {
@@ -486,6 +493,7 @@ class App {
     this.backupManager = new BackupManager(this.fm, APP_VERSION);
     this._settlementGate = new SettlementGate();
     this.statsManager = new StatsManager(this.fm);
+    this.scaleManager = new ScaleManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -2067,6 +2075,22 @@ ${habits}
     });
     document.getElementById('remindersSave').addEventListener('click', () => this._saveReminders());
 
+    // 菜单项 — 蓝牙体脂秤（AFU-BH-TZ-B1 沃莱）
+    document.getElementById('menuScale').addEventListener('click', () => {
+      document.getElementById('menuDropdown').style.display = 'none';
+      this.openScalePanel();
+    });
+    document.getElementById('scaleCloseBtn').addEventListener('click', () => this.closeScalePanel());
+    document.getElementById('scaleOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'scaleOverlay' && !this.scaleManager.isBusy()) {
+        this.closeScalePanel();
+      }
+    });
+    document.getElementById('scaleStartBtn').addEventListener('click', () => this.startWeighing());
+    document.getElementById('scaleCancelBtn').addEventListener('click', () => {
+      this.scaleManager.stopSession('stopped').catch(() => {});
+    });
+
     // 菜单项 — 每日结算设置
     document.getElementById('menuSettlement').addEventListener('click', () => {
       document.getElementById('menuDropdown').style.display = 'none';
@@ -2320,15 +2344,16 @@ ${habits}
   }
 
   // ===== 发送消息 =====
-  async sendMessage() {
+  // overrideText：非空时以该文本直接发送（体脂秤同步等系统触发路径），不读输入框、不带图片
+  async sendMessage(overrideText = null) {
     if (this.isProcessing) {
       this.showToast('上一条还在处理中', '请稍候，或等待自动恢复后重试', 'info');
       return;
     }
 
     const input = document.getElementById('messageInput');
-    const text = input.value.trim();
-    const hasPhotos = this.pendingPhotos.length > 0;
+    const text = overrideText !== null ? String(overrideText) : input.value.trim();
+    const hasPhotos = overrideText === null && this.pendingPhotos.length > 0;
     this._reqIsImg = hasPhotos;
     const sentPhotos = hasPhotos ? [...this.pendingPhotos] : [];
     if (!text && !hasPhotos) return;
@@ -2346,8 +2371,10 @@ ${habits}
       this.addMessage('user', text);
     }
 
-    input.value = '';
-    this.autoResize(input);
+    if (overrideText === null) {
+      input.value = '';
+      this.autoResize(input);
+    }
     this.setProcessing(true);
 
     // 显示 typing 指示器（等待完整响应）
@@ -2506,6 +2533,135 @@ ${habits}
 
     this.setProcessing(false);
     this.updateContextInfo();
+  }
+
+  // ===== 蓝牙体脂秤（AFU-BH-TZ-B1 · 沃莱）=====
+  // 流程：蓝牙直读体重+阻抗 → 本地按官方公式算体成分 → 写入 BODY_METRICS.md
+  // → 以「[体脂秤同步]」用户消息触发一轮对话，AI 经系统提示词注入读到新数据并分析
+
+  openScalePanel() {
+    const overlay = document.getElementById('scaleOverlay');
+    overlay.style.display = '';
+    document.getElementById('scaleStatus').textContent = '支持蚂蚁阿福 AFU-BH-TZ-B1（沃莱代工）。点击开始后，赤脚站上秤并保持静止，直到提示完成。';
+    document.getElementById('scaleLive').style.display = 'none';
+    document.getElementById('scaleResult').style.display = 'none';
+    document.getElementById('scaleCancelBtn').style.display = 'none';
+    const startBtn = document.getElementById('scaleStartBtn');
+    startBtn.disabled = false;
+    startBtn.textContent = '🔗 开始称重';
+    if (!this.scaleManager.isAvailable()) {
+      document.getElementById('scaleStatus').textContent = '⚠️ 当前环境不可用：浏览器网页版不支持蓝牙，请在轻伴 APK 中使用此功能。';
+      startBtn.disabled = true;
+    }
+  }
+
+  async closeScalePanel() {
+    if (this.scaleManager.isBusy()) {
+      await this.scaleManager.stopSession('stopped').catch(() => {});
+    }
+    document.getElementById('scaleOverlay').style.display = 'none';
+  }
+
+  async startWeighing() {
+    if (this.scaleManager.isBusy()) return;
+    const statusEl = document.getElementById('scaleStatus');
+    const liveEl = document.getElementById('scaleLive');
+    const liveVal = document.getElementById('scaleLiveValue');
+    const resultEl = document.getElementById('scaleResult');
+    const startBtn = document.getElementById('scaleStartBtn');
+    const cancelBtn = document.getElementById('scaleCancelBtn');
+    startBtn.disabled = true;
+    cancelBtn.style.display = '';
+    resultEl.style.display = 'none';
+
+    try {
+      const raw = await this.scaleManager.startSession({
+        onStatus: (stage, detail) => { statusEl.textContent = detail; },
+        onLiveWeight: (kg) => {
+          liveEl.style.display = '';
+          liveVal.textContent = kg.toFixed(1);
+        },
+        onHistory: () => {}
+      });
+
+      // 本地计算体成分（秤只给体重+阻抗，公式与官方 App 一致）
+      const profile = parseProfileMd(await this.fm.readFile('PROFILE.md'));
+      let bodyFat = null;
+      let comp = null;
+      if (raw.impedanceOhm) {
+        bodyFat = AfuB1.bodyFatPercent(raw.weightKg, profile.heightCm, profile.age, profile.sex, raw.impedanceOhm);
+        if (bodyFat !== null) {
+          comp = AfuB1.bodyComposition(profile.sex, profile.age, profile.heightCm, raw.weightKg, bodyFat);
+        }
+      }
+      const meas = {
+        weightKg: raw.weightKg, impedanceOhm: raw.impedanceOhm,
+        bodyFatPercent: bodyFat, composition: comp, timestamp: raw.timestamp
+      };
+
+      // 落盘（含秤内历史补录），AI 下一轮对话经系统提示词即可读到
+      const rec = await recordBodyMeasurement(this.fm, meas, profile, new Date(), raw.historyRecords || []);
+      await this.renderFileTree();
+
+      // 结果卡片
+      const diffStr = rec.diff === null ? '首次记录'
+        : `${rec.diff > 0 ? '+' : ''}${rec.diff.toFixed(1)}kg（上次 ${(rec.prevWeight || 0).toFixed(1)}kg）`;
+      let html = `⚖️ <b>${meas.weightKg.toFixed(1)}kg</b>　${diffStr}`;
+      if (bodyFat !== null) {
+        html += `<br>体脂率 <b>${bodyFat.toFixed(1)}%</b>（阻抗 ${Math.round(meas.impedanceOhm)}Ω）`;
+        if (comp) {
+          html += `<br>骨骼肌 ${comp.skeletalMusclePercent.toFixed(1)}% · 水分 ${comp.waterPercent.toFixed(1)}% · 骨量 ${comp.boneMassKg.toFixed(2)}kg · 内脏脂肪 ${comp.visceralFatIndex}`;
+        }
+      } else {
+        html += '<br>（本次未测到阻抗，体脂率待下次赤脚测量）';
+      }
+      html += `<br><span style="color:var(--muted2);">已写入 BODY_METRICS.md${(raw.historyRecords || []).length > 0 ? `，补录秤内历史 ${raw.historyRecords.length} 条` : ''}</span>`;
+      resultEl.innerHTML = html;
+      resultEl.style.display = '';
+      liveEl.style.display = 'none';
+      statusEl.textContent = '同步完成 ✓ 正在请 AI 分析本次数据…';
+
+      // 稍作停留后收起弹窗并触发 AI 分析
+      setTimeout(() => {
+        this.closeScalePanel();
+        this._triggerScaleAnalysis(meas, rec);
+      }, 2600);
+    } catch (err) {
+      statusEl.textContent = `❌ ${err && err.message ? err.message : '称重失败，请重试'}`;
+      liveEl.style.display = 'none';
+    } finally {
+      cancelBtn.style.display = 'none';
+      startBtn.disabled = false;
+      startBtn.textContent = '🔗 再称一次';
+    }
+  }
+
+  // 称重完成后自动触发 AI：以用户消息形式注入，AI 读取 BODY_METRICS.md 分析
+  _triggerScaleAnalysis(meas, rec) {
+    const diffStr = rec.diff === null ? '首次记录'
+      : `${rec.diff > 0 ? '+' : ''}${rec.diff.toFixed(1)}kg（上次 ${(rec.prevWeight || 0).toFixed(1)}kg）`;
+    const lines = [
+      '[体脂秤同步] 刚完成一次蓝牙称重，数据已由系统写入 BODY_METRICS.md（体重趋势表与最新数据区均已更新，无需再写入）：',
+      `- 体重：${meas.weightKg.toFixed(1)}kg（较上次：${diffStr}）`
+    ];
+    if (meas.bodyFatPercent != null) {
+      lines.push(`- 体脂率：${meas.bodyFatPercent.toFixed(1)}%（阻抗 ${Math.round(meas.impedanceOhm)}Ω）`);
+      const c = meas.composition;
+      if (c) {
+        lines.push(`- 骨骼肌率 ${c.skeletalMusclePercent.toFixed(1)}% / 水分率 ${c.waterPercent.toFixed(1)}% / 骨量 ${c.boneMassKg.toFixed(2)}kg / 内脏脂肪指数 ${c.visceralFatIndex}`);
+      }
+    }
+    lines.push('', '请读取 BODY_METRICS.md 中的最新数据，结合近 7 天饮食记录，给我这次称重的分析与建议（体重趋势怎么看、体脂/肌肉变化、饮食或运动要不要调整）。');
+    this._sendWhenIdle(lines.join('\n'));
+  }
+
+  // 等当前对话处理完再发（体脂秤触发路径用，避免与用户正在进行的对话撞车）
+  async _sendWhenIdle(msg, maxWaitMs = 30000) {
+    const start = Date.now();
+    while (this.isProcessing && Date.now() - start < maxWaitMs) {
+      await new Promise(r => setTimeout(r, 600));
+    }
+    this.sendMessage(msg);
   }
 
   // 创建流式消息容器

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -38,4 +39,13 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 蓝牙体脂秤（@capacitor-community/bluetooth-le）：扫描仅用于找秤、不推导位置，
+         Android 12+ 只需 SCAN+CONNECT 运行时授权；BLUETOOTH_CONNECT 与旧版位置权限
+         由插件自身清单合并提供。覆盖插件声明以补 neverForLocation 标志。 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s"
+        tools:node="replace" />
 </manifest>

@@ -1,6 +1,6 @@
 {
   "name": "qingban-mvp",
-  "version": "3.17.0",
+  "version": "3.18.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -11,6 +11,7 @@
     "prompt:eval": "node scripts/prompt-eval.mjs"
   },
   "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.3.0",
     "@capacitor/android": "^8.4.1",
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
