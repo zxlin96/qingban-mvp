@@ -299,10 +299,12 @@ export class StatsManager {
     const pad2 = (s) => s.slice(5); // MM-DD
 
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+  <defs><linearGradient id="qb-wgrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent3)" stop-opacity="0.2"/><stop offset="1" stop-color="var(--accent3)" stop-opacity="0"/></linearGradient></defs>
   <line x1="${L}" y1="${y(max).toFixed(1)}" x2="${W - R}" y2="${y(max).toFixed(1)}" stroke="var(--rule)" stroke-dasharray="3 3"/>
   <line x1="${L}" y1="${y(min).toFixed(1)}" x2="${W - R}" y2="${y(min).toFixed(1)}" stroke="var(--rule)" stroke-dasharray="3 3"/>
   <text x="4" y="${(y(max) + 4).toFixed(1)}" class="trend-axis">${max.toFixed(1)}</text>
   <text x="4" y="${(y(min) + 4).toFixed(1)}" class="trend-axis">${min.toFixed(1)}</text>
+  <polygon points="${L},${(T + ih).toFixed(1)} ${poly} ${(W - R).toFixed(1)},${(T + ih).toFixed(1)}" fill="url(#qb-wgrad)"/>
   <polyline points="${poly}" fill="none" stroke="var(--accent3)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
   ${dots}
   <text x="${x(last.date).toFixed(1)}" y="${(y(last.weight) - 8).toFixed(1)}" text-anchor="${pts.length > 1 ? 'end' : 'middle'}" class="trend-val">${last.weight}kg</text>
@@ -344,6 +346,8 @@ export class StatsManager {
       ? `<line x1="${L}" y1="${(T + ih - (goal / maxVal) * ih).toFixed(1)}" x2="${W - R}" y2="${(T + ih - (goal / maxVal) * ih).toFixed(1)}" stroke="var(--accent2)" stroke-dasharray="4 3"/><text x="4" y="${(T + ih - (goal / maxVal) * ih + 4).toFixed(1)}" class="trend-axis">目标</text>`
       : '';
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+  <line x1="${L}" y1="${(T + ih / 2).toFixed(1)}" x2="${W - R}" y2="${(T + ih / 2).toFixed(1)}" stroke="var(--rule)" stroke-dasharray="2 4" stroke-opacity="0.6"/>
+  <text x="4" y="${(T + ih / 2 + 4).toFixed(1)}" class="trend-axis">${Math.round(maxVal / 2)}</text>
   ${goalLine}
   ${bars}
 </svg>
@@ -376,9 +380,9 @@ export class StatsManager {
       }
       const hC = (c / maxVal) * ih, hF = (f / maxVal) * ih, hP = (p / maxVal) * ih;
       const yC = T + ih - hC, yF = yC - hF, yP = yF - hP;
-      const seg = (y, h, color, label, val) => (h < 1.5 ? '' :
-        `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}"><title>${r.date} ${label}约${Math.round(val)}g</title></rect>`);
-      return `${seg(yC, hC, 'var(--accent)', '碳水', c)}${seg(yF, hF, 'var(--accent2)', '脂肪', f)}${seg(yP, hP, 'var(--accent3)', '蛋白质', p)}
+      const seg = (y, h, color, label, val, topRound) => (h < 1.5 ? '' :
+        `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${topRound ? 3 : 0}" fill="${color}"><title>${r.date} ${label}约${Math.round(val)}g</title></rect>`);
+      return `${seg(yC, hC, 'var(--accent)', '碳水', c)}${seg(yF, hF, 'var(--accent2)', '脂肪', f)}${seg(yP, hP, 'var(--accent3)', '蛋白质', p, true)}
         <text x="${cx.toFixed(1)}" y="${(yP - 4).toFixed(1)}" text-anchor="middle" class="trend-val">${Math.round(p + c + f)}g</text>
         <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
     }).join('');
@@ -389,7 +393,7 @@ export class StatsManager {
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
   ${bars}
 </svg>
-<div class="trend-caption"><span style="color:var(--accent3)">■蛋白质</span> <span style="color:var(--accent2)">■脂肪</span> <span style="color:var(--accent)">■碳水</span> · 日均 蛋白${avg('protein')}g / 碳水${avg('carbs')}g / 脂肪${avg('fat')}g${goalHint}</div>`;
+<div class="trend-caption"><span class="lg lg-p">蛋白质</span> <span class="lg lg-f">脂肪</span> <span class="lg lg-c">碳水</span> · 日均 蛋白${avg('protein')}g / 碳水${avg('carbs')}g / 脂肪${avg('fat')}g${goalHint}</div>`;
   }
 
   // 打卡热力图 — 最近 days 天（7 列 × N 行，颜色深浅 = 当日打卡条数）

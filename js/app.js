@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.16.3';
+const APP_VERSION = '3.17.0';
 const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.17.0', date: '2026-10-24',
+    items: [
+      '优化：界面现代化清新化 — 文件查看器支持 Markdown 渲染（标题/表格/列表/引用/代码块/front-matter 日期徽标，此前为纯文本铺陈）；趋势图打磨（体重图渐变面积、热量图中位网格参照线、宏量图图例圆点化+柱顶圆角）；全局质感升级（药丸按钮微动效、卡片描边+柔和阴影、弹层毛玻璃、细滚动条、聊天气泡柔和化）'
+    ]
+  },
   {
     ver: '3.16.3', date: '2026-10-24',
     items: [
@@ -457,6 +463,7 @@ import { DietRecorder } from './diet-recorder.js';
 import { AutoDream } from './auto-dream.js';
 import { NotificationManager } from './notification-manager.js';
 import { HabitManager } from './habit-manager.js';
+import { mdToHtml, escapeHtml } from './md-render.js';
 import { IndexManager } from './index-manager.js';
 import { OnDemandLoader } from './on-demand-loader.js';
 import { BackupManager } from './backup-manager.js';
@@ -2999,7 +3006,10 @@ ${habits}
   async openFileViewer(path) {
     const content = await this.fm.readFile(path);
     document.getElementById('viewerTitle').textContent = path;
-    document.getElementById('viewerContent').textContent = content || '(文件为空)';
+    const viewer = document.getElementById('viewerContent');
+    viewer.innerHTML = path.endsWith('.md')
+      ? mdToHtml(content || '')
+      : `<pre class="md-code">${escapeHtml(content || '(文件为空)')}</pre>`;
     document.getElementById('fileViewer').classList.add('show');
   }
 

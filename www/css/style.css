@@ -2793,3 +2793,145 @@ html, body {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ============================================
+   v3.17.0 现代化视觉升级（全局打磨层）
+   ============================================ */
+
+/* --- 全局质感 --- */
+.app, body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted2); }
+
+/* --- 交互元素：药丸按钮 + 微动效 --- */
+.btn {
+  border-radius: 999px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(0.98); }
+.btn.accent { box-shadow: 0 2px 10px var(--accent)33; }
+
+/* --- 卡片与面板层次 --- */
+.trend-box {
+  border-radius: 16px;
+  border: 1px solid var(--rule);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05);
+  padding: 12px;
+}
+[data-theme="dark"] .trend-box { box-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 14px rgba(0,0,0,0.2); }
+.settings-group-title { font-weight: 700; letter-spacing: 0.02em; }
+
+/* 弹层毛玻璃 */
+.memory-overlay, .file-viewer, #trendOverlay, .habit-overlay, .ask-user-overlay, .task-progress-overlay, .day-transition-overlay {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.memory-panel, .file-viewer .modal, .trend-panel, .habit-panel {
+  border-radius: 18px;
+  border: 1px solid var(--rule);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.28), 0 4px 16px rgba(0,0,0,0.12);
+}
+
+/* --- 聊天气泡柔和化 --- */
+.message { transition: box-shadow 0.15s ease; }
+.message.user, .message.assistant {
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+/* --- 图表图例（圆点替代方块字符） --- */
+.trend-caption .lg { color: var(--muted); margin-right: 2px; }
+.trend-caption .lg::before {
+  content: '';
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.trend-caption .lg-p::before { background: var(--accent3); }
+.trend-caption .lg-f::before { background: var(--accent2); }
+.trend-caption .lg-c::before { background: var(--accent); }
+
+/* --- 文件查看器：Markdown 渲染样式 --- */
+.viewer-content {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink);
+  padding: 4px 6px;
+}
+.viewer-content .md-meta {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg3);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-bottom: 10px;
+}
+.viewer-content .md-h1 {
+  font-size: 17px; font-weight: 700; margin: 14px 0 8px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--rule);
+}
+.viewer-content .md-h2 { font-size: 15px; font-weight: 700; margin: 14px 0 6px; color: var(--ink); }
+.viewer-content .md-h3 { font-size: 13.5px; font-weight: 700; margin: 10px 0 4px; color: var(--muted); }
+.viewer-content .md-h4 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; color: var(--muted); }
+.viewer-content .md-p { margin: 6px 0; }
+.viewer-content .md-empty { color: var(--muted); text-align: center; padding: 20px 0; }
+.viewer-content .md-list { margin: 6px 0; padding-left: 20px; }
+.viewer-content .md-list li { margin: 3px 0; }
+.viewer-content .md-ol { list-style: decimal; }
+.viewer-content .md-hr { border: none; border-top: 1px dashed var(--rule); margin: 12px 0; }
+.viewer-content .md-quote {
+  margin: 8px 0; padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg3);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+}
+.viewer-content code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.viewer-content .md-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+.viewer-content .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12.5px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+}
+.viewer-content .md-table th {
+  background: var(--bg3);
+  font-weight: 600;
+  color: var(--muted);
+  padding: 7px 10px;
+  text-align: left;
+}
+.viewer-content .md-table td {
+  padding: 6px 10px;
+  border-top: 1px solid var(--rule);
+}
+.viewer-content strong { font-weight: 700; color: var(--ink); }
