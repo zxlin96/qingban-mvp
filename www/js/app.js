@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.16.1';
+const APP_VERSION = '3.16.2';
 const APP_VERSION_DATE = '2026-10-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.16.2', date: '2026-10-24',
+    items: [
+      '修复：趋势面板「三大营养素」日均被全零数据天摊薄 — 初始化写入的 0/0/0 天不画柱子却计入日均分母，导致日均与柱子标注对不上（如柱 326g 而日均合计仅 164g）；现与画柱口径一致，全零天不参与平均'
+    ]
+  },
   {
     ver: '3.16.1', date: '2026-10-24',
     items: [

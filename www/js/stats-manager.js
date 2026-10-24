@@ -382,7 +382,8 @@ export class StatsManager {
         <text x="${cx.toFixed(1)}" y="${(yP - 4).toFixed(1)}" text-anchor="middle" class="trend-val">${Math.round(p + c + f)}g</text>
         <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
     }).join('');
-    const mRows = rows.filter((r) => r.protein != null || r.carbs != null || r.fat != null);
+    // 日均分母与画柱口径一致：三项全为 0/缺失的天不参与平均（初始化写入的 0/0/0 天不画柱，也不应摊薄日均）
+    const mRows = rows.filter((r) => (r.protein || 0) + (r.carbs || 0) + (r.fat || 0) > 0);
     const avg = (k) => Math.round(mRows.reduce((s, r) => s + (r[k] || 0), 0) / mRows.length);
     const goalHint = weightKg > 0 ? ` · 蛋白目标 ${(weightKg * 1.2).toFixed(0)}~${(weightKg * 1.6).toFixed(0)}g` : '';
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">

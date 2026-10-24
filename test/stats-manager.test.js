@@ -360,6 +360,16 @@ describe('宏量图表与周报数据段', () => {
     assert.ok(empty.includes('trend-empty'));
   });
 
+  test('buildMacroSvg 日均排除全零天（回归：初始化 0/0/0 天摊薄日均一倍）', () => {
+    const calories = [
+      { date: '2026-10-19', protein: 0, carbs: 0, fat: 0 },
+      { date: '2026-10-20', protein: 42, carbs: 268, fat: 16 },
+    ];
+    const svg = StatsManager.buildMacroSvg(calories, { today: '2026-10-20' });
+    assert.ok(svg.includes('日均 蛋白42g / 碳水268g / 脂肪16g'), '只对有真实数据的天取平均');
+    assert.ok(svg.includes('无营养数据'), '全零天仍显示为无数据占位');
+  });
+
   test('buildWeeklyDataSection：宏量日均与营养观察汇总', () => {
     const section = StatsManager.buildWeeklyDataSection(
       [],
