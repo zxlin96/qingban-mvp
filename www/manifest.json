@@ -2,10 +2,15 @@
   "name": "轻伴 - AI 减肥陪伴",
   "short_name": "轻伴",
   "description": "AI 减肥陪伴助手,复刻 Claude Code 记忆架构",
-  "start_url": "/",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f1117",
   "theme_color": "#0f1117",
-  "icons": []
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
 }

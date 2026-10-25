@@ -3,9 +3,16 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>轻伴 — AI 减肥陪伴 MVP</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0f1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="轻伴">
 <script>
 // 启动诊断：捕获模块加载/语法错误与初始化挂起，便于排查黑屏
 (function(){
@@ -384,7 +391,7 @@
       <div class="settings-group">
         <div class="settings-group-title">预设配置</div>
         <div class="settings-row">
-          <button class="btn accent" id="presetK3" style="width:100%;padding:10px;font-size:14px;">Kimi K3 全量配置（1M 上下文）</button>
+          <button class="btn accent" id="presetK3" style="width:100%;padding:10px;font-size:14px;">Kimi K3 全量配置（APK/网页 自动适配）</button>
         </div>
       </div>
 
@@ -416,8 +423,9 @@
         </div>
         <div class="settings-row">
           <label>请求地址 (BASE URL)</label>
-          <input type="text" id="setApiBaseURL" class="settings-input" placeholder="如 https://api.kimi.com/coding">
+          <input type="text" id="setApiBaseURL" class="settings-input" placeholder="如 https://api.moonshot.cn">
           <span class="settings-hint">不要带末尾 /chat/completions，程序会自动拼接</span>
+          <span class="settings-hint">网页/PWA 版需填支持浏览器直连的地址（如 https://api.moonshot.cn）；Coding Plan 地址与讯飞接口仅 APK 内可直连</span>
         </div>
         <div class="settings-row">
           <label>API Key</label>

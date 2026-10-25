@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.18.3';
+const APP_VERSION = '3.19.0';
 const APP_VERSION_DATE = '2026-10-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.19.0', date: '2026-10-25',
+    items: [
+      '新增：PWA 网页版适配（iOS 分享用）— 补全 manifest/图标/Apple 触屏图标，Safari「添加到主屏幕」即独立窗口全屏运行；刘海屏安全区适配与输入框 16px 防 iOS 聚焦缩放（仅浏览器环境生效，APK 不变）；Service Worker 网络优先离线兜底（仅浏览器注册）；iOS/微信首次访问显示安装引导条；非原生环境隐藏蓝牙体脂秤全部入口；「Kimi K3 全量配置」预设环境自适应 — APK 走 Coding Plan 默认，网页版直连 Kimi 开放平台（api.moonshot.cn，实测浏览器可 CORS 直连，Coding Plan 地址浏览器不通）'
+    ]
+  },
   {
     ver: '3.18.3', date: '2026-10-25',
     items: [
@@ -556,7 +562,79 @@ class App {
     return Promise.race([p, guard]).finally(() => clearTimeout(timer));
   }
 
+  // 浏览器/PWA 环境适配 — 原生 APK 环境直接返回，不影响现有行为。
+  // html.web-env 类是 CSS 作用域开关（安全区 padding / 输入框 16px 等），见 style.css 尾部。
+  // 原生判断见 _isNativeEnv（三信号兜底，APK 被误判为浏览器是最坏情形：
+  // 会误加 web-env 样式并在 https://localhost 原生壳里注册 Service Worker）。
+  _isNativeEnv() {
+    return !!(window.Capacitor?.isNativePlatform?.()
+      || window.capacitor
+      || window.androidBridge);
+  }
+
+  _setupWebEnvironment() {
+    if (this._isNativeEnv()) return;
+    document.documentElement.classList.add('web-env');
+
+    // 蓝牙体脂秤：浏览器（尤其 iOS Safari，无 Web Bluetooth）必然不可用，隐藏全部入口
+    const menuScale = document.getElementById('menuScale');
+    const quickScaleBar = document.getElementById('chatQuickBar');
+    if (menuScale) menuScale.style.display = 'none';
+    if (quickScaleBar) quickScaleBar.style.display = 'none';
+
+    // 申请持久化存储：iOS「添加到主屏幕」的 Web App 本就豁免 7 天清除，此处再防系统存储压力逐出
+    try {
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    } catch (e) { /* 静默：不影响启动 */ }
+
+    // Service Worker（网络优先/离线兜底，见 sw.js）：仅浏览器注册，APK 内资产随包更新不应被缓存
+    try {
+      const swAllowed = 'serviceWorker' in navigator
+        && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+      if (swAllowed) navigator.serviceWorker.register('sw.js').catch(() => {});
+    } catch (e) { /* 静默 */ }
+
+    this._maybeShowPwaInstallHint();
+  }
+
+  // iOS Safari / 微信首次访问引导：教用户「添加到主屏幕」/「在 Safari 打开」。
+  // 仅浏览器非 standalone 环境显示，关闭后 localStorage 记忆不再打扰。
+  _maybeShowPwaInstallHint() {
+    try {
+      if (localStorage.getItem('qbPwaHintClosed') === '1') return;
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true;
+      if (isStandalone) return;
+      const ua = navigator.userAgent;
+      let text;
+      if (/MicroMessenger/i.test(ua)) {
+        text = '微信内无法安装「轻伴」：点右上角「···」→ 找到「在 Safari 中打开」并用 Safari 打开本页，再按提示添加到主屏幕。';
+      } else if (/iP(hone|ad|od)/i.test(ua)) {
+        text = '把轻伴装到桌面：点 Safari 底部中间的「分享」按钮 ⬆️ →「添加到主屏幕」，即可像 App 一样全屏使用。';
+      } else {
+        return; // 桌面浏览器 / Android Chrome 有各自的安装提示机制，不打扰
+      }
+      const el = document.createElement('div');
+      el.className = 'pwa-hint';
+      const span = document.createElement('span');
+      span.textContent = text;
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.type = 'button';
+      btn.textContent = '知道了';
+      btn.addEventListener('click', () => {
+        localStorage.setItem('qbPwaHintClosed', '1');
+        el.remove();
+      });
+      el.appendChild(span);
+      el.appendChild(btn);
+      document.body.appendChild(el);
+    } catch (e) { /* 静默：引导条失败不影响功能 */ }
+  }
+
   async init() {
+    // 浏览器/PWA 环境适配（内部自判，原生 APK 无副作用）
+    this._setupWebEnvironment();
     // ===== 启动阶段追踪：每步打标记，超时横幅可显示「卡在哪一步」 =====
     window.__qbStage = 'fm.init';
     // 初始化文件存储：加超时与容错。
@@ -4187,10 +4265,17 @@ updated: ${profile.startDate}
 
   // 应用 Kimi K3 全量预配置
   _applyPresetK3() {
+    // 环境自适应：APK 走内置默认（Coding Plan 直连）；浏览器/PWA 必须
+    // 直连 Kimi 开放平台 — Coding Plan 地址（api.kimi.com/coding）浏览器 CORS
+    // 不通，静态托管的 PWA 也没有本地代理可回退
+    const isNative = this._isNativeEnv();
+    const model = isNative ? 'k3' : 'kimi-k3';
+    const baseURL = isNative ? '' : 'https://api.moonshot.cn';
+    const apiFormat = isNative ? '' : 'openai';
     // 填充 UI
-    document.getElementById('setVisionModel').value = 'k3';
-    document.getElementById('setChatModel').value = 'k3';
-    document.getElementById('setSummaryModel').value = 'k3';
+    document.getElementById('setVisionModel').value = model;
+    document.getElementById('setChatModel').value = model;
+    document.getElementById('setSummaryModel').value = model;
     document.getElementById('setTemperature').value = 0.7;
     document.getElementById('setTemperatureVal').textContent = '0.7';
     document.getElementById('setMaxToolRounds').value = 5;
@@ -4198,8 +4283,8 @@ updated: ${profile.startDate}
     document.getElementById('setEffortLevel').value = 'max';
     document.getElementById('setHistoryDays').value = 7;
     document.getElementById('setFileTruncate').value = 800;
-    document.getElementById('setApiFormat').value = '';
-    document.getElementById('setApiBaseURL').value = '';
+    document.getElementById('setApiFormat').value = apiFormat;
+    document.getElementById('setApiBaseURL').value = baseURL;
     document.getElementById('setApiKey').value = '';
     document.getElementById('setRequestTimeout').value = 120;
     document.getElementById('setRetryCount').value = 30;
@@ -4209,9 +4294,9 @@ updated: ${profile.startDate}
     // 直接保存
     const old = window.QINGBAN_SETTINGS || {};
     const settings = {
-      visionModel: 'k3',
-      chatModel: 'k3',
-      summaryModel: 'k3',
+      visionModel: model,
+      chatModel: model,
+      summaryModel: model,
       temperature: 0.7,
       maxToolRounds: 5,
       maxOutputTokens: 32768,
@@ -4219,8 +4304,8 @@ updated: ${profile.startDate}
       effortLevel: 'max',
       historyDays: 7,
       fileTruncate: 800,
-      apiFormat: '',
-      apiBaseURL: '',
+      apiFormat: apiFormat,
+      apiBaseURL: baseURL,
       apiKey: '',
       requestTimeout: 120,
       retryCount: 30,
@@ -4239,7 +4324,10 @@ updated: ${profile.startDate}
     }
 
     document.getElementById('settingsOverlay').style.display = 'none';
-    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉模型: \`k3\`\n- 对话模型: \`k3\`\n- 摘要模型: \`k3\`\n- 上下文窗口: 1M tokens\n- 输出上限: 32768 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800\n- 连接配置已重置为默认`);
+    const connNote = isNative
+      ? '连接配置已重置为默认（Coding Plan 直连）'
+      : `网页直连: \`${baseURL}\`（openai 格式）— 请在「连接配置」填入你的 Kimi 开放平台 API Key 后即可使用`;
+    this.addMessage('assistant', `已应用 Kimi K3 全量预配置 ✓\n\n- 视觉/对话/摘要模型: \`${model}\`\n- 上下文窗口: 1M tokens\n- 输出上限: 32768 tokens\n- 推理强度: max\n- 温度: 0.7\n- 工具轮数: 5\n- 历史天数: 7\n- 截断字数: 800\n- ${connNote}`);
   }
 
   // ===== Ask User 底部弹窗 =====

@@ -4,7 +4,7 @@
 //   node scripts/sync-web.mjs --check  # 只校验: MD5 比对 + 孤儿检测, 不一致退出码 1
 //
 // 管理范围（仅这些路径参与同步, android assets 根下的 cordova.js 等生成物不碰）:
-//   js/  css/  data/  index.html  manifest.json
+//   js/  css/  data/  icons/  index.html  manifest.json  sw.js
 // 目标:  源目录 → www/ → android/app/src/main/assets/public/
 
 import { createHash } from 'node:crypto';
@@ -19,10 +19,12 @@ const DIR_MAPPINGS = [
   { src: join(ROOT, 'js'), dests: [join(ROOT, 'www', 'js'), join(ANDROID_ASSETS, 'js')] },
   { src: join(ROOT, 'css'), dests: [join(ROOT, 'www', 'css'), join(ANDROID_ASSETS, 'css')] },
   { src: join(ROOT, 'data'), dests: [join(ROOT, 'www', 'data'), join(ANDROID_ASSETS, 'data')] },
+  { src: join(ROOT, 'icons'), dests: [join(ROOT, 'www', 'icons'), join(ANDROID_ASSETS, 'icons')] },
 ];
 const FILE_MAPPINGS = [
   { src: join(ROOT, 'index.html'), dests: [join(ROOT, 'www', 'index.html'), join(ANDROID_ASSETS, 'index.html')] },
   { src: join(ROOT, 'manifest.json'), dests: [join(ROOT, 'www', 'manifest.json'), join(ANDROID_ASSETS, 'manifest.json')] },
+  { src: join(ROOT, 'sw.js'), dests: [join(ROOT, 'www', 'sw.js'), join(ANDROID_ASSETS, 'sw.js')] },
 ];
 
 const md5 = (p) => createHash('md5').update(readFileSync(p)).digest('hex');

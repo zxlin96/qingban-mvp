@@ -1,5 +1,22 @@
 # 轻伴 MVP 变更日志
 
+## 2026-10-25 (v3.19.0)
+
+### 新增 — PWA 网页版适配（iOS 分享用）
+
+> 目标：不花 99 美元、不签名出包，iPhone 用 Safari「添加到主屏幕」即可当 App 用。所有适配仅浏览器环境（`html.web-env`）生效，APK 渲染与行为不变。
+
+- **安装体验**：补全 `manifest.json`（standalone/图标/主题色，`start_url` 改相对路径便于任意目录部署）+ `apple-touch-icon` 等 iOS 头部标签；`viewport-fit=cover` 打开安全区，顶栏避刘海、输入区避底部横条
+- **数据安全**：iOS 主屏幕 Web App 本就豁免 WebKit「7 天不活跃清存储」，另申请 `navigator.storage.persist()` 防存储压力逐出
+- **Service Worker**（`sw.js`，新文件）：网络优先 + 离线缓存兜底，断网也能打开界面；仅浏览器环境注册（APK 内资产随包更新，注册反而造成版本滞后）；跨域请求与 `/api/` 本地代理不碰
+- **输入体验**：浏览器环境输入控件统一 16px，避免 iOS Safari 聚焦小字号输入框时强制放大页面
+- **安装引导条**：iOS Safari / 微信内首次访问显示一次性引导（微信提示「在 Safari 打开」、Safari 提示「添加到主屏幕」），可关闭且 localStorage 记忆
+- **蓝牙体脂秤**：非原生环境隐藏菜单项与「蓝牙称重」快捷按钮（浏览器必然不可用，防误点）
+- **「Kimi K3 全量配置」预设环境自适应**：APK 维持 Coding Plan 直连默认；浏览器/PWA 自动填 Kimi 开放平台 `https://api.moonshot.cn`（openai 格式，模型 `kimi-k3`）
+- **LLM 接口 CORS 实测**（2026-10-25，预检 + 错误路径）：✅ `api.deepseek.com`、`api.moonshot.cn`；❌ `spark-api-open.xf-yun.com`（403）、`open.bigmodel.cn`（无 CORS 头）、`ark.cn-beijing.volces.com`（预检过但 401 响应丢头，成功路径未验证）、`api.kimi.com/coding`（404）
+- **同步范围扩展**：`icons/` 目录与 `sw.js` 纳入三目录同步（`scripts/sync-web.mjs`）；新增 `scripts/gen-icons.ps1` 从 Android 启动图标生成 PWA 图标集（192/512/180）
+- **涉及文件**：`index.html`、`manifest.json`、`js/app.js`、`css/style.css`、`sw.js`（新）、`icons/`（新）、`scripts/sync-web.mjs`、`scripts/gen-icons.ps1`（新）、`docs/PWA-DEPLOY.md`（新）及三目录同步副本
+
 ## 2026-10-25 (v3.18.3)
 
 ### 优化 — 输入框上方「蓝牙称重」快捷按钮

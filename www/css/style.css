@@ -2935,3 +2935,39 @@ html, body {
   border-top: 1px solid var(--rule);
 }
 .viewer-content strong { font-weight: 700; color: var(--ink); }
+
+/* ===== PWA/浏览器环境适配 =====
+   html.web-env 由 app.js 的 _setupWebEnvironment 在非原生环境添加；
+   以下规则只作用于浏览器/PWA，APK（Capacitor WebView）渲染不受影响 */
+html.web-env .topbar {
+  padding-top: env(safe-area-inset-top);
+}
+html.web-env .chat-input-wrapper {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* iOS Safari：字号小于 16px 的输入控件聚焦时会强制放大页面 */
+html.web-env input,
+html.web-env select,
+html.web-env textarea {
+  font-size: 16px;
+}
+/* iOS Safari / 微信首次访问安装引导条（app.js 动态创建） */
+html.web-env .pwa-hint {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 9990;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+html.web-env .pwa-hint span { flex: 1; }
