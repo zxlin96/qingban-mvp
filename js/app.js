@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.18.1';
+const APP_VERSION = '3.18.2';
 const APP_VERSION_DATE = '2026-10-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.18.2', date: '2026-10-25',
+    items: [
+      '修复：点击「蓝牙体脂秤」菜单无反应 — 弹窗层 .file-viewer 的 CSS 默认 display:none，打开时只清了内联样式没写 flex，导致弹窗实际已创建但不可见；现与模型设置弹窗同款以内联 flex 覆盖，浏览器实测弹窗正常弹出'
+    ]
+  },
   {
     ver: '3.18.1', date: '2026-10-25',
     items: [
@@ -2548,7 +2554,9 @@ ${habits}
 
   openScalePanel() {
     const overlay = document.getElementById('scaleOverlay');
-    overlay.style.display = '';
+    // 与 settingsOverlay 同款：.file-viewer 的 CSS 默认 display:none，
+    // 须以内联 flex 覆盖（此前只清内联值导致弹窗"点了没反应"）
+    overlay.style.display = 'flex';
     document.getElementById('scaleStatus').textContent = '支持蚂蚁阿福 AFU-BH-TZ-B1（沃莱代工）。点击开始后，赤脚站上秤并保持静止，直到提示完成。';
     document.getElementById('scaleLive').style.display = 'none';
     document.getElementById('scaleResult').style.display = 'none';
