@@ -14,7 +14,7 @@
                   测试 + 编译 APK + 建 Release（APK 永久直链）
 
 【部署侧 · 上线/发版】
-EdgeOne Pages 上传 www/ 目录（拖拽或关联仓库自动）→ 得到 *.edgeone.app 链接
+EdgeOne Pages 上传 www/ 目录（拖拽或关联仓库自动）→ 部署后**先做裸链测试**（无痕窗口直接打开，默认域名可能是限时预览链接）→ 测试通过或绑定自定义域名后发给朋友
        → 把链接发给朋友
 
 【朋友侧 · 首次】
@@ -26,11 +26,11 @@ iPhone Safari 打开链接 → 添加到主屏幕 → 打开轻伴
 
 | # | 材料 | 说明 | 去哪拿 |
 |---|---|---|---|
-| 1 | 腾讯云/EdgeOne 账号 | 用于 EdgeOne Pages 免费托管（腾讯云产品，近期更名 EdgeOne Makers）；大陆用户注册登录后链接才永久有效。**注册详细步骤见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)** | https://edgeone.ai/login （邮箱/Google 注册，免绑卡） |
+| 1 | 腾讯云/EdgeOne 账号 | 用于 EdgeOne Pages 免费托管（腾讯云产品，近期更名 EdgeOne Makers）。**注册详细步骤见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)** | https://edgeone.ai/login （邮箱/Google 注册，免绑卡） |
 | 2 | 待部署内容：`www/` 目录 | `npm run sync` 后即为完整静态站点（index.html/manifest/sw.js/icons/js/css/data）。**不需要** server.js、node_modules、.env —— PWA 版无后端，LLM 由浏览器直连 | 仓库本地跑 `npm run sync` 生成 |
 | 3 | 朋友的 LLM Key | 每人自己注册自己填（合规且免费额度各算各的）。推荐 Kimi 开放平台（唯一同时满足「浏览器可直连 + 有视觉模型支持拍照识别」） | https://platform.kimi.com ；备选 DeepSeek https://platform.deepseek.com |
 | 4 | 发给朋友的使用说明 | 本手册第五节，直接复制转发 | — |
-| 5 | （可选）自有域名 | 默认分配的 `*.edgeone.app` 免备案、国内可直连，分享场景够用；绑自有域名走国内节点需 ICP 备案 | — |
+| 5 | （推荐）自有域名，约 ¥10/年 | EdgeOne 默认域名（.cool/.dev）是**带 token 的限时预览链接**，不能长期分享；绑一个便宜域名（.top/.xyz）+ 加速区选"全球（不含中国大陆）"可免备案、自动 HTTPS。走大陆节点加速才需 ICP 备案 | 腾讯云/阿里云域名注册 |
 
 **不需要**：Apple 开发者账号、Mac、Xcode、签名证书、任何后端服务器。
 
@@ -57,12 +57,13 @@ git push origin master --tags   # github.com 连不上时可用 scripts/push-via
 
 ## 三、部署：EdgeOne Pages（免费、国内快、默认域名免备案）
 
-> ⚠️ **认准国际站 edgeone.ai**：其默认域名 `*.edgeone.app` 登录后永久有效。**腾讯云国内站**（console.cloud.tencent.com）部署虽也能成功，但默认域名 `*.edgeone.cool` 仅 **3 小时限时预览**且需携带 eo_token，不能发给朋友——详见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md) 路径 B 的实测说明。
+> ⚠️ **默认域名都是限时预览链接（2026-10-25 实测）**：EdgeOne Makers 分配的默认域名（国内站 `*.edgeone.cool`、以及 `*.edgeone.dev`）都是**带 `eo_token` 的限时链接**——裸链接对任何访客（含海外网络）返回 401，token 过期后彻底失效。官方错误码 FAQ 明确建议：长期访问请绑定**自定义域名**（约 ¥10/年，加速区选不含大陆可免备案、自动签发 HTTPS）。详见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)。
 
 ### 方式 A：Pages Drop 拖拽（最快，适合手动发版）
 
 1. 打开 https://pages.edgeone.ai/drop
-2. 把 `www/` 目录拖进去 → 立即得到 `*.edgeone.app` 访问链接
+2. 把 `www/` 目录拖进去 → 几秒部署完成，页面显示访问链接
+3. **裸链测试（必做）**：开一个无痕/隐私浏览窗口，直接打开链接（不带任何 `?eo_token=...` 参数）→ 能显示轻伴界面才算可分享；显示 401 即限时预览链接，需按上方案绑定自定义域名
 3. 注意：未注册时链接仅 1 小时有效——**先注册登录 EdgeOne 账号再拖**（EdgeOne 是腾讯云产品，注册步骤见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)）
 4. 发版 = 重新拖一次新版 `www/`
 
@@ -93,7 +94,7 @@ GitHub Pages / Cloudflare Pages 也免费，但国内直连不稳（朋友打开
 📱 轻伴 · iPhone 安装使用（3 步）
 
 1. 用 iPhone 自带的 Safari 浏览器打开这个链接：
-   <你的 *.edgeone.app 链接>
+   <你的最终分享链接>
    （微信里点开的：点右上角「···」→「在 Safari 中打开」）
 
 2. 点 Safari 底部中间的「分享」按钮 ⬆️ →「添加到主屏幕」
