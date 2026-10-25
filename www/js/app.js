@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.19.0';
-const APP_VERSION_DATE = '2026-10-25';
+const APP_VERSION = '3.19.1';
+const APP_VERSION_DATE = '2026-10-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.19.1', date: '2026-10-26',
+    items: [
+      '修复：真机扫描收不到任何蓝牙广播（调试日志显示 20s 回调 0 次）— 此前按 service 0xfc50 做硬件过滤，秤广播包不带该 service UUID 时结果被整体滤掉；改为全量扫描（LOW_LATENCY）+ 回调内按「名字含 AFU」匹配（openScale 判定法）+ serviceData 带 fc50 无名设备兜底；窗口 20s→30s；候选广播全留痕，超时报错区分「0 广播（查系统定位开关/重启蓝牙）」与「有广播名字不匹配（列设备名）」；新增定位服务状态诊断日志'
+    ]
+  },
   {
     ver: '3.19.0', date: '2026-10-25',
     items: [

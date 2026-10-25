@@ -53,7 +53,7 @@ export const AFU = {
   IDLE_DELAY_MS: 2000,     // 秤静默多久算「人已下秤」
   IDLE_POLL_MS: 250,
   COMMIT_TIMEOUT_MS: 15000, // 提交后等新 0x54 的上限，超时回退实时锁定值
-  SCAN_TIMEOUT_MS: 20000,
+  SCAN_TIMEOUT_MS: 30000,   // 扫描窗口；秤常需踩一下才广播，留足唤醒时间
   CONNECT_TIMEOUT_MS: 15000
 };
 
@@ -667,6 +667,11 @@ export class ScaleManager {
       status('init', '请求蓝牙权限…');
       await ble.initialize({ androidNeverForLocation: true });
       scaleLog('I', '蓝牙权限/初始化通过');
+      // 诊断：Android<12 扫描结果依赖系统定位服务开启
+      try {
+        const loc = await ble.isLocationEnabled();
+        scaleLog('I', `系统定位服务: ${loc && loc.value ? '开' : '关'}（Android 11 及以下扫描需要开启）`);
+      } catch (_) {}
       session.stage = 'check-enabled';
       const enabled = await ble.isEnabled();
       scaleLog('I', `蓝牙开关状态: ${enabled && enabled.value ? '开' : '关'}`);
@@ -735,11 +740,15 @@ export class ScaleManager {
     }
   }
 
-  // 扫描 AFU 秤（service 0xfc50 过滤 + 名字含 AFU）
+  // 扫描 AFU 秤：全量扫描（不做 service 硬件过滤——部分秤广播不带 0xfc50 service UUID，
+  // 硬件过滤会滤成 0 结果，v3.18.3 真机已踩坑），回调里按「名字含 AFU」匹配
+  // （openScale 的判定法），广播带 fc50 serviceData 的无名设备作兜底候选；
+  // 每个候选设备留痕进日志，便于按名字/厂商数据识别秤
   _scanForScale(session) {
     const { ble } = session;
     return new Promise(async (resolve, reject) => {
       let settled = false;
+      const seen = new Map(); // deviceId -> {name, rssi}
       const cleanup = async () => {
         try { await ble.stopLEScan(); } catch (e) {
           scaleLog('W', `stopLEScan 失败: ${e && e.message}`);
@@ -750,32 +759,49 @@ export class ScaleManager {
         if (settled) return;
         settled = true;
         await cleanup();
-        scaleLog('E', `扫描超时（${AFU.SCAN_TIMEOUT_MS / 1000}s）：共见 ${session.scanCandidates} 个广播，无一匹配（名字含 AFU + service ${AFU.SERVICE_UUID.slice(4, 8)}）`, getScaleDump());
-        reject(new Error('未找到体脂秤：请踩一下秤唤醒蓝牙，再重试'));
+        const cand = [...seen.values()];
+        scaleLog('E', `扫描超时（${AFU.SCAN_TIMEOUT_MS / 1000}s）：共见 ${cand.length} 个广播设备`, {
+          candidates: cand.slice(0, 10),
+          recentFramesHex: _hexRing.slice(-20)
+        });
+        if (cand.length === 0) {
+          reject(new Error(`${AFU.SCAN_TIMEOUT_MS / 1000} 秒内未收到任何蓝牙广播：请确认手机系统「位置信息」开关已打开（Android 11 及以下扫描必需）、蓝牙已重启，再踩一下秤后重试`));
+        } else {
+          const named = cand.filter(c => c.name).slice(0, 4)
+            .map(c => `"${c.name}"(${c.rssi}dBm)`).join('、');
+          reject(new Error(`未找到名字含 AFU 的秤（附近有 ${cand.length} 个蓝牙设备${named ? '：' + named : ''}）。请踩秤唤醒后重试；仍失败请点「复制调试日志」反馈`));
+        }
       }, AFU.SCAN_TIMEOUT_MS);
 
       try {
         session._scanHandle = await ble.addListener('onScanResult', async (result) => {
           const dev = result && (result.device || result);
-          const name = (dev && (dev.name || dev.localName)) || (result && result.localName) || '';
           const id = dev && (dev.deviceId || dev.id);
-          const rssi = (result && result.rssi) != null ? result.rssi : (dev && dev.rssi);
           if (!id) return;
-          session.scanCandidates++;
-          // 每个候选广播都留痕（限流：最多记前 15 个），排查"秤广播名不含 AFU"类问题
-          if (session.scanCandidates <= 15) {
-            scaleLog('D', `广播 #${session.scanCandidates}: name="${name}" id=${id} rssi=${rssi}`);
+          const name = (result && result.localName) || (dev && dev.name) || '';
+          const rssi = (result && result.rssi) != null ? result.rssi : (dev && dev.rssi);
+          const sdKeys = (result && result.serviceData) ? Object.keys(result.serviceData) : [];
+          const mfKeys = (result && result.manufacturerData) ? Object.keys(result.manufacturerData) : [];
+          if (!seen.has(id)) {
+            seen.set(id, { name, rssi });
+            if (seen.size <= 20) {
+              scaleLog('D', `广播 #${seen.size}: name="${name}" id=${id} rssi=${rssi} mf=[${mfKeys}] sd=[${sdKeys.map(k => k.slice(4, 8))}]`);
+            }
           }
-          if (!String(name).toUpperCase().includes('AFU')) return;
+          // 匹配：名字含 AFU（主判据）；无名但 serviceData 带 fc50 的作兜底
+          const nameHit = String(name).toUpperCase().includes('AFU');
+          const sdHit = sdKeys.some(k => String(k).toLowerCase().includes('fc50'));
+          if (!nameHit && !sdHit) return;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
           await cleanup();
-          scaleLog('I', `匹配到体脂秤（第 ${session.scanCandidates} 个广播）: name="${name}" id=${id} rssi=${rssi}`);
+          scaleLog('I', `匹配到体脂秤: name="${name}" id=${id} rssi=${rssi}（依据：${nameHit ? '名字含AFU' : 'serviceData含fc50'}）`);
           resolve({ deviceId: id, name });
         });
-        await ble.requestLEScan({ services: [AFU.SERVICE_UUID], allowDuplicates: false });
-        scaleLog('I', `LE 扫描已启动（过滤 service ${AFU.SERVICE_UUID}）`);
+        // scanMode 2 = SCAN_MODE_LOW_LATENCY（前台高占空比，找秤更快）
+        await ble.requestLEScan({ allowDuplicates: false, scanMode: 2 });
+        scaleLog('I', 'LE 扫描已启动（全量无过滤 + LOW_LATENCY，回调内按 名字AFU/serviceData-fc50 匹配）');
       } catch (e) {
         if (!settled) {
           settled = true; clearTimeout(timer); await cleanup();
