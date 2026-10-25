@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.18.0';
+const APP_VERSION = '3.18.1';
 const APP_VERSION_DATE = '2026-10-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.18.1', date: '2026-10-25',
+    items: [
+      '增强：蓝牙体脂秤全链路调试日志 — 三路输出（console / 内存环形缓冲 / .meta/scale-log.md 持久化，记忆面板可查看），覆盖扫描候选广播、GATT 树快照、每一帧收发 hex 与解析拒因、状态机每步翻转、失败现场快照（标志位+计数+最近帧）；弹窗新增「复制调试日志」按钮一键带走，异常收敛不再靠猜'
+    ]
+  },
   {
     ver: '3.18.0', date: '2026-10-25',
     items: [
@@ -475,7 +481,7 @@ import { OnDemandLoader } from './on-demand-loader.js';
 import { BackupManager } from './backup-manager.js';
 import { SettlementGate } from './settlement-gate.js';
 import { StatsManager } from './stats-manager.js';
-import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1 } from './scale-manager.js';
+import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1, scaleLog, getScaleLog } from './scale-manager.js';
 
 class App {
   constructor() {
@@ -2090,6 +2096,7 @@ ${habits}
     document.getElementById('scaleCancelBtn').addEventListener('click', () => {
       this.scaleManager.stopSession('stopped').catch(() => {});
     });
+    document.getElementById('scaleCopyLogBtn').addEventListener('click', () => this._copyScaleLog());
 
     // 菜单项 — 每日结算设置
     document.getElementById('menuSettlement').addEventListener('click', () => {
@@ -2573,6 +2580,7 @@ ${habits}
     startBtn.disabled = true;
     cancelBtn.style.display = '';
     resultEl.style.display = 'none';
+    scaleLog('I', '── UI：用户点击「开始称重」');
 
     try {
       const raw = await this.scaleManager.startSession({
@@ -2594,6 +2602,9 @@ ${habits}
           comp = AfuB1.bodyComposition(profile.sex, profile.age, profile.heightCm, raw.weightKg, bodyFat);
         }
       }
+      scaleLog('I', `体成分计算: 阻抗=${raw.impedanceOhm ?? '无'} 体脂率=${bodyFat ?? '—'} 成分=${comp ? 'ok' : '跳过(阻抗缺失或超范围)'}`, {
+        profile: { sex: profile.sex, age: profile.age, heightCm: profile.heightCm }
+      });
       const meas = {
         weightKg: raw.weightKg, impedanceOhm: raw.impedanceOhm,
         bodyFatPercent: bodyFat, composition: comp, timestamp: raw.timestamp
@@ -2627,7 +2638,9 @@ ${habits}
         this._triggerScaleAnalysis(meas, rec);
       }, 2600);
     } catch (err) {
-      statusEl.textContent = `❌ ${err && err.message ? err.message : '称重失败，请重试'}`;
+      const msg = err && err.message ? err.message : '称重失败';
+      scaleLog('E', `UI 捕获称重失败: ${msg}`);
+      statusEl.innerHTML = `❌ ${msg}<br><span style="color:var(--muted2);font-size:12px;">详细过程见「复制调试日志」（或记忆面板 .meta/scale-log.md），反馈问题时请一并附上</span>`;
       liveEl.style.display = 'none';
     } finally {
       cancelBtn.style.display = 'none';
@@ -2636,8 +2649,32 @@ ${habits}
     }
   }
 
+  // 一键复制体脂秤调试日志（反馈问题用；三路日志中的内存缓冲即完整内容）
+  async _copyScaleLog() {
+    const text = getScaleLog();
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (_) {
+      // WebView 剪贴板 API 不可用时退回 execCommand
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        ta.remove();
+      } catch (_) { ok = false; }
+    }
+    this.showToast(ok ? '调试日志已复制' : '复制失败', ok ? '内容较长，可直接粘贴反馈；持久化副本在记忆面板 .meta/scale-log.md' : '请到「记忆」面板打开 .meta/scale-log.md 查看复制', ok ? 'success' : 'info');
+    scaleLog('I', `UI：复制调试日志（${ok ? '成功' : '失败'}，${text.length} 字符）`);
+  }
+
   // 称重完成后自动触发 AI：以用户消息形式注入，AI 读取 BODY_METRICS.md 分析
   _triggerScaleAnalysis(meas, rec) {
+    scaleLog('I', `UI：触发 AI 分析（addedRow=${rec.addedRow}，prevWeight=${rec.prevWeight ?? '无'}）`);
     const diffStr = rec.diff === null ? '首次记录'
       : `${rec.diff > 0 ? '+' : ''}${rec.diff.toFixed(1)}kg（上次 ${(rec.prevWeight || 0).toFixed(1)}kg）`;
     const lines = [

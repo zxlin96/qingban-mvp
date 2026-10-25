@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AFU, AfuB1, bytesToHex, hexToBytes,
-  parseProfileMd, recordBodyMeasurement, ScaleManager
+  parseProfileMd, recordBodyMeasurement, ScaleManager,
+  scaleLog, getScaleLog, getScaleDump
 } from '../js/scale-manager.js';
 import { mockFm } from './helpers.mjs';
 
@@ -332,4 +333,36 @@ test('ScaleManager 在无 Capacitor 桥接时不可用', () => {
   assert.equal(ScaleManager.plugin(), null);
   const sm = new ScaleManager(mockFm());
   assert.equal(sm.isAvailable(), false);
+});
+
+// ---- 调试日志 ----
+
+test('scaleLog 三路输出：缓冲可读、结构化 data 拼入、getScaleDump 带现场', async () => {
+  const marker = `日志单测-${Date.now()}`;
+  scaleLog('I', marker, { a: 1 });
+  const text = getScaleLog();
+  assert.ok(text.includes(marker), '缓冲应包含刚写入的日志');
+  assert.ok(text.includes('"a":1'), '结构化 data 应 JSON 化拼入');
+
+  const dump = getScaleDump();
+  assert.ok(Array.isArray(dump.recent) && dump.recent.length > 0);
+  assert.ok(Array.isArray(dump.recentFramesHex));
+});
+
+test('scaleLog 持久化到 .meta/scale-log.md（防抖后）', async () => {
+  const fm = mockFm();
+  new ScaleManager(fm); // 注入日志持久化用的 fm
+  const marker = `持久化单测-${Date.now()}`;
+  scaleLog('I', marker);
+  await new Promise(r => setTimeout(r, 1700)); // 防抖 1.5s
+  const saved = await fm.readFile('.meta/scale-log.md');
+  assert.ok(saved && saved.includes(marker), '防抖后应写入 .meta/scale-log.md');
+});
+
+test('recordBodyMeasurement 落盘动作会写日志', async () => {
+  const fm = mockFm({ 'BODY_METRICS.md': TEMPLATE_MD });
+  const meas = { weightKg: 79.8, impedanceOhm: null, bodyFatPercent: null, timestamp: null };
+  await recordBodyMeasurement(fm, meas, { sex: 1, age: 30, heightCm: 175 },
+    new Date('2026-10-25T08:00:00'));
+  assert.ok(getScaleLog().includes('BODY_METRICS.md 已更新'), '应记录落盘结果');
 });

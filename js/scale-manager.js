@@ -96,6 +96,110 @@ export function hexToBytes(hex) {
   return out;
 }
 
+// ===== 调试日志（三路输出） =====
+// 1. console（chrome://inspect / adb logcat 看 [Scale] 前缀）
+// 2. 内存环形缓冲（弹窗「复制调试日志」按钮一键带走）
+// 3. .meta/scale-log.md（防抖持久化，记忆面板可直接查看/导出）
+// 出问题时按「会话横幅 → 错误行 → 前后若干帧 hex」即可定位收敛。
+
+const SCALE_LOG_KEY = '.meta/scale-log.md';
+const SCALE_LOG_MAX_ENTRIES = 400;   // 缓冲条数上限（超出丢最旧）
+const SCALE_LOG_MAX_CHARS = 24000;   // 持久化文件字符上限（环形保留尾部）
+const _logBuffer = [];
+const _hexRing = [];                 // 最近原始帧 hex（错误现场用）
+const _HEX_RING_MAX = 60;
+let _logFm = null;                   // 由 ScaleManager 构造时注入
+let _persistTimer = null;
+let _sessionSeq = 0;
+
+function _ts() {
+  const d = new Date();
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+}
+
+// level: 'I' 信息 / 'D' 调试 / 'W' 警告 / 'E' 错误；data 可选（对象/数组，安全 JSON 化）
+export function scaleLog(level, msg, data) {
+  let line = `${_ts()} [${level}] ${msg}`;
+  if (data !== undefined) {
+    try {
+      const s = JSON.stringify(data);
+      if (s !== undefined) line += ' ' + s;
+    } catch (_) { /* 循环引用等，直接丢 data */ }
+  }
+  _logBuffer.push(line);
+  if (_logBuffer.length > SCALE_LOG_MAX_ENTRIES) _logBuffer.splice(0, _logBuffer.length - SCALE_LOG_MAX_ENTRIES);
+  const c = level === 'E' ? console.error : level === 'W' ? console.warn : console.log;
+  try { c.call(console, '[Scale]', line); } catch (_) {}
+  _schedulePersist();
+}
+
+// 最近原始帧 hex 入环形队列（诊断「秤发了但解析不了」类问题）
+function logHexRing(hex) {
+  _hexRing.push(hex);
+  if (_hexRing.length > _HEX_RING_MAX) _hexRing.shift();
+}
+
+// 错误现场：返回最近 N 条日志 + 原始帧 hex
+export function getScaleDump() {
+  return {
+    recent: _logBuffer.slice(-30),
+    recentFramesHex: _hexRing.slice(-20)
+  };
+}
+
+export function getScaleLog() {
+  return `轻伴体脂秤调试日志（滚动最近 ${_logBuffer.length} 条）\n` + _logBuffer.join('\n');
+}
+
+function _schedulePersist() {
+  if (!_logFm || _persistTimer) return;
+  _persistTimer = setTimeout(async () => {
+    _persistTimer = null;
+    try {
+      const header = `# 体脂秤调试日志（环形保留最近 ${SCALE_LOG_MAX_CHARS} 字符；最新会话在后）\n\n`;
+      let text = header + _logBuffer.join('\n');
+      if (text.length > SCALE_LOG_MAX_CHARS) text = header + '\n…（更早日志已滚动丢弃）\n' + text.slice(-SCALE_LOG_MAX_CHARS);
+      await _logFm.writeFile(SCALE_LOG_KEY, text + '\n');
+    } catch (_) { /* IndexedDB 不可用时仅保留 console/内存两路 */ }
+  }, 1500);
+  if (typeof _persistTimer.unref === 'function') _persistTimer.unref(); // 不阻塞 node 退出（测试环境）
+}
+
+// 会话状态快照（错误/结束时落一行，收敛问题用）
+function sessionSnapshot(session) {
+  if (!session) return null;
+  const s = {
+    stage: session.stage || '?',
+    deviceId: session.deviceId,
+    flags: {
+      handshakeSent: session.handshakeSent, profileSent: session.profileSent,
+      historyDumpSent: session.historyDumpSent, liveSeen: session.liveSeen,
+      weightFinal: session.weightFinal, commitInProgress: session.commitInProgress,
+      committedSeen: session.committedSeen
+    },
+    lastLiveWeightG: session.lastLiveWeightG,
+    weighMs: session.weighStartedAt ? Date.now() - session.weighStartedAt : 0,
+    idleMs: session.lastFrameAt ? Date.now() - session.lastFrameAt : -1,
+    framesByType: session.framesByType || {},
+    writes: {
+      ok: session.writesOk || 0, fail: session.writesFail || 0
+    },
+    historyRecords: (session.historyRecords || []).length,
+    notifyChars: (session.notifyChars || []).length,
+    writeService: session.writeService
+  };
+  return s;
+}
+
+function logSessionEnd(session, outcome, extra) {
+  scaleLog(outcome === 'ok' ? 'I' : 'W', `── 会话结束 #${session.seq}：${outcome}`, {
+    ...sessionSnapshot(session),
+    recentFramesHex: _hexRing.slice(-20),
+    ...(extra || {})
+  });
+}
+
 // ===== 协议层（纯函数） =====
 
 export const AfuB1 = {
@@ -496,6 +600,7 @@ export async function recordBodyMeasurement(fm, measurement, profile, now = new 
   }
 
   await fm.writeFile('BODY_METRICS.md', content.trimEnd() + '\n');
+  scaleLog('I', `BODY_METRICS.md 已更新: ${dateStr} ${kg1.toFixed(1)}kg（上次 ${prevWeight === null ? '无' : prevWeight.toFixed(1) + 'kg'}，${dup ? '同日同重跳过追加' : `diff=${diff === null ? '-' : diff}，新增趋势行`}，历史补录 ${historyRecords.length} 条）`);
   return { prevWeight, diff, bmi, bmr, addedRow: !dup, dateStr };
 }
 
@@ -505,6 +610,7 @@ export class ScaleManager {
   constructor(fileManager) {
     this.fm = fileManager;
     this._session = null;
+    _logFm = fileManager; // 调试日志持久化注入
   }
 
   // 原生蓝牙插件（Web 环境无桥接返回 null）
@@ -531,13 +637,17 @@ export class ScaleManager {
 
     const session = {
       ble, hooks, done: false,
+      seq: ++_sessionSeq, stage: 'init',
       deviceId: null, listeners: [], writeService: null,
       // 状态机标志（对应 openScale AfuB1Handler）
       handshakeSent: false, profileSent: false, historyDumpSent: false,
       liveSeen: false, weightFinal: false, commitInProgress: false, commitStartedAt: 0,
       committedSeen: false, lastLiveWeightG: null,
       lastFrameAt: 0, weighStartedAt: 0,
-      historyRecords: [], profile: null, timers: []
+      historyRecords: [], profile: null, timers: [],
+      // 调试计数
+      framesByType: {}, writesOk: 0, writesFail: 0, scanCandidates: 0,
+      _lastLoggedLiveG: null, _lastLoggedLiveAt: 0
     };
     // 结果 promise 在会话创建时就挂好（通知可能早于后续步骤到达）
     session.resultPromise = new Promise((resolve, reject) => {
@@ -551,47 +661,75 @@ export class ScaleManager {
     const status = (stage, detail) => { try { hooks.onStatus && hooks.onStatus(stage, detail); } catch (_) {} };
 
     try {
+      const platform = (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.getPlatform)
+        ? window.Capacitor.getPlatform() : 'unknown';
+      scaleLog('I', `═══ 会话 #${session.seq} 开始（平台 ${platform}，插件桥接 ${!!ble}）`);
       status('init', '请求蓝牙权限…');
       await ble.initialize({ androidNeverForLocation: true });
+      scaleLog('I', '蓝牙权限/初始化通过');
+      session.stage = 'check-enabled';
       const enabled = await ble.isEnabled();
+      scaleLog('I', `蓝牙开关状态: ${enabled && enabled.value ? '开' : '关'}`);
       if (!enabled || !enabled.value) {
         status('enable', '蓝牙未开启，请求开启…');
-        try { await ble.requestEnable(); } catch (_) { throw new Error('蓝牙未开启'); }
+        try {
+          await ble.requestEnable();
+          scaleLog('I', 'requestEnable 返回（用户已同意或已开启）');
+        } catch (e) {
+          scaleLog('E', '蓝牙未开启且请求开启失败', { msg: e && e.message });
+          throw new Error('蓝牙未开启');
+        }
       }
 
       // ---- 扫描 ----
+      session.stage = 'scan';
       status('scan', '正在搜索体脂秤…请确认秤已唤醒（轻踩一下激活）');
       const device = await this._scanForScale(session);
       session.deviceId = device.deviceId;
+      scaleLog('I', `选定目标秤: ${device.name || '(无名)'} ${device.deviceId}`);
+      session.stage = 'connect';
       status('connect', `找到 ${device.name || device.deviceId}，连接中…`);
 
       // ---- 连接（Android 侧连接后自动做服务发现） ----
       await this._withTimeout(ble.connect({ deviceId: session.deviceId }), AFU.CONNECT_TIMEOUT_MS, '连接超时');
+      scaleLog('I', `GATT 已连接（${session.deviceId}）`);
+      session.stage = 'services';
       const gatt = await ble.getServices({ deviceId: session.deviceId });
       this._setupChannels(session, gatt);
 
       // 用户档案（体成分计算与 profile 帧都要用）
       const profileMd = await this.fm.readFile('PROFILE.md');
       session.profile = parseProfileMd(profileMd);
+      scaleLog('I', 'PROFILE.md 解析', {
+        sex: session.profile.sex, age: session.profile.age,
+        heightCm: session.profile.heightCm, targetKg: session.profile.targetKg,
+        source: profileMd ? 'exists' : 'missing(用默认值)'
+      });
 
       // ---- 订阅所有 notify/indicate 特征（秤在其中一个上回报） ----
+      session.stage = 'subscribe';
       for (const ch of session.notifyChars) {
         const key = `notification|${session.deviceId}|${ch.service}|${ch.characteristic}`;
         const handle = await ble.addListener(key, (event) => this._onNotify(session, event));
         session.listeners.push(handle);
         await ble.startNotifications({ deviceId: session.deviceId, service: ch.service, characteristic: ch.characteristic });
+        scaleLog('I', `已订阅 ${ch.characteristic}`);
       }
 
       // ---- 握手：时间同步 + 2x sync-request；随后请求历史导出 ----
+      session.stage = 'handshake';
       session.lastFrameAt = Date.now();
       await this._sendHandshake(session);
       await this._requestHistoryDump(session);
+      scaleLog('I', '握手完成：timeSync + 2x sync + historyDump(0x8e) 已发');
+      session.stage = 'ready';
       status('ready', '已连接 ✓ 轻站上秤开始测量');
 
       // 总超时兜底：3 分钟内未完成则报错
       this._armOverallTimeout(session, 180000);
       return await session.resultPromise;
     } catch (err) {
+      scaleLog('E', `会话 #${session.seq} 异常退出: ${err && err.message ? err.message : err}`, sessionSnapshot(this._session));
       await this.stopSession('error');
       throw err;
     }
@@ -603,13 +741,16 @@ export class ScaleManager {
     return new Promise(async (resolve, reject) => {
       let settled = false;
       const cleanup = async () => {
-        try { await ble.stopLEScan(); } catch (_) {}
+        try { await ble.stopLEScan(); } catch (e) {
+          scaleLog('W', `stopLEScan 失败: ${e && e.message}`);
+        }
         try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
       };
       const timer = setTimeout(async () => {
         if (settled) return;
         settled = true;
         await cleanup();
+        scaleLog('E', `扫描超时（${AFU.SCAN_TIMEOUT_MS / 1000}s）：共见 ${session.scanCandidates} 个广播，无一匹配（名字含 AFU + service ${AFU.SERVICE_UUID.slice(4, 8)}）`, getScaleDump());
         reject(new Error('未找到体脂秤：请踩一下秤唤醒蓝牙，再重试'));
       }, AFU.SCAN_TIMEOUT_MS);
 
@@ -618,17 +759,29 @@ export class ScaleManager {
           const dev = result && (result.device || result);
           const name = (dev && (dev.name || dev.localName)) || (result && result.localName) || '';
           const id = dev && (dev.deviceId || dev.id);
+          const rssi = (result && result.rssi) != null ? result.rssi : (dev && dev.rssi);
           if (!id) return;
+          session.scanCandidates++;
+          // 每个候选广播都留痕（限流：最多记前 15 个），排查"秤广播名不含 AFU"类问题
+          if (session.scanCandidates <= 15) {
+            scaleLog('D', `广播 #${session.scanCandidates}: name="${name}" id=${id} rssi=${rssi}`);
+          }
           if (!String(name).toUpperCase().includes('AFU')) return;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
           await cleanup();
+          scaleLog('I', `匹配到体脂秤（第 ${session.scanCandidates} 个广播）: name="${name}" id=${id} rssi=${rssi}`);
           resolve({ deviceId: id, name });
         });
         await ble.requestLEScan({ services: [AFU.SERVICE_UUID], allowDuplicates: false });
+        scaleLog('I', `LE 扫描已启动（过滤 service ${AFU.SERVICE_UUID}）`);
       } catch (e) {
-        if (!settled) { settled = true; clearTimeout(timer); await cleanup(); reject(e); }
+        if (!settled) {
+          settled = true; clearTimeout(timer); await cleanup();
+          scaleLog('E', `启动扫描失败: ${e && e.message}`);
+          reject(e);
+        }
       }
     });
   }
@@ -639,32 +792,53 @@ export class ScaleManager {
     const writeChar = AFU.WRITE_CHARACTERISTIC;
     let writeService = null;
     const notifyChars = [];
+    const gattMap = []; // 调试：完整 GATT 树快照
     for (const svc of services) {
       const svcUuid = String(svc.uuid || '').toLowerCase();
       for (const ch of svc.characteristics || []) {
         const uuid = String(ch.uuid || '').toLowerCase();
-        if (uuid === writeChar) writeService = svcUuid || AFU.WRITE_SERVICE;
         const props = ch.properties || {};
+        gattMap.push({ s: svcUuid.slice(4, 8), c: uuid.slice(4, 8), p: props });
+        if (uuid === writeChar) writeService = svcUuid || AFU.WRITE_SERVICE;
         if (props.notify || props.indicate) {
           notifyChars.push({ service: svcUuid, characteristic: uuid });
         }
       }
     }
-    if (!writeService) writeService = AFU.WRITE_SERVICE; // GATT 树拿不到时按规范默认
+    scaleLog('I', `GATT 树 ${services.length} 个 service（短码 s/c 为 UUID 第 5-8 位）`, gattMap);
+    if (!writeService) {
+      scaleLog('W', `未在 GATT 树中找到写特征 ${writeChar}，按规范默认使用 ${AFU.WRITE_SERVICE}`);
+      writeService = AFU.WRITE_SERVICE; // GATT 树拿不到时按规范默认
+    }
     session.writeService = writeService;
     session.notifyChars = notifyChars;
-    if (notifyChars.length === 0) throw new Error('体脂秤未提供数据通道（特征订阅失败）');
+    scaleLog('I', `通道选定: 写=${writeService.slice(4, 8)}/${writeChar.slice(4, 8)} 订阅=${notifyChars.length} 个`, notifyChars.map(c => `${c.service.slice(4, 8)}/${c.characteristic.slice(4, 8)}`));
+    if (notifyChars.length === 0) {
+      scaleLog('E', 'GATT 树中没有任何 notify/indicate 特征，秤无法回报数据', getScaleDump());
+      throw new Error('体脂秤未提供数据通道（特征订阅失败）');
+    }
   }
 
-  // 写帧（串行：ACK/握手/提交可能并发触发，GATT 写必须排队）
-  _writeFrame(session, frameBytes) {
+  // 写帧（串行：ACK/握手/提交可能并发触发，GATT 写必须排队）；label 用于日志定位
+  _writeFrame(session, frameBytes, label = 'frame') {
     const { ble } = session;
-    const run = () => ble.write({
-      deviceId: session.deviceId,
-      service: session.writeService,
-      characteristic: AFU.WRITE_CHARACTERISTIC,
-      value: bytesToHex(frameBytes)
-    });
+    const hex = bytesToHex(frameBytes);
+    const run = async () => {
+      try {
+        await ble.write({
+          deviceId: session.deviceId,
+          service: session.writeService,
+          characteristic: AFU.WRITE_CHARACTERISTIC,
+          value: hex
+        });
+        session.writesOk++;
+        scaleLog('D', `TX ${label}: ${hex}`);
+      } catch (e) {
+        session.writesFail++;
+        scaleLog('W', `TX ${label} 失败: ${e && e.message}（${hex}）`);
+        throw e;
+      }
+    };
     session.writeChain = session.writeChain.then(run, run);
     return session.writeChain;
   }
@@ -672,84 +846,127 @@ export class ScaleManager {
   // 握手：时间同步 + 2x sync-request（不能先发 profile，否则秤切进称重模式阻塞历史）
   async _sendHandshake(session) {
     const now = Math.floor(Date.now() / 1000);
-    await this._writeFrame(session, AfuB1.buildTimeSync(now));
-    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'));
-    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'));
+    await this._writeFrame(session, AfuB1.buildTimeSync(now), 'timeSync');
+    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'), 'syncReq-1');
+    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'), 'syncReq-2');
     session.handshakeSent = true;
   }
 
   async _sendSyncPair(session) {
-    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'));
-    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'));
+    await this._writeFrame(session, AfuB1.buildSyncRequest('FIRST'), 'syncReq-1');
+    await this._writeFrame(session, AfuB1.buildSyncRequest('SECOND'), 'syncReq-2');
   }
 
   async _sendProfile(session, variantName) {
     const p = session.profile;
     await this._writeFrame(session, AfuB1.buildUserProfile(
-      variantName, Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg));
+      variantName, Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg), `profile-${variantName}`);
   }
 
   async _requestHistoryDump(session) {
     const p = session.profile;
     await this._writeFrame(session, AfuB1.buildHistoryDumpRequest(
-      Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg));
+      Math.floor(Date.now() / 1000), 1, p.age, p.sex, p.targetKg), 'historyDump-0x8e');
   }
 
   // 通知回调（hex → 帧 → 状态机）
   _onNotify(session, event) {
     const hexStr = event && event.value;
-    if (typeof hexStr !== 'string' || !hexStr) return;
+    if (typeof hexStr !== 'string' || !hexStr) {
+      scaleLog('W', `RX 空通知（event=${JSON.stringify(event && event.value)}）`);
+      return;
+    }
+    logHexRing(hexStr);
     let frame;
-    try { frame = AfuB1.parse(hexToBytes(hexStr)); } catch (_) { return; }
-    if (!frame) return;
+    try { frame = AfuB1.parse(hexToBytes(hexStr)); } catch (e) {
+      scaleLog('W', `RX 解析异常: ${e && e.message}（${hexStr}）`);
+      return;
+    }
+    if (!frame) {
+      // 标注拒因，便于区分「非 AFU 帧」与「CRC 坏帧」（后者多见于蓝牙丢包/MTU 问题）
+      const b = hexToBytes(hexStr);
+      const why = b.length !== AFU.FRAME_SIZE ? `len=${b.length}`
+        : (b[0] !== 0xaf || b[1] !== 0x45) ? 'header'
+        : `crc(raw[19]=${(b[19] || 0) & 0x1f},calc=${AfuB1.crc(b)})`;
+      scaleLog('D', `RX 非 AFU 帧（${why}）: ${hexStr}`);
+      return;
+    }
+    session.framesByType[frame.type] = (session.framesByType[frame.type] || 0) + 1;
     session.lastFrameAt = Date.now();
 
     switch (frame.type) {
-      case 'live': this._onLive(session, frame); break;
-      case 'stored': this._onStored(session, frame); break;
+      case 'live': this._onLive(session, frame, hexStr); break;
+      case 'stored': this._onStored(session, frame, hexStr); break;
       case 'impedance':
-        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0)).catch(() => {});
+        scaleLog('I', `RX 0x52 阻抗结果: valid=${frame.valid} adc=${frame.adcOhms}Ω（${hexStr}）`);
+        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0), 'ack-0x52').catch(() => {});
         break;
       case 'chunk': // 加密报告分片，内容不可解；必须 ACK 否则秤会重发卡住流程
-        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0)).catch(() => {});
+        scaleLog('D', `RX 0x14 报告分片 #${frame.chunkIndex}（丢弃，仅 ACK）`);
+        this._writeFrame(session, AfuB1.buildAck(frame.ackReplyByte, 0), 'ack-chunk').catch(() => {});
         break;
-      default: break; // ack/control：无需处理
+      case 'ack':
+        scaleLog('D', `RX ACK reply_cmd=0x${frame.replyCmd.toString(16)} op=0x${frame.replyOp.toString(16)}`);
+        break;
+      default:
+        scaleLog('D', `RX 控制帧 cmd=0x${frame.cmd.toString(16)}（${hexStr}）`);
+        break;
     }
   }
 
   // 实时体重 0x51
-  _onLive(session, frame) {
+  _onLive(session, frame, hexStr) {
     session.liveSeen = true;
-    if (!session.weighStartedAt) session.weighStartedAt = Date.now();
+    session.stage = 'live';
+    if (!session.weighStartedAt) {
+      session.weighStartedAt = Date.now();
+      scaleLog('I', `上秤：首次实时帧 ${frame.weightGrams}g（${hexStr}）`);
+    }
     session.lastLiveWeightG = frame.weightGrams;
     try { session.hooks.onLiveWeight && session.hooks.onLiveWeight(frame.weightGrams / 1000); } catch (_) {}
 
+    // 实时流限流记日志：首帧/变化>50g/锁定翻转/每 2s 一条
+    const g = frame.weightGrams;
+    const now = Date.now();
+    if (session._lastLoggedLiveG === null
+      || Math.abs(g - session._lastLoggedLiveG) > 50
+      || now - session._lastLoggedLiveAt > 2000) {
+      scaleLog('D', `RX 0x51 实时 ${g / 1000}kg mode=0x${frame.mode.toString(16)} ${frame.locked ? '锁定' : '测量中'}`);
+      session._lastLoggedLiveG = g;
+      session._lastLoggedLiveAt = now;
+    }
+
     if (!session.profileSent && session.handshakeSent) {
       session.profileSent = true;
+      scaleLog('I', '实时称重已开始 → 发送 INITIAL profile(0x3f)');
       this._sendProfile(session, 'INITIAL').catch(() => {});
     }
     // 锁定位=1：体重已定 → ACK + 等下秤后提交
     if (frame.locked && !session.weightFinal && session.handshakeSent) {
       session.weightFinal = true;
-      this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_LIVE_WEIGHT, 0)).catch(() => {});
+      session.stage = 'locked';
+      scaleLog('I', `体重锁定 ${(g / 1000).toFixed(2)}kg → ACK 并等待下秤（静默 ${AFU.IDLE_DELAY_MS}ms 后提交）`);
+      this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_LIVE_WEIGHT, 0), 'ack-0x51').catch(() => {});
       this._startCommitFlow(session);
     }
   }
 
   // 存储记录 0x54
-  _onStored(session, frame) {
+  _onStored(session, frame, hexStr) {
     // 先 ACK（导出模式下不 ACK 秤不发下一条；correlation 带上序号）
-    this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_STORED_RECORD, frame.sequence)).catch(() => {});
+    this._writeFrame(session, AfuB1.buildAck(AFU.WIRE_STORED_RECORD, frame.sequence), `ack-0x54(seq=${frame.sequence})`).catch(() => {});
 
     // 空闲收到记录但导出请求还没落地（连接初期的 0x8e 可能被秤忽略）→ 首条记录时补发
     if (!session.liveSeen && !session.historyDumpSent) {
       session.historyDumpSent = true;
+      scaleLog('I', '空闲首条 0x54 → 补发历史导出请求 0x8e');
       this._requestHistoryDump(session).catch(() => {});
     }
 
     // 本次称重的新记录？（提交中 + 时间在本轮称重内 + 体重与锁定值吻合）
     if (this._isFreshCommitted(session, frame)) {
       session.committedSeen = true;
+      scaleLog('I', `RX 0x54 本次称重新记录: ${(frame.weightGrams / 1000).toFixed(2)}kg 阻抗=${frame.resistanceOhms}Ω ts=${frame.timestampEpochSeconds}（${hexStr}）`);
       this._finish(session, {
         weightKg: frame.weightGrams / 1000,
         impedanceOhm: frame.resistanceOhms || null,
@@ -769,7 +986,10 @@ export class ScaleManager {
       r.timestampEpochSeconds === rec.timestampEpochSeconds && r.weightGrams === rec.weightGrams);
     if (!dup) {
       session.historyRecords.push(rec);
+      scaleLog('D', `RX 0x54 历史记录 #${session.historyRecords.length}: ts=${frame.timestampEpochSeconds} ${(frame.weightGrams / 1000).toFixed(1)}kg 阻抗=${frame.resistanceOhms}Ω${frame.locked ? ' [锁定]' : ''}（${hexStr}）`);
       try { session.hooks.onHistory && session.hooks.onHistory(session.historyRecords.length); } catch (_) {}
+    } else {
+      scaleLog('D', `RX 0x54 重复历史记录（ts=${frame.timestampEpochSeconds} ${frame.weightGrams}g），已去重`);
     }
   }
 
@@ -787,26 +1007,33 @@ export class ScaleManager {
   // 锁定后：等秤静默（人下秤）→ 重新 sync + getWeighAgain 拉新记录；超时回退锁定值
   _startCommitFlow(session) {
     const status = session.hooks.onStatus;
+    scaleLog('I', `提交流程启动：轮询等待秤静默（>${AFU.IDLE_DELAY_MS}ms 无帧即认为已下秤）`);
     const tick = async () => {
       if (session.done || session.committedSeen) return;
-      const idle = Date.now() - session.lastFrameAt > AFU.IDLE_DELAY_MS;
+      const idleMs = Date.now() - session.lastFrameAt;
+      const idle = idleMs > AFU.IDLE_DELAY_MS;
       if (idle && !session.commitInProgress) {
         session.commitInProgress = true;
+        session.stage = 'commit';
         session.commitStartedAt = Date.now();
+        scaleLog('I', `秤已静默 ${idleMs}ms（人已下秤）→ 发送提交序列（timeSync + sync x2 + profile 0x4b/0x5b + chunkReq）`);
         try { status && status('commit', '测量完成 ✓ 正在同步数据…'); } catch (_) {}
         try {
-          await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)));
+          await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)), 'timeSync-commit');
           await this._sendSyncPair(session);
           await this._sendProfile(session, 'GET_WEIGH_AGAIN_1');
           await this._sendProfile(session, 'GET_WEIGH_AGAIN_2');
-          await this._writeFrame(session, AfuB1.buildChunkRequest());
-        } catch (_) { /* 写失败由超时兜底 */ }
+          await this._writeFrame(session, AfuB1.buildChunkRequest(), 'chunkReq');
+        } catch (e) {
+          scaleLog('W', `提交序列部分写失败（${e && e.message}），等待超时兜底`);
+        }
       }
       // 提交超时：用锁定实时值兜底（无阻抗）
       if (session.commitInProgress && session.commitStartedAt
         && Date.now() - session.commitStartedAt > AFU.COMMIT_TIMEOUT_MS
         && session.lastLiveWeightG != null) {
         session.committedSeen = true;
+        scaleLog('W', `提交超时（${AFU.COMMIT_TIMEOUT_MS / 1000}s 未收到新 0x54 记录）→ 回退用锁定实时值 ${(session.lastLiveWeightG / 1000).toFixed(2)}kg（无阻抗）`, sessionSnapshot(session));
         this._finish(session, {
           weightKg: session.lastLiveWeightG / 1000,
           impedanceOhm: null,
@@ -825,22 +1052,33 @@ export class ScaleManager {
     if (session.done) return;
     session.done = true;
     session.timers.forEach(clearTimeout);
+    scaleLog('I', `测量结果确定: ${(raw.weightKg).toFixed(2)}kg 阻抗=${raw.impedanceOhm ?? '无'} 来源=${raw.source}（历史记录 ${session.historyRecords.length} 条）`);
     session.resultResolve && session.resultResolve({ ...raw, historyRecords: session.historyRecords });
 
     // 尽力复位秤（FINAL profile + 时间同步 + sync，武装下一次称重）
     try {
       await this._sendProfile(session, 'FINAL');
-      await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)));
+      await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)), 'timeSync-final');
       await this._sendSyncPair(session);
-    } catch (_) {}
+    } catch (e) {
+      scaleLog('W', `复位秤失败（不影响本次结果）: ${e && e.message}`);
+    }
     await this._cleanupConnection(session);
+    logSessionEnd(session, 'ok');
   }
 
   async _cleanupConnection(session) {
     const { ble } = session;
     for (const h of session.listeners) { try { await h.remove(); } catch (_) {} }
     session.listeners = [];
-    if (session.deviceId) { try { await ble.disconnect({ deviceId: session.deviceId }); } catch (_) {} }
+    if (session.deviceId) {
+      try {
+        await ble.disconnect({ deviceId: session.deviceId });
+        scaleLog('I', `已断开 ${session.deviceId}`);
+      } catch (e) {
+        scaleLog('W', `断开失败（可忽略）: ${e && e.message}`);
+      }
+    }
   }
 
   _armOverallTimeout(session, ms) {
@@ -848,8 +1086,10 @@ export class ScaleManager {
       if (!session.done) {
         session.done = true;
         session.timers.forEach(clearTimeout);
+        scaleLog('E', `会话总超时（${ms / 1000}s）——按快照排查：stage=${session.stage}`, sessionSnapshot(session));
         this._cleanupConnection(session);
         session.resultReject(new Error('称重超时：请重站上秤并保持静止，再重试'));
+        logSessionEnd(session, 'timeout');
       }
     }, ms);
   }
@@ -868,10 +1108,12 @@ export class ScaleManager {
     session.timers.forEach(clearTimeout);
     if (!session.done) {
       session.done = true;
+      scaleLog('W', `会话 #${session.seq} 中止（${reason}）stage=${session.stage}`, sessionSnapshot(session));
       try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
       try { await session.ble.stopLEScan(); } catch (_) {}
       await this._cleanupConnection(session);
       session.resultReject && session.resultReject(new Error(reason === 'error' ? '连接中断，请重试' : '已取消称重'));
+      logSessionEnd(session, reason === 'error' ? 'error' : 'cancelled');
     }
     this._session = null;
   }

@@ -665,7 +665,11 @@
           <button class="btn" id="scaleCancelBtn" style="display:none;padding:10px;font-size:14px;">取消</button>
         </div>
       </div>
-      <div class="settings-note">体重与阻抗通过蓝牙直读，体脂率/肌肉/水分等按官方公式在本地计算；结果写入 BODY_METRICS.md 后自动交给 AI 分析（秤内历史记录也会一并补入体重趋势表）。浏览器网页版不支持蓝牙，需使用 APK。</div>
+      <div class="settings-group">
+        <div class="settings-group-title">🐞 调试</div>
+        <button class="btn" id="scaleCopyLogBtn" style="width:100%;padding:8px;font-size:13px;">📋 复制调试日志（反馈问题用）</button>
+      </div>
+      <div class="settings-note">体重与阻抗通过蓝牙直读，体脂率/肌肉/水分等按官方公式在本地计算；结果写入 BODY_METRICS.md 后自动交给 AI 分析（秤内历史记录也会一并补入体重趋势表）。浏览器网页版不支持蓝牙，需使用 APK。全程留有调试日志（.meta/scale-log.md，滚动保留最近内容），异常时复制发给开发者即可定位。</div>
     </div>
   </div>
 </div>
