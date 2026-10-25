@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.18.2';
+const APP_VERSION = '3.18.3';
 const APP_VERSION_DATE = '2026-10-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.18.3', date: '2026-10-25',
+    items: [
+      '优化：聊天输入框上方新增「蓝牙称重」快捷按钮 — 一点即开弹窗并自动开始搜秤（免二次点击），直接进入体脂秤搜索阶段；称重进行中再点只切回现场不重置状态；浏览器网页版点击仍给出"请用 APK"提示'
+    ]
+  },
   {
     ver: '3.18.2', date: '2026-10-25',
     items: [
@@ -2103,6 +2109,11 @@ ${habits}
       this.scaleManager.stopSession('stopped').catch(() => {});
     });
     document.getElementById('scaleCopyLogBtn').addEventListener('click', () => this._copyScaleLog());
+    // 输入框上方快捷按钮：点开即自动开始搜秤（进入搜索阶段）
+    document.getElementById('quickScaleBtn').addEventListener('click', () => {
+      scaleLog('I', 'UI：快捷按钮「蓝牙称重」点击');
+      this.openScalePanel(true);
+    });
 
     // 菜单项 — 每日结算设置
     document.getElementById('menuSettlement').addEventListener('click', () => {
@@ -2552,8 +2563,14 @@ ${habits}
   // 流程：蓝牙直读体重+阻抗 → 本地按官方公式算体成分 → 写入 BODY_METRICS.md
   // → 以「[体脂秤同步]」用户消息触发一轮对话，AI 经系统提示词注入读到新数据并分析
 
-  openScalePanel() {
+  // autoStart：输入框上方快捷按钮点开时直接进入搜索阶段（免二次点击）
+  openScalePanel(autoStart = false) {
     const overlay = document.getElementById('scaleOverlay');
+    // 称重进行中：只把弹窗调回前台，不重置状态（实时体重/状态继续显示）
+    if (this.scaleManager.isBusy()) {
+      overlay.style.display = 'flex';
+      return;
+    }
     // 与 settingsOverlay 同款：.file-viewer 的 CSS 默认 display:none，
     // 须以内联 flex 覆盖（此前只清内联值导致弹窗"点了没反应"）
     overlay.style.display = 'flex';
@@ -2567,6 +2584,10 @@ ${habits}
     if (!this.scaleManager.isAvailable()) {
       document.getElementById('scaleStatus').textContent = '⚠️ 当前环境不可用：浏览器网页版不支持蓝牙，请在轻伴 APK 中使用此功能。';
       startBtn.disabled = true;
+      return;
+    }
+    if (autoStart && !this.scaleManager.isBusy()) {
+      this.startWeighing();
     }
   }
 
