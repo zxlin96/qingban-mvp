@@ -57,6 +57,8 @@ git push origin master --tags   # github.com 连不上时可用 scripts/push-via
 
 ## 三、部署：EdgeOne Pages（免费、国内快、默认域名免备案）
 
+> ⚠️ **认准国际站 edgeone.ai**：其默认域名 `*.edgeone.app` 登录后永久有效。**腾讯云国内站**（console.cloud.tencent.com）部署虽也能成功，但默认域名 `*.edgeone.cool` 仅 **3 小时限时预览**且需携带 eo_token，不能发给朋友——详见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md) 路径 B 的实测说明。
+
 ### 方式 A：Pages Drop 拖拽（最快，适合手动发版）
 
 1. 打开 https://pages.edgeone.ai/drop
