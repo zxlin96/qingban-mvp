@@ -26,7 +26,7 @@ iPhone Safari 打开链接 → 添加到主屏幕 → 打开轻伴
 
 | # | 材料 | 说明 | 去哪拿 |
 |---|---|---|---|
-| 1 | 火山引擎账号 | 用于 EdgeOne Pages 免费托管；大陆用户注册登录后链接才永久有效 | https://console.volcengine.com （手机号注册） |
+| 1 | 腾讯云/EdgeOne 账号 | 用于 EdgeOne Pages 免费托管（腾讯云产品，近期更名 EdgeOne Makers）；大陆用户注册登录后链接才永久有效。**注册详细步骤见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)** | https://edgeone.ai/login （邮箱/Google 注册，免绑卡） |
 | 2 | 待部署内容：`www/` 目录 | `npm run sync` 后即为完整静态站点（index.html/manifest/sw.js/icons/js/css/data）。**不需要** server.js、node_modules、.env —— PWA 版无后端，LLM 由浏览器直连 | 仓库本地跑 `npm run sync` 生成 |
 | 3 | 朋友的 LLM Key | 每人自己注册自己填（合规且免费额度各算各的）。推荐 Kimi 开放平台（唯一同时满足「浏览器可直连 + 有视觉模型支持拍照识别」） | https://platform.kimi.com ；备选 DeepSeek https://platform.deepseek.com |
 | 4 | 发给朋友的使用说明 | 本手册第五节，直接复制转发 | — |
@@ -61,7 +61,7 @@ git push origin master --tags   # github.com 连不上时可用 scripts/push-via
 
 1. 打开 https://pages.edgeone.ai/drop
 2. 把 `www/` 目录拖进去 → 立即得到 `*.edgeone.app` 访问链接
-3. 注意：未注册时链接仅 1 小时有效——**先注册登录火山引擎账号再拖**
+3. 注意：未注册时链接仅 1 小时有效——**先注册登录 EdgeOne 账号再拖**（EdgeOne 是腾讯云产品，注册步骤见 [EDGEONE-REGISTER.md](EDGEONE-REGISTER.md)）
 4. 发版 = 重新拖一次新版 `www/`
 
 ### 方式 B：关联 GitHub 仓库（push 自动部署）
