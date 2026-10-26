@@ -1,5 +1,16 @@
 # 轻伴 MVP 变更日志
 
+## 2026-10-26 (v3.20.1)
+
+### 修复 — 顶栏与系统状态栏重叠
+
+> 用户截图：系统状态栏（时钟/状态图标）与轻伴顶栏叠在同一行。根因：Android 15 起对 targetSdk 35+ 的应用**强制边到边**（edge-to-edge），Capacitor 8 模板 targetSdk=36，WebView 全屏绘制、顶栏落在状态栏之下，而 CapacitorWebView 未做任何 inset 处理（源码 import 了 WindowInsetsCompat 却未使用）
+
+- `MainActivity` 注册 `OnApplyWindowInsetsListener`：把「系统栏 + 刘海」的顶部/左右 inset 作为 `webview` 的 MarginLayoutParams 顶边距，Web 内容始终从状态栏下方开始
+- 底部与键盘行为不变（`adjustResize` 继续处理软键盘）；Android 14 及以下窗口本不延伸到状态栏下、inset 为 0，行为完全不变
+- opt-out 方案（`windowOptOutEdgeToEdgeEnforcement`）在 targetSdk 36 上已被 Android 16 忽略，故采用 inset 适配这条正路
+- **涉及文件**：`android/app/src/main/java/com/qingban/mvp/MainActivity.java`
+
 ## 2026-10-26 (v3.20.0)
 
 ### 新增 — 支持蚂蚁阿福 A1 款体脂秤（AFU-WL-TZ-A1 · 沃莱标准协议）

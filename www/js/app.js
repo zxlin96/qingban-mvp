@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.20.0';
+const APP_VERSION = '3.20.1';
 const APP_VERSION_DATE = '2026-10-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.20.1', date: '2026-10-26',
+    items: [
+      '修复：顶栏与系统状态栏重叠 — Android 15+ 对 targetSdk 35+ 强制边到边（Capacitor 8 模板 targetSdk 36），App 顶栏画进状态栏与时钟/状态图标叠在一起；MainActivity 在原生层把「系统栏+刘海」顶部 inset 作为 WebView 顶边距，Web 内容始终从状态栏下方开始，老系统 inset 为 0 行为不变'
+    ]
+  },
   {
     ver: '3.20.0', date: '2026-10-26',
     items: [
