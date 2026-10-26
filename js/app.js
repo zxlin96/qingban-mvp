@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.19.1';
+const APP_VERSION = '3.20.0';
 const APP_VERSION_DATE = '2026-10-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.20.0', date: '2026-10-26',
+    items: [
+      '新增：支持蚂蚁阿福 A1 款体脂秤（AFU-WL-TZ-A1，沃莱标准协议）— 真机日志确认 A1 与 B1 协议完全不同（FFB0/FFB1/FFB2 + 0xAC 帧），现按 GATT 树自动识别双协议；A1 流程：连接触发 FFB2 通知 → 写用户资料 → 0xD5 实时体重（锁定位）→ 0xD6 阻抗帧完成；体成分按 Segal(1988) BIA 公式本地估算（无有效阻抗时 Deurenberg 兜底，体重稳定 15s 无阻抗按仅体重收尾）；广播中解析 deviceType（0x27AC 数据），新增 9 项协议单测，全量 186 项通过'
+    ]
+  },
   {
     ver: '3.19.1', date: '2026-10-26',
     items: [
@@ -2705,17 +2711,18 @@ ${habits}
         onHistory: () => {}
       });
 
-      // 本地计算体成分（秤只给体重+阻抗，公式与官方 App 一致）
+      // 本地计算体成分：沃莱 A1 由 scale-manager 直接带回 Segal 估算结果；
+      // B1（若接到）在此用官方公式计算 —— 秤只给体重+阻抗
       const profile = parseProfileMd(await this.fm.readFile('PROFILE.md'));
-      let bodyFat = null;
-      let comp = null;
-      if (raw.impedanceOhm) {
+      let bodyFat = raw.bodyFatPercent != null ? raw.bodyFatPercent : null;
+      let comp = raw.composition || null;
+      if (bodyFat === null && raw.impedanceOhm) {
         bodyFat = AfuB1.bodyFatPercent(raw.weightKg, profile.heightCm, profile.age, profile.sex, raw.impedanceOhm);
         if (bodyFat !== null) {
           comp = AfuB1.bodyComposition(profile.sex, profile.age, profile.heightCm, raw.weightKg, bodyFat);
         }
       }
-      scaleLog('I', `体成分计算: 阻抗=${raw.impedanceOhm ?? '无'} 体脂率=${bodyFat ?? '—'} 成分=${comp ? 'ok' : '跳过(阻抗缺失或超范围)'}`, {
+      scaleLog('I', `体成分计算: 阻抗=${raw.impedanceOhm ?? '无'} 体脂率=${bodyFat ?? '—'} 来源=${raw.bodyFatPercent != null ? raw.source + '(秤端公式)' : 'B1公式/跳过'}`, {
         profile: { sex: profile.sex, age: profile.age, heightCm: profile.heightCm }
       });
       const meas = {
@@ -2734,7 +2741,8 @@ ${habits}
       if (bodyFat !== null) {
         html += `<br>体脂率 <b>${bodyFat.toFixed(1)}%</b>（阻抗 ${Math.round(meas.impedanceOhm)}Ω）`;
         if (comp) {
-          html += `<br>骨骼肌 ${comp.skeletalMusclePercent.toFixed(1)}% · 水分 ${comp.waterPercent.toFixed(1)}% · 骨量 ${comp.boneMassKg.toFixed(2)}kg · 内脏脂肪 ${comp.visceralFatIndex}`;
+          html += `<br>骨骼肌 ${comp.skeletalMusclePercent.toFixed(1)}% · 水分 ${comp.waterPercent.toFixed(1)}% · 骨量 ${comp.boneMassKg.toFixed(2)}kg`
+            + (comp.visceralFatIndex != null ? ` · 内脏脂肪 ${comp.visceralFatIndex}` : '');
         }
       } else {
         html += '<br>（本次未测到阻抗，体脂率待下次赤脚测量）';
@@ -2798,7 +2806,13 @@ ${habits}
       lines.push(`- 体脂率：${meas.bodyFatPercent.toFixed(1)}%（阻抗 ${Math.round(meas.impedanceOhm)}Ω）`);
       const c = meas.composition;
       if (c) {
-        lines.push(`- 骨骼肌率 ${c.skeletalMusclePercent.toFixed(1)}% / 水分率 ${c.waterPercent.toFixed(1)}% / 骨量 ${c.boneMassKg.toFixed(2)}kg / 内脏脂肪指数 ${c.visceralFatIndex}`);
+        const seg = [
+          `骨骼肌率 ${c.skeletalMusclePercent.toFixed(1)}%`,
+          `水分率 ${c.waterPercent.toFixed(1)}%`,
+          `骨量 ${c.boneMassKg.toFixed(2)}kg`
+        ];
+        if (c.visceralFatIndex != null) seg.push(`内脏脂肪指数 ${c.visceralFatIndex}`);
+        lines.push(`- ${seg.join(' / ')}`);
       }
     }
     lines.push('', '请读取 BODY_METRICS.md 中的最新数据，结合近 7 天饮食记录，给我这次称重的分析与建议（体重趋势怎么看、体脂/肌肉变化、饮食或运动要不要调整）。');

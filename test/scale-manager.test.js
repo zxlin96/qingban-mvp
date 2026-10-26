@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   AFU, AfuB1, bytesToHex, hexToBytes,
   parseProfileMd, recordBodyMeasurement, ScaleManager,
-  scaleLog, getScaleLog, getScaleDump
+  scaleLog, getScaleLog, getScaleDump, Welland27
 } from '../js/scale-manager.js';
 import { mockFm } from './helpers.mjs';
 
@@ -324,6 +324,145 @@ test('recordBodyMeasurement 补录秤内历史记录', async () => {
   assert.ok(md.includes('| 10-22 | 80.1 |'));
   assert.ok(md.indexOf('| 10-21 |') < md.indexOf('| 10-22 |'));
   assert.ok(md.indexOf('| 10-22 |') < md.indexOf('| 10-25 |'));
+});
+
+// ---- Welland 27 协议（AFU-WL-TZ-A1 · 沃莱 0xAC 帧） ----
+
+// 组装一帧 20 字节沃莱数据包：first + body16 + packetType + crc(body[17] 低 5 位)
+function wlFrame(first, bodyBytes, packetType, extraBits = 0) {
+  const body = [...bodyBytes];
+  while (body.length < 16) body.push(0);
+  body.push(packetType & 0xff);
+  let sum = 0;
+  for (let i = 0; i < 17; i++) sum += body[i];
+  body.push((sum & 0x1f) | ((extraBits & 0x07) << 5));
+  return [0x00, first & 0xff, ...body];
+}
+
+// 编码体重字（大端）：低 18 位克数 + bits18-20 分度 + bit31 稳定
+function wlWeightBytes(encoded) {
+  return [(encoded >>> 24) & 0xff, (encoded >>> 16) & 0xff, (encoded >>> 8) & 0xff, encoded & 0xff];
+}
+
+test('Welland27 用户资料帧布局与校验和', () => {
+  const f = Welland27.buildUserInfo({
+    deviceType: 0x27, nowEpochSeconds: 1786810554, utcQuarters: 32,
+    unit: 0, user: 1, heightCm: 168, age: 28, sex: 1
+  });
+  assert.equal(f.length, 20);
+  assert.equal(f[0], 0xac);
+  assert.equal(f[1], 0x27);
+  // 时间 4 字节大端（1786810554 = 0x6A8090BA）
+  assert.deepEqual([f[2], f[3], f[4], f[5]], [0x6a, 0x80, 0x90, 0xba]);
+  assert.equal(f[6], 32);       // 时区刻度
+  assert.equal(f[7], 0);        // kg
+  assert.equal(f[8], 1);        // 用户号
+  assert.equal(f[9], 168);      // 身高
+  assert.equal(f[10], 0);       // 目标体重高
+  assert.equal(f[11], 0);       // 目标体重低
+  assert.equal(f[12], 28);      // 年龄
+  assert.equal(f[13], 1);       // 男=1
+  assert.equal(f[16], 0x03);    // 功能位 bit0|bit1
+  assert.equal(f[18], 0xd0);
+  // 校验和 = sum(f[2..19)) & 0xFF
+  let sum = 0;
+  for (let i = 2; i < 19; i++) sum += f[i];
+  assert.equal(f[19], sum & 0xff);
+});
+
+test('Welland27 解析 0xD5 体重帧（稳定/未稳定）', () => {
+  // 74300g + 分度0 + 稳定位 → 74.3kg stable
+  const enc = (0x80000000 | 74300) >>> 0;
+  const stableFrame = wlFrame(0x01, wlWeightBytes(enc), Welland27.PACKET_WEIGHT);
+  const ev1 = Welland27.decode(stableFrame);
+  assert.equal(ev1.length, 1);
+  assert.equal(ev1[0].type, 'weight');
+  assert.equal(ev1[0].weightKg, 74.3);
+  assert.equal(ev1[0].stable, true);
+
+  const encU = 74300; // 未置稳定位
+  const liveFrame = wlFrame(0x01, wlWeightBytes(encU), Welland27.PACKET_WEIGHT);
+  const ev2 = Welland27.decode(liveFrame);
+  assert.equal(ev2[0].stable, false);
+  assert.equal(ev2[0].weightKg, 74.3);
+});
+
+test('Welland27 解析 0xD5 分度 1 的 0.05 步进取整', () => {
+  // 分度 1（0.05kg 步进）：74310g → raw 74310 → 7431(奇)+1=7432 → 74.32kg
+  const enc = ((1 << 18) | 74310) >>> 0;
+  const f = wlFrame(0x01, wlWeightBytes(enc), Welland27.PACKET_WEIGHT);
+  const ev = Welland27.decode(f);
+  assert.equal(ev[0].weightKg, 74.32);
+});
+
+test('Welland27 解析 0xD6 阻抗帧（带体重）', () => {
+  const enc = (0x80000000 | 74300) >>> 0;
+  // payload: [first, count=1, ?, adc1(2B BE), mode=1, weight(4B BE), ...]
+  const payload = [0x01, 0x01, 0x00, 0x01, 0xf4, 0x01, ...wlWeightBytes(enc)];
+  const f = wlFrame(payload[0], payload.slice(1), Welland27.PACKET_ADC);
+  const ev = Welland27.decode(f);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'adc');
+  assert.deepEqual(ev[0].adcs, [500]);
+  assert.deepEqual(ev[0].impedances, [500]); // 500 < 1500 不做修正
+  assert.equal(ev[0].weightKg, 74.3);
+  assert.equal(ev[0].stable, true);
+});
+
+test('Welland27 五频率阻抗重排与 ≥1500 修正', () => {
+  // 5 频率：[a,b,c,d,e] → [e,a,b,c,d]
+  assert.deepEqual(Welland27.normalizeImpedances([100, 200, 300, 400, 500], null), [500, 100, 200, 300, 400]);
+  // 单频率 ≥1500：((1600-1000) + 74.3*10*-0.4)/0.6/10 = (600 - 297.2)/6 = 50.466→50.47
+  const adj = Welland27.normalizeImpedances([1600], 74.3);
+  assert.ok(Math.abs(adj[0] - 50.47) < 0.01, `实际 ${adj[0]}`);
+});
+
+test('Welland27 解析拒绝 bit7/坏 CRC/短帧', () => {
+  const enc = 74300;
+  const good = wlFrame(0x01, wlWeightBytes(enc), Welland27.PACKET_WEIGHT);
+  // first bit7 置位
+  const bad1 = [...good]; bad1[1] = 0x81;
+  assert.equal(Welland27.decode(bad1).length, 0);
+  // CRC 坏
+  const bad2 = [...good]; bad2[19] = (bad2[19] + 1) & 0xff;
+  assert.equal(Welland27.decode(bad2).length, 0);
+  // 长度不足
+  assert.equal(Welland27.decode([0x00, 0x01]).length, 0);
+});
+
+test('Welland27 广播解析：厂商/服务数据 → deviceType', () => {
+  // 公司 0x27AC（十进制 10156），payload: AC 27(category2|subtype7) ... 第9字节协议版本 1
+  const payloadHex = 'ac27' + '112233445566' + '01';
+  const adv = Welland27.parseAdvertisement({ '10156': payloadHex }, {});
+  assert.ok(adv, '应解析出协议数据');
+  assert.equal(adv.flags, 0x27);
+  assert.equal(adv.category, 2);
+  assert.equal(adv.subtype, 7);
+  assert.equal(adv.ok, true);
+  assert.equal(adv.protocolVer, 1);
+  // 无 AC 数据 → null
+  assert.equal(Welland27.parseAdvertisement({ '76': '0102' }, {}), null);
+  assert.equal(Welland27.parseAdvertisement({}, {}), null);
+});
+
+test('Welland27 Segal 体成分（男 74.3kg/168cm/28y/500Ω）', () => {
+  const c = Welland27.estimateBodyComposition(74.3, 168, 28, true, [500]);
+  assert.ok(c, '应返回成分');
+  assert.equal(c.model, 'segal_3a_male_lt20'); // 估出体脂 ~18.3% < 20 → 3a 公式
+  assert.ok(Math.abs(c.bodyFatPercent - 18.3) < 0.06, `体脂率 ${c.bodyFatPercent}`);
+  assert.ok(Math.abs(c.fatFreeMassKg - 60.7) < 0.06, `去脂体重 ${c.fatFreeMassKg}`);
+  assert.ok(Math.abs(c.waterPercent - 57.2) < 0.06, `水分 ${c.waterPercent}`);
+  assert.equal(c.resistanceOhm, 500);
+  assert.equal(c.visceralFatIndex, null); // Segal 估算不含内脏脂肪
+});
+
+test('Welland27 无有效阻抗 → Deurenberg 兜底', () => {
+  const c = Welland27.estimateBodyComposition(74.3, 168, 28, true, []);
+  assert.ok(c);
+  assert.equal(c.model, 'deurenberg_bmi_fallback');
+  const bmi = 74.3 / (1.68 * 1.68);
+  const expectFat = 1.20 * bmi + 0.23 * 28 - 10.8 - 5.4;
+  assert.ok(Math.abs(c.bodyFatPercent - expectFat) < 0.06, `体脂率 ${c.bodyFatPercent} vs ${expectFat}`);
 });
 
 // ---- ScaleManager 可用性判断 ----

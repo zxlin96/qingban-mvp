@@ -482,6 +482,235 @@ export const AfuB1 = {
   }
 };
 
+// ===== Welland 27 协议（AFU-WL-TZ-A1 · 蚂蚁阿福 A1，沃莱标准 0xAC 帧） =====
+// 与 B1（阿福 App 私有协议）不同：A1 走沃莱标准 GATT——
+//   service FFB0 / 写特征 FFB1（writeWithoutResponse）/ 通知特征 FFB2
+// 连接后启用 FFB2 通知 → 向 FFB1 写一次用户资料帧 → 秤推 0xD5 实时体重帧（锁定位=bit31），
+// 测阻抗后推 0xD6 ADC 帧（内含阻抗列表 ± 体重）即完成。字节序：数值字段大端。
+// 帧构造/解析按 Mzdyl/ant-afu-welland-scale-android（Scale27Protocol）与
+// tonyupup/ha-afu-scale 公开实现移植；体成分用 Segal(1988) BIA 公式估算。
+
+export const Welland27 = {
+  SERVICE: '0000ffb0-0000-1000-8000-00805f9b34fb',
+  WRITE_CHARACTERISTIC: '0000ffb1-0000-1000-8000-00805f9b34fb',
+  NOTIFY_CHARACTERISTIC: '0000ffb2-0000-1000-8000-00805f9b34fb',
+  PACKET_WEIGHT: 213, // 0xD5
+  PACKET_ADC: 214,    // 0xD6
+
+  // 广播里解析 deviceType/协议版本（厂商数据/服务数据 0x27AC，payload 首字节 0xAC）
+  // 返回 {flags, protocolVer, ok} 或 null；ok=false 表示非体脂秤类目
+  parseAdvertisement(manufacturerData, serviceData) {
+    const cands = [];
+    for (const [idStr, hex] of Object.entries(manufacturerData || {})) {
+      const idNum = parseInt(idStr, 10);
+      if (!Number.isFinite(idNum) || typeof hex !== 'string') continue;
+      const prefix = [idNum & 0xff, (idNum >> 8) & 0xff].map(b => b.toString(16).padStart(2, '0')).join('');
+      cands.push(prefix + hex);
+      if (hex.startsWith('ac')) cands.push(hex);
+    }
+    for (const [uuid, hex] of Object.entries(serviceData || {})) {
+      const u16hex = String(uuid).slice(4, 8);
+      if (!/ac/i.test(u16hex)) continue;
+      const u16 = parseInt(u16hex, 16);
+      if (!Number.isFinite(u16)) continue;
+      const prefix = [u16 & 0xff, (u16 >> 8) & 0xff].map(b => b.toString(16).padStart(2, '0')).join('');
+      cands.push(prefix + hex);
+    }
+    const uniq = [...new Set(cands)];
+    const pick = uniq.length === 2 ? [uniq[1]] : uniq;
+    const ac = pick.map(h => hexToBytes(h)).find(b => b.length >= 2 && b[0] === 0xac);
+    if (!ac) return null;
+    const flags = ac[1];
+    return {
+      flags,
+      category: (flags >> 4) & 0x07,
+      subtype: flags & 0x0f,
+      protocolVer: ac.length > 8 ? ac[8] : 1,
+      ok: ((flags >> 4) & 0x07) === 2 && (flags & 0x0f) === 7
+    };
+  },
+
+  // 用户资料帧（20 字节）：AC deviceType 时间4BE 时区刻度 单位 用户号 身高 体重2BE 年龄 性别 0(2BE) 功能位 0 D0 + 校验和
+  // sex: 1=男 2=女；unit: 0=kg；返回 number[]
+  buildUserInfo({ deviceType = 0x27, nowEpochSeconds, utcQuarters = 32, unit = 0, user = 1, heightCm, age, sex, targetWeightX100 = 0 }) {
+    const be4 = (v) => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+    const be2 = (v) => [(v >> 8) & 0xff, v & 0xff];
+    const p = [
+      0xac, deviceType & 0xff, ...be4(nowEpochSeconds >>> 0), utcQuarters & 0xff,
+      unit & 0xff, user & 0xff, heightCm & 0xff, ...be2(targetWeightX100),
+      age & 0xff, sex & 0xff, ...be2(0), 0x03, 0x00, 0xd0
+    ];
+    while (p.length < 19) p.push(0);
+    let sum = 0;
+    for (let i = 2; i < 19; i++) sum += p[i] & 0xff;
+    p.push(sum & 0xff);
+    return p;
+  },
+
+  // 解析一帧通知（20 字节）→ [{type:'weight'|'adc',...}]；非法帧返回 []
+  decode(raw) {
+    if (!raw || raw.length < 20) return [];
+    const first = raw[1] & 0xff;
+    if (first & 0x80) return []; // bit7 置位：加密/非本协议
+    const body = raw.slice(2, 20);
+    let sum = 0;
+    for (let i = 0; i < 17; i++) sum += body[i] & 0xff;
+    if ((sum & 0x1f) !== (body[17] & 0x1f)) return []; // CRC
+
+    const packetType = body[16] & 0xff;
+    const payload = [first, ...body.slice(0, 16), (body[17] & 0xe0) >> 5];
+
+    if (packetType === this.PACKET_WEIGHT) {
+      const encoded = this._u32(payload, 1);
+      const f = this.weightFields(encoded);
+      return [{ type: 'weight', weightKg: f.weightKg, stable: f.stable, algType: payload[payload.length - 2] & 0xff }];
+    }
+    if (packetType === this.PACKET_ADC) {
+      const count = payload[1] & 0xff;
+      let offset = 3;
+      const adcs = [];
+      for (let i = 0; i < count; i++) {
+        if (offset + 2 > payload.length) return [];
+        adcs.push(this._u16(payload, offset));
+        offset += 2;
+      }
+      if (offset >= payload.length) return [];
+      const mode = payload[offset] & 0xff;
+      offset += 1;
+      let weightKg = null, stable = false;
+      if (mode === 1 && offset + 4 <= payload.length) {
+        const f = this.weightFields(this._u32(payload, offset));
+        weightKg = f.weightKg;
+        stable = f.stable;
+      }
+      const algType = payload[payload.length - 2] & 0xff;
+      return [{
+        type: 'adc', adcs, impedances: this.normalizeImpedances(adcs, weightKg),
+        weightKg, stable, algType
+      }];
+    }
+    return [];
+  },
+
+  // 体重编码字段：低 18 位 = 克，bits18-20 = 分度，bit31 = 稳定
+  weightFields(encoded) {
+    encoded = encoded >>> 0;
+    const grams = encoded & 0x3ffff;
+    const kgDivision = (encoded & 0x1c0000) >>> 18;
+    const precision = [0, 1, 2].includes(kgDivision) ? 2 : 1;
+    return { weightKg: this.g2kg(grams, kgDivision, precision), stable: !!((encoded >>> 31) & 1) };
+  },
+
+  // 阻抗规整：5 频率重排；≥1500 的原始值按体重修正
+  normalizeImpedances(adcs, weightKg) {
+    if (adcs.length === 5) {
+      return [adcs[4], adcs[0], adcs[1], adcs[2], adcs[3]].map(v => Math.round(v * 100) / 100);
+    }
+    return adcs.map(v => {
+      let adjusted = v;
+      if (adjusted >= 1500 && (weightKg || 0) > 0) {
+        adjusted = (((adjusted - 1000) + ((weightKg * 10) * -0.4)) / 0.6) / 10;
+      }
+      return Math.round(adjusted * 100) / 100;
+    });
+  },
+
+  // 克 → kg（按分度取整到秤的显示精度），与参考实现的整数运算一致
+  g2kg(grams, division, precision) {
+    return this._gunit(grams / 1000, division, precision);
+  },
+  _getInt(v) {
+    const whole = Math.trunc(v);
+    return (Math.trunc(v * 10) % 10) >= 9 ? whole + 1 : whole;
+  },
+  _gunit(value, division, precision) {
+    switch (division) {
+      case 0: return Math.trunc((this._getInt(value * 1000) + 5) / 10) / 100;
+      case 1: {
+        let raw = this._getInt(value * 1000);
+        if (raw % 10 === 9) raw += 10;
+        let scaled = Math.trunc(raw / 10);
+        if (scaled % 2 !== 0) scaled += 1;
+        return scaled / 100;
+      }
+      case 2: {
+        const raw = Math.trunc((this._getInt(value * 1000) + 20) / 10);
+        const scaled = (raw % 10) >= 5 ? (Math.trunc(raw / 10) * 10) + 5 : Math.trunc(raw / 10) * 10;
+        return scaled / 100;
+      }
+      case 3: return Math.trunc((this._getInt(value * 100) + 5) / 10) / 10;
+      case 4: {
+        let raw = this._getInt(value * 100);
+        if (raw % 10 === 9) raw += 10;
+        let scaled = Math.trunc(raw / 10);
+        if (scaled % 2 !== 0) scaled += 1;
+        return scaled / 10;
+      }
+      default: return parseFloat(value.toFixed(precision));
+    }
+  },
+  _u16(b, o) { return ((b[o] & 0xff) << 8) | (b[o + 1] & 0xff); },
+  _u32(b, o) { return (((b[o] & 0xff) << 24) | ((b[o + 1] & 0xff) << 16) | ((b[o + 2] & 0xff) << 8) | (b[o + 3] & 0xff)) >>> 0; },
+
+  // ===== 体成分（Segal 1988 BIA 公式估算，与 ant-afu-scale 系实现一致） =====
+  // impedances 里取第一落在 100~1500Ω 的值；无有效阻抗 → Deurenberg BMI 公式兜底
+  estimateBodyComposition(weightKg, heightCm, age, isMale, impedances) {
+    if (!(weightKg > 0) || !(heightCm > 0) || !(age > 0)) return null;
+    const resistance = (impedances || []).find(z => z >= 100 && z <= 1500);
+    let baseBodyFat, model, ffm;
+    if (resistance != null) {
+      const seg = this._segalFfm(weightKg, heightCm, age, isMale, resistance);
+      ffm = Math.min(Math.max(seg.ffm, weightKg * 0.35), weightKg * 0.97);
+      baseBodyFat = 100 * (weightKg - ffm) / weightKg;
+      model = seg.model;
+    } else {
+      const bmi = weightKg / ((heightCm / 100) * (heightCm / 100));
+      const sexValue = isMale ? 1 : 0;
+      baseBodyFat = (1.20 * bmi) + (0.23 * age) - (10.8 * sexValue) - 5.4;
+      model = 'deurenberg_bmi_fallback';
+      ffm = weightKg * (1 - baseBodyFat / 100);
+    }
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    const bodyFat = clamp(baseBodyFat, isMale ? 3 : 8, 60);
+    const lean = 100 - bodyFat;
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const kg = (p) => r1(weightKg * p / 100);
+    const musclePercent = clamp(100 - bodyFat - (isMale ? 4.5 : 4.0), 20, 95);
+    const bodyFatR = r1(bodyFat);
+    const ffmR = r1(weightKg - weightKg * bodyFat / 100);
+    return {
+      model,
+      resistanceOhm: resistance != null ? Math.round(resistance) : null,
+      bodyFatPercent: bodyFatR,
+      fatFreeMassKg: ffmR,
+      musclePercent: r1(musclePercent),
+      muscleMassKg: kg(musclePercent),
+      waterPercent: r1(clamp(lean * 0.70, 25, 80)),
+      proteinPercent: r1(clamp(lean * 0.238, 5, 35)),
+      bonePercent: r1(isMale ? 4.5 : 4.0),
+      boneMassKg: kg(isMale ? 4.5 : 4.0),
+      skeletalMusclePercent: r1(clamp(musclePercent * 0.527, 10, 70)),
+      subcutaneousFatPercent: r1(clamp(bodyFat * 0.72, 1, bodyFat)),
+      visceralFatIndex: null // Segal 估算不含内脏脂肪，BODY_METRICS 相应行会跳过
+    };
+  },
+
+  _segalFfm(weightKg, heightCm, age, isMale, resistance) {
+    const h2 = heightCm * heightCm;
+    const fatOf = (ffm) => 100 * (weightKg - ffm) / weightKg;
+    if (isMale) {
+      let ffm = 9.33285 + 0.00066360 * h2 - 0.02117 * resistance + 0.62854 * weightKg - 0.12380 * age;
+      if (fatOf(ffm) < 20) return { ffm, model: 'segal_3a_male_lt20' };
+      ffm = 14.52435 + 0.00088580 * h2 - 0.02999 * resistance + 0.42688 * weightKg - 0.07002 * age;
+      return { ffm, model: 'segal_3b_male_ge20' };
+    }
+    let ffm = 10.43485 + 0.00064602 * h2 - 0.01397 * resistance + 0.42087 * weightKg;
+    if (fatOf(ffm) < 30) return { ffm, model: 'segal_3c_female_lt30' };
+    ffm = 9.37938 + 0.00091186 * h2 - 0.01466 * resistance + 0.29990 * weightKg - 0.07012 * age;
+    return { ffm, model: 'segal_3d_female_ge30' };
+  }
+};
+
 // ===== PROFILE.md 解析（秤 profile 帧 + 体成分 + BMR 都需要） =====
 
 // 宽容解析；缺项用默认值（男/30岁/170cm/目标65kg）
@@ -576,7 +805,7 @@ export async function recordBodyMeasurement(fm, measurement, profile, now = new 
       lines.push(`- 体水分率: ${c.waterPercent.toFixed(1)}%`);
       lines.push(`- 蛋白质率: ${c.proteinPercent.toFixed(1)}%`);
       lines.push(`- 骨量: ${c.boneMassKg.toFixed(2)}kg`);
-      lines.push(`- 内脏脂肪指数: ${c.visceralFatIndex}`);
+      if (c.visceralFatIndex != null) lines.push(`- 内脏脂肪指数: ${c.visceralFatIndex}`);
     }
   }
   const latestBlock = `## 最新数据\n${lines.join('\n')}`;
@@ -645,9 +874,11 @@ export class ScaleManager {
       committedSeen: false, lastLiveWeightG: null,
       lastFrameAt: 0, weighStartedAt: 0,
       historyRecords: [], profile: null, timers: [],
+      // 协议与沃莱会话状态
+      protocol: null, wlDeviceType: null, wlProtocolVer: null, wlWriteMode: 'write', wlStableWeight: null,
       // 调试计数
       framesByType: {}, writesOk: 0, writesFail: 0, scanCandidates: 0,
-      _lastLoggedLiveG: null, _lastLoggedLiveAt: 0
+      _lastLoggedLiveG: null, _lastLoggedLiveKg: null, _lastLoggedLiveAt: 0
     };
     // 结果 promise 在会话创建时就挂好（通知可能早于后续步骤到达）
     session.resultPromise = new Promise((resolve, reject) => {
@@ -691,6 +922,8 @@ export class ScaleManager {
       status('scan', '正在搜索体脂秤…请确认秤已唤醒（轻踩一下激活）');
       const device = await this._scanForScale(session);
       session.deviceId = device.deviceId;
+      session.wlDeviceType = device.wlDeviceType;
+      session.wlProtocolVer = device.wlProtocolVer;
       scaleLog('I', `选定目标秤: ${device.name || '(无名)'} ${device.deviceId}`);
       session.stage = 'connect';
       status('connect', `找到 ${device.name || device.deviceId}，连接中…`);
@@ -711,7 +944,7 @@ export class ScaleManager {
         source: profileMd ? 'exists' : 'missing(用默认值)'
       });
 
-      // ---- 订阅所有 notify/indicate 特征（秤在其中一个上回报） ----
+      // ---- 订阅数据特征 ----
       session.stage = 'subscribe';
       for (const ch of session.notifyChars) {
         const key = `notification|${session.deviceId}|${ch.service}|${ch.characteristic}`;
@@ -721,14 +954,33 @@ export class ScaleManager {
         scaleLog('I', `已订阅 ${ch.characteristic}`);
       }
 
-      // ---- 握手：时间同步 + 2x sync-request；随后请求历史导出 ----
-      session.stage = 'handshake';
-      session.lastFrameAt = Date.now();
-      await this._sendHandshake(session);
-      await this._requestHistoryDump(session);
-      scaleLog('I', '握手完成：timeSync + 2x sync + historyDump(0x8e) 已发');
-      session.stage = 'ready';
-      status('ready', '已连接 ✓ 轻站上秤开始测量');
+      if (session.protocol === 'welland') {
+        // 沃莱 27 协议：订阅成功后写一次用户资料，秤即进入测量状态
+        session.stage = 'handshake';
+        const p = session.profile;
+        const dt = session.wlDeviceType != null ? session.wlDeviceType : 0x27;
+        const quarters = Math.round(-new Date().getTimezoneOffset() * 60 / 900) & 0xff;
+        await this._writeFrame(session, Welland27.buildUserInfo({
+          deviceType: dt,
+          nowEpochSeconds: Math.floor(Date.now() / 1000),
+          utcQuarters: quarters,
+          unit: 0, user: 1,
+          heightCm: p.heightCm, age: p.age,
+          sex: p.sex === 1 ? 1 : 2
+        }), 'wl-userInfo');
+        scaleLog('I', `沃莱用户资料已写（deviceType=0x${dt.toString(16)} 身高${p.heightCm} 年龄${p.age} 性别${p.sex === 1 ? 1 : 2} 时区刻度${quarters}）`);
+        session.stage = 'ready';
+        status('ready', '已连接 ✓ 请赤脚站上秤，保持站立直到测量完成');
+      } else {
+        // ---- B1 握手：时间同步 + 2x sync-request；随后请求历史导出 ----
+        session.stage = 'handshake';
+        session.lastFrameAt = Date.now();
+        await this._sendHandshake(session);
+        await this._requestHistoryDump(session);
+        scaleLog('I', '握手完成：timeSync + 2x sync + historyDump(0x8e) 已发');
+        session.stage = 'ready';
+        status('ready', '已连接 ✓ 轻站上秤开始测量');
+      }
 
       // 总超时兜底：3 分钟内未完成则报错
       this._armOverallTimeout(session, 180000);
@@ -795,9 +1047,23 @@ export class ScaleManager {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          // 广播里解析沃莱协议 deviceType（0x27AC 厂商/服务数据，payload 首字节 0xAC）
+          let wlDeviceType = null, wlProtocolVer = null;
+          try {
+            const adv = Welland27.parseAdvertisement(result.manufacturerData, result.serviceData);
+            if (adv) {
+              wlDeviceType = adv.ok ? adv.flags : null;
+              wlProtocolVer = adv.protocolVer;
+              scaleLog('I', `广播协议数据: flags=0x${adv.flags.toString(16)} category=${adv.category} subtype=${adv.subtype} protocolVer=${adv.protocolVer}${adv.ok ? '' : '（类目不符，用默认 deviceType）'}`);
+            } else {
+              scaleLog('W', '广播中无 0xAC 协议数据（厂商/服务数据缺失），deviceType 用默认 0x27');
+            }
+          } catch (e) {
+            scaleLog('W', `广播协议数据解析异常: ${e && e.message}`);
+          }
           await cleanup();
           scaleLog('I', `匹配到体脂秤: name="${name}" id=${id} rssi=${rssi}（依据：${nameHit ? '名字含AFU' : 'serviceData含fc50'}）`);
-          resolve({ deviceId: id, name });
+          resolve({ deviceId: id, name, wlDeviceType, wlProtocolVer });
         });
         // scanMode 2 = SCAN_MODE_LOW_LATENCY（前台高占空比，找秤更快）
         await ble.requestLEScan({ allowDuplicates: false, scanMode: 2 });
@@ -812,49 +1078,70 @@ export class ScaleManager {
     });
   }
 
-  // 从 GATT 树定位写通道 + 全部可订阅特征
+  // 从 GATT 树定位协议与通道：
+  //   有 FFB0/FFB1/FFB2 → 沃莱 27 协议（AFU-WL-A1）；有 af000002 → 阿福 B1 私有协议
   _setupChannels(session, gattResult) {
     const services = (gattResult && gattResult.services) || [];
-    const writeChar = AFU.WRITE_CHARACTERISTIC;
     let writeService = null;
     const notifyChars = [];
     const gattMap = []; // 调试：完整 GATT 树快照
+    let wlSvc = null, wlWrite = false, wlWriteNoResp = false, wlNotify = false;
     for (const svc of services) {
       const svcUuid = String(svc.uuid || '').toLowerCase();
       for (const ch of svc.characteristics || []) {
         const uuid = String(ch.uuid || '').toLowerCase();
         const props = ch.properties || {};
         gattMap.push({ s: svcUuid.slice(4, 8), c: uuid.slice(4, 8), p: props });
-        if (uuid === writeChar) writeService = svcUuid || AFU.WRITE_SERVICE;
+        if (uuid === AFU.WRITE_CHARACTERISTIC) writeService = svcUuid || AFU.WRITE_SERVICE;
+        if (svcUuid === Welland27.SERVICE) {
+          if (uuid === Welland27.WRITE_CHARACTERISTIC) {
+            wlSvc = svcUuid; wlWrite = true; wlWriteNoResp = !!props.writeWithoutResponse;
+          }
+          if (uuid === Welland27.NOTIFY_CHARACTERISTIC) wlNotify = true;
+        }
         if (props.notify || props.indicate) {
           notifyChars.push({ service: svcUuid, characteristic: uuid });
         }
       }
     }
     scaleLog('I', `GATT 树 ${services.length} 个 service（短码 s/c 为 UUID 第 5-8 位）`, gattMap);
-    if (!writeService) {
-      scaleLog('W', `未在 GATT 树中找到写特征 ${writeChar}，按规范默认使用 ${AFU.WRITE_SERVICE}`);
-      writeService = AFU.WRITE_SERVICE; // GATT 树拿不到时按规范默认
+
+    if (wlSvc && wlWrite && wlNotify) {
+      // 沃莱 27 协议（AFU-WL-TZ-A1）：只订阅 FFB2，命令写 FFB1
+      session.protocol = 'welland';
+      session.writeService = wlSvc;
+      session.wlWriteMode = wlWriteNoResp ? 'writeWithoutResponse' : 'write';
+      session.notifyChars = [{ service: wlSvc, characteristic: Welland27.NOTIFY_CHARACTERISTIC }];
+      scaleLog('I', `协议识别：沃莱27（A1）— 写 ${wlWriteNoResp ? 'FFB1(no-response)' : 'FFB1(with-response)'} / 订阅 FFB2`);
+      return;
     }
-    session.writeService = writeService;
-    session.notifyChars = notifyChars;
-    scaleLog('I', `通道选定: 写=${writeService.slice(4, 8)}/${writeChar.slice(4, 8)} 订阅=${notifyChars.length} 个`, notifyChars.map(c => `${c.service.slice(4, 8)}/${c.characteristic.slice(4, 8)}`));
-    if (notifyChars.length === 0) {
-      scaleLog('E', 'GATT 树中没有任何 notify/indicate 特征，秤无法回报数据', getScaleDump());
-      throw new Error('体脂秤未提供数据通道（特征订阅失败）');
+    if (writeService) {
+      session.protocol = 'afu-b1';
+      session.writeService = writeService;
+      session.notifyChars = notifyChars;
+      scaleLog('I', `协议识别：阿福B1 — 写=${writeService.slice(4, 8)}/${AFU.WRITE_CHARACTERISTIC.slice(4, 8)} 订阅=${notifyChars.length} 个`,
+        notifyChars.map(c => `${c.service.slice(4, 8)}/${c.characteristic.slice(4, 8)}`));
+      if (notifyChars.length === 0) {
+        scaleLog('E', 'GATT 树中没有任何 notify/indicate 特征，秤无法回报数据', getScaleDump());
+        throw new Error('体脂秤未提供数据通道（特征订阅失败）');
+      }
+      return;
     }
+    scaleLog('E', 'GATT 树既无沃莱 FFB0/FFB1/FFB2 也无 af000002 写通道——未知协议', getScaleDump());
+    throw new Error('这台秤的蓝牙协议暂不支持（详见调试日志）');
   }
 
   // 写帧（串行：ACK/握手/提交可能并发触发，GATT 写必须排队）；label 用于日志定位
   _writeFrame(session, frameBytes, label = 'frame') {
     const { ble } = session;
     const hex = bytesToHex(frameBytes);
+    const method = session.wlWriteMode === 'writeWithoutResponse' ? 'writeWithoutResponse' : 'write';
     const run = async () => {
       try {
-        await ble.write({
+        await ble[method]({
           deviceId: session.deviceId,
           service: session.writeService,
-          characteristic: AFU.WRITE_CHARACTERISTIC,
+          characteristic: session.protocol === 'welland' ? Welland27.WRITE_CHARACTERISTIC : AFU.WRITE_CHARACTERISTIC,
           value: hex
         });
         session.writesOk++;
@@ -903,6 +1190,10 @@ export class ScaleManager {
       return;
     }
     logHexRing(hexStr);
+    if (session.protocol === 'welland') {
+      this._onWellandNotify(session, hexStr);
+      return;
+    }
     let frame;
     try { frame = AfuB1.parse(hexToBytes(hexStr)); } catch (e) {
       scaleLog('W', `RX 解析异常: ${e && e.message}（${hexStr}）`);
@@ -940,7 +1231,95 @@ export class ScaleManager {
     }
   }
 
-  // 实时体重 0x51
+  // ===== 沃莱 27 协议事件处理（AFU-WL-A1） =====
+  // 流程：0xD5 实时体重帧（bit31=稳定）→ 稳定后秤测阻抗 → 0xD6 ADC 帧即完成
+  _onWellandNotify(session, hexStr) {
+    let events;
+    try { events = Welland27.decode(hexToBytes(hexStr)); } catch (e) {
+      scaleLog('W', `沃莱帧解析异常: ${e && e.message}（${hexStr}）`);
+      return;
+    }
+    if (events.length === 0) {
+      // 非 0xAC 数据帧（如加密分片）——留痕即可
+      scaleLog('D', `RX 非数据帧: ${hexStr}`);
+      return;
+    }
+    session.lastFrameAt = Date.now();
+    for (const ev of events) {
+      session.framesByType[ev.type] = (session.framesByType[ev.type] || 0) + 1;
+      if (ev.type === 'weight') this._onWlWeight(session, ev, hexStr);
+      else this._onWlAdc(session, ev, hexStr);
+    }
+  }
+
+  _onWlWeight(session, ev, hexStr) {
+    session.stage = 'live';
+    if (!session.weighStartedAt) {
+      session.weighStartedAt = Date.now();
+      scaleLog('I', `上秤：首次体重帧 ${ev.weightKg}kg（${hexStr}）`);
+    }
+    session.lastLiveWeightG = Math.round(ev.weightKg * 1000);
+    try { session.hooks.onLiveWeight && session.hooks.onLiveWeight(ev.weightKg); } catch (_) {}
+
+    const now = Date.now();
+    if (session._lastLoggedLiveKg === null
+      || Math.abs(ev.weightKg - session._lastLoggedLiveKg) > 0.05
+      || now - session._lastLoggedLiveAt > 2000) {
+      scaleLog('D', `RX 0xD5 体重 ${ev.weightKg}kg ${ev.stable ? '稳定' : '测量中'} alg=${ev.algType}`);
+      session._lastLoggedLiveKg = ev.weightKg;
+      session._lastLoggedLiveAt = now;
+    }
+
+    if (ev.stable && !session.weightFinal) {
+      session.weightFinal = true;
+      session.wlStableWeight = ev.weightKg;
+      session.stage = 'locked';
+      scaleLog('I', `体重稳定 ${ev.weightKg}kg → 等待阻抗帧 0xD6（15s 无阻抗则按仅体重收尾）`);
+      try { session.hooks.onStatus && session.hooks.onStatus('locked', '体重已锁定，请保持站立测量体脂…'); } catch (_) {}
+      // 兜底：稳定后 15s 仍无 ADC（穿鞋/快速称重）→ 仅体重收尾
+      session.timers.push(setTimeout(() => {
+        if (!session.done && !session.committedSeen && session.wlStableWeight != null) {
+          scaleLog('W', '稳定体重后 15s 未收到阻抗帧 → 按仅体重收尾（无体脂率）');
+          this._finishWl(session, session.wlStableWeight, null);
+        }
+      }, 15000));
+    }
+  }
+
+  _onWlAdc(session, ev, hexStr) {
+    if (session.done || session.committedSeen) return;
+    session.committedSeen = true;
+    const weight = ev.weightKg != null ? ev.weightKg : session.wlStableWeight;
+    if (weight == null) {
+      scaleLog('W', `RX 0xD6 阻抗帧但无体重（adc=${JSON.stringify(ev.adcs)}），等待后续帧`, { hexStr });
+      session.committedSeen = false;
+      return;
+    }
+    scaleLog('I', `RX 0xD6 阻抗帧: adc=${JSON.stringify(ev.adcs)} 阻抗=${JSON.stringify(ev.impedances)} 体重=${ev.weightKg ?? '沿用稳定值'} alg=${ev.algType}（${hexStr}）`);
+    this._finishWl(session, weight, ev);
+  }
+
+  // 沃莱协议收尾：Segal 公式估算体成分 → 走统一 _finish
+  _finishWl(session, weightKg, adcEv) {
+    const p = session.profile || parseProfileMd(null);
+    const impedances = adcEv ? adcEv.impedances : null;
+    const comp = adcEv
+      ? Welland27.estimateBodyComposition(weightKg, p.heightCm, p.age, p.sex === 1, impedances)
+      : null;
+    const resistance = comp && comp.resistanceOhm != null ? comp.resistanceOhm
+      : (impedances ? (impedances.find(z => z >= 100 && z <= 1500) ?? null) : null);
+    scaleLog('I', `沃莱测量完成: ${weightKg}kg 阻抗=${resistance ?? '无'} 体脂率=${comp ? comp.bodyFatPercent + '%' : '—(无阻抗)'} 模型=${comp ? comp.model : '—'}`);
+    this._finish(session, {
+      weightKg,
+      impedanceOhm: resistance,
+      bodyFatPercent: comp ? comp.bodyFatPercent : null,
+      composition: comp,
+      timestamp: null,
+      source: adcEv ? 'welland' : 'welland-weight-only'
+    });
+  }
+
+  // 实时体重 0x51（B1 协议）
   _onLive(session, frame, hexStr) {
     session.liveSeen = true;
     session.stage = 'live';
@@ -1081,13 +1460,15 @@ export class ScaleManager {
     scaleLog('I', `测量结果确定: ${(raw.weightKg).toFixed(2)}kg 阻抗=${raw.impedanceOhm ?? '无'} 来源=${raw.source}（历史记录 ${session.historyRecords.length} 条）`);
     session.resultResolve && session.resultResolve({ ...raw, historyRecords: session.historyRecords });
 
-    // 尽力复位秤（FINAL profile + 时间同步 + sync，武装下一次称重）
-    try {
-      await this._sendProfile(session, 'FINAL');
-      await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)), 'timeSync-final');
-      await this._sendSyncPair(session);
-    } catch (e) {
-      scaleLog('W', `复位秤失败（不影响本次结果）: ${e && e.message}`);
+    // B1：尽力复位秤（FINAL profile + 时间同步 + sync，武装下一次称重）；沃莱断开即可
+    if (session.protocol !== 'welland') {
+      try {
+        await this._sendProfile(session, 'FINAL');
+        await this._writeFrame(session, AfuB1.buildTimeSync(Math.floor(Date.now() / 1000)), 'timeSync-final');
+        await this._sendSyncPair(session);
+      } catch (e) {
+        scaleLog('W', `复位秤失败（不影响本次结果）: ${e && e.message}`);
+      }
     }
     await this._cleanupConnection(session);
     logSessionEnd(session, 'ok');
