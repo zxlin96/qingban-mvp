@@ -445,6 +445,29 @@ test('Welland27 广播解析：厂商/服务数据 → deviceType', () => {
   assert.equal(Welland27.parseAdvertisement({}, {}), null);
 });
 
+test('Welland27.matchAdvertisement 三路匹配', () => {
+  // ① 名字含 AFU（大小写不敏感）
+  let m = Welland27.matchAdvertisement('afu-wl-tz-a1', {}, {});
+  assert.equal(m.hit, true);
+  assert.equal(m.reason, '名字含AFU');
+  // ② 名字为空但厂商数据 10156/0xAC（沃莱指纹，隐私模式）
+  m = Welland27.matchAdvertisement('', { '10156': 'ac2711223344556601' }, {});
+  assert.equal(m.hit, true);
+  assert.equal(m.reason, '厂商数据0x27AC/0xAC');
+  assert.ok(m.adv && m.adv.ok);
+  // ③ serviceData 带 fc50（B1 兜底）
+  m = Welland27.matchAdvertisement('', {}, { '0000fc50-0000-1000-8000-00805f9b34fb': '00' });
+  assert.equal(m.hit, true);
+  assert.equal(m.reason, 'serviceData含fc50');
+  // ④ 无关设备不命中
+  m = Welland27.matchAdvertisement('LEBOOO优漾', { '89': '0102' }, {});
+  assert.equal(m.hit, false);
+  m = Welland27.matchAdvertisement('', { '6': 'aabb' }, {});
+  assert.equal(m.hit, false); // companyId 非 0x27AC，即使 payload 以 ac 开头也不算
+  m = Welland27.matchAdvertisement('', {}, {});
+  assert.equal(m.hit, false);
+});
+
 test('Welland27 Segal 体成分（男 74.3kg/168cm/28y/500Ω）', () => {
   const c = Welland27.estimateBodyComposition(74.3, 168, 28, true, [500]);
   assert.ok(c, '应返回成分');

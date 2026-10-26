@@ -53,7 +53,8 @@ export const AFU = {
   IDLE_DELAY_MS: 2000,     // 秤静默多久算「人已下秤」
   IDLE_POLL_MS: 250,
   COMMIT_TIMEOUT_MS: 15000, // 提交后等新 0x54 的上限，超时回退实时锁定值
-  SCAN_TIMEOUT_MS: 30000,   // 扫描窗口；秤常需踩一下才广播，留足唤醒时间
+  SCAN_TIMEOUT_MS: 45000,   // 扫描窗口；秤常需踩一下才广播，留足唤醒时间
+  DIRECT_CONNECT_TIMEOUT_MS: 8000, // 直连上次秤的上限（失败转扫描）
   CONNECT_TIMEOUT_MS: 15000
 };
 
@@ -530,6 +531,29 @@ export const Welland27 = {
     };
   },
 
+  // 广播匹配（纯函数，扫描回调用）：
+  //   ① 名字含 AFU（openScale 判定法，主判据）
+  //   ② 厂商数据 companyId=10156(0x27AC) 且 payload 首字节 0xAC（沃莱体脂秤指纹，名字可为空）
+  //   ③ serviceData 带 fc50（B1 兜底）
+  // 返回 { hit, reason, adv }；adv 为 parseAdvertisement 的解析结果（可能为 null）
+  matchAdvertisement(name, manufacturerData, serviceData) {
+    const nameHit = String(name || '').toUpperCase().includes('AFU');
+    if (nameHit) return { hit: true, reason: '名字含AFU', adv: this.parseAdvertisement(manufacturerData, serviceData) };
+    const mf = manufacturerData || {};
+    for (const [idStr, hex] of Object.entries(mf)) {
+      if (parseInt(idStr, 10) === 0x27ac && typeof hex === 'string' && hex.toLowerCase().startsWith('ac')) {
+        return { hit: true, reason: '厂商数据0x27AC/0xAC', adv: this.parseAdvertisement(mf, serviceData) };
+      }
+    }
+    const sd = serviceData || {};
+    for (const uuid of Object.keys(sd)) {
+      if (String(uuid).toLowerCase().includes('fc50')) {
+        return { hit: true, reason: 'serviceData含fc50', adv: this.parseAdvertisement(mf, sd) };
+      }
+    }
+    return { hit: false, reason: '', adv: null };
+  },
+
   // 用户资料帧（20 字节）：AC deviceType 时间4BE 时区刻度 单位 用户号 身高 体重2BE 年龄 性别 0(2BE) 功能位 0 D0 + 校验和
   // sex: 1=男 2=女；unit: 0=kg；返回 number[]
   buildUserInfo({ deviceType = 0x27, nowEpochSeconds, utcQuarters = 32, unit = 0, user = 1, heightCm, age, sex, targetWeightX100 = 0 }) {
@@ -876,6 +900,7 @@ export class ScaleManager {
       historyRecords: [], profile: null, timers: [],
       // 协议与沃莱会话状态
       protocol: null, wlDeviceType: null, wlProtocolVer: null, wlWriteMode: 'write', wlStableWeight: null,
+      _scanCountdown: null,
       // 调试计数
       framesByType: {}, writesOk: 0, writesFail: 0, scanCandidates: 0,
       _lastLoggedLiveG: null, _lastLoggedLiveKg: null, _lastLoggedLiveAt: 0
@@ -917,19 +942,44 @@ export class ScaleManager {
         }
       }
 
-      // ---- 扫描 ----
-      session.stage = 'scan';
-      status('scan', '正在搜索体脂秤…请确认秤已唤醒（轻踩一下激活）');
-      const device = await this._scanForScale(session);
-      session.deviceId = device.deviceId;
-      session.wlDeviceType = device.wlDeviceType;
-      session.wlProtocolVer = device.wlProtocolVer;
-      scaleLog('I', `选定目标秤: ${device.name || '(无名)'} ${device.deviceId}`);
-      session.stage = 'connect';
-      status('connect', `找到 ${device.name || device.deviceId}，连接中…`);
+      // ---- 直连上次的秤（若有）：成功则跳过扫描；失败/超时转入扫描 ----
+      session.stage = 'direct-connect';
+      const remembered = await this._loadRememberedDevice();
+      let connected = false;
+      if (remembered) {
+        status('connect', '正在连接上次的体脂秤…');
+        scaleLog('I', `尝试直连上次秤: ${remembered.name || ''} ${remembered.deviceId}`);
+        try {
+          await this._withTimeout(ble.connect({ deviceId: remembered.deviceId }),
+            AFU.DIRECT_CONNECT_TIMEOUT_MS, '直连超时');
+          session.deviceId = remembered.deviceId;
+          connected = true;
+          scaleLog('I', `直连成功（${session.deviceId}）`);
+        } catch (e) {
+          scaleLog('W', `直连失败（${e && e.message}），转入扫描（秤可能未唤醒或地址已变）`);
+          // 中止挂起的原生连接，避免与后续扫描连接冲突
+          await ble.disconnect({ deviceId: remembered.deviceId }).catch(() => {});
+        }
+      }
 
-      // ---- 连接（Android 侧连接后自动做服务发现） ----
-      await this._withTimeout(ble.connect({ deviceId: session.deviceId }), AFU.CONNECT_TIMEOUT_MS, '连接超时');
+      // ---- 扫描（直连未成功时） ----
+      if (!connected) {
+        session.stage = 'scan';
+        const device = await this._scanForScale(session);
+        session.deviceId = device.deviceId;
+        session.wlDeviceType = device.wlDeviceType;
+        session.wlProtocolVer = device.wlProtocolVer;
+        scaleLog('I', `选定目标秤: ${device.name || '(无名)'} ${device.deviceId}`);
+      }
+
+      // ---- 服务发现与协议识别（扫描路径需先建立 GATT 连接） ----
+      session.stage = 'connect';
+      status('connect', '连接中…');
+      if (!connected) {
+        await this._withTimeout(ble.connect({ deviceId: session.deviceId }), AFU.CONNECT_TIMEOUT_MS, '连接超时');
+      }
+      // 记住这台秤（下次直连优先）
+      await this._saveRememberedDevice(session.deviceId, remembered ? remembered.name : '');
       scaleLog('I', `GATT 已连接（${session.deviceId}）`);
       session.stage = 'services';
       const gatt = await ble.getServices({ deviceId: session.deviceId });
@@ -993,20 +1043,37 @@ export class ScaleManager {
   }
 
   // 扫描 AFU 秤：全量扫描（不做 service 硬件过滤——部分秤广播不带 0xfc50 service UUID，
-  // 硬件过滤会滤成 0 结果，v3.18.3 真机已踩坑），回调里按「名字含 AFU」匹配
-  // （openScale 的判定法），广播带 fc50 serviceData 的无名设备作兜底候选；
-  // 每个候选设备留痕进日志，便于按名字/厂商数据识别秤
+  // 硬件过滤会滤成 0 结果，v3.18.3 真机已踩坑），回调内按 Welland27.matchAdvertisement
+  // 匹配（名字 AFU / 厂商数据 0x27AC / serviceData fc50）；候选设备全留痕，
+  // 近距离（rssi≥-70）无名设备的厂商数据原文也记录——用于识别「改名/隐私地址」状态的秤
   _scanForScale(session) {
     const { ble } = session;
     return new Promise(async (resolve, reject) => {
       let settled = false;
-      const seen = new Map(); // deviceId -> {name, rssi}
+      const seen = new Map(); // deviceId -> {name, rssi, mfKeys, sdKeys}
       const cleanup = async () => {
         try { await ble.stopLEScan(); } catch (e) {
           scaleLog('W', `stopLEScan 失败: ${e && e.message}`);
         }
         try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
+        // 停倒计时
+        while (session._scanCountdown) {
+          const t = session._scanCountdown.pop();
+          clearInterval(t);
+        }
       };
+      const deadline = Date.now() + AFU.SCAN_TIMEOUT_MS;
+      // 倒计时提示：让用户知道扫描还在进行、该做什么
+      const tickStatus = () => {
+        const remain = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        try { session.hooks.onStatus && session.hooks.onStatus('scan',
+          `正在搜索体脂秤… ${remain}s（赤脚踩一下秤即可唤醒；若装了阿福/Fitdays 官方 App 请先关掉它们，秤被占用时不会广播）`); } catch (_) {}
+      };
+      const countdown = setInterval(tickStatus, 1000);
+      if (!session._scanCountdown) session._scanCountdown = [];
+      session._scanCountdown.push(countdown);
+      tickStatus();
+
       const timer = setTimeout(async () => {
         if (settled) return;
         settled = true;
@@ -1021,7 +1088,7 @@ export class ScaleManager {
         } else {
           const named = cand.filter(c => c.name).slice(0, 4)
             .map(c => `"${c.name}"(${c.rssi}dBm)`).join('、');
-          reject(new Error(`未找到名字含 AFU 的秤（附近有 ${cand.length} 个蓝牙设备${named ? '：' + named : ''}）。请踩秤唤醒后重试；仍失败请点「复制调试日志」反馈`));
+          reject(new Error(`未找到体脂秤（附近有 ${cand.length} 个蓝牙设备${named ? '：' + named : ''}）。请检查：①赤脚踩一下秤唤醒它；②如果手机装了阿福/Fitdays 官方 App，先关闭它们（秤被占用时不会广播）；③秤离手机近一点。仍失败请点「复制调试日志」反馈`));
         }
       }, AFU.SCAN_TIMEOUT_MS);
 
@@ -1032,42 +1099,41 @@ export class ScaleManager {
           if (!id) return;
           const name = (result && result.localName) || (dev && dev.name) || '';
           const rssi = (result && result.rssi) != null ? result.rssi : (dev && dev.rssi);
-          const sdKeys = (result && result.serviceData) ? Object.keys(result.serviceData) : [];
-          const mfKeys = (result && result.manufacturerData) ? Object.keys(result.manufacturerData) : [];
+          const mf = (result && result.manufacturerData) || {};
+          const sd = (result && result.serviceData) || {};
+          const mfKeys = Object.keys(mf);
+          const sdKeys = Object.keys(sd);
           if (!seen.has(id)) {
-            seen.set(id, { name, rssi });
+            seen.set(id, { name, rssi, mfKeys, sdKeys });
             if (seen.size <= 20) {
               scaleLog('D', `广播 #${seen.size}: name="${name}" id=${id} rssi=${rssi} mf=[${mfKeys}] sd=[${sdKeys.map(k => k.slice(4, 8))}]`);
             }
+            // 近距离无名设备：记录厂商数据原文（秤可能处于隐私模式不带名）
+            if (!name && rssi != null && rssi >= -70 && mfKeys.length > 0) {
+              scaleLog('I', `近距离无名广播（疑似秤）: id=${id} rssi=${rssi} mf=${JSON.stringify(mf)} sd=${JSON.stringify(sd)}`);
+            }
           }
-          // 匹配：名字含 AFU（主判据）；无名但 serviceData 带 fc50 的作兜底
-          const nameHit = String(name).toUpperCase().includes('AFU');
-          const sdHit = sdKeys.some(k => String(k).toLowerCase().includes('fc50'));
-          if (!nameHit && !sdHit) return;
+          // 匹配：名字 AFU / 厂商数据 0x27AC+0xAC / serviceData fc50
+          const m = Welland27.matchAdvertisement(name, mf, sd);
+          if (!m.hit) return;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          // 广播里解析沃莱协议 deviceType（0x27AC 厂商/服务数据，payload 首字节 0xAC）
-          let wlDeviceType = null, wlProtocolVer = null;
-          try {
-            const adv = Welland27.parseAdvertisement(result.manufacturerData, result.serviceData);
-            if (adv) {
-              wlDeviceType = adv.ok ? adv.flags : null;
-              wlProtocolVer = adv.protocolVer;
-              scaleLog('I', `广播协议数据: flags=0x${adv.flags.toString(16)} category=${adv.category} subtype=${adv.subtype} protocolVer=${adv.protocolVer}${adv.ok ? '' : '（类目不符，用默认 deviceType）'}`);
-            } else {
-              scaleLog('W', '广播中无 0xAC 协议数据（厂商/服务数据缺失），deviceType 用默认 0x27');
-            }
-          } catch (e) {
-            scaleLog('W', `广播协议数据解析异常: ${e && e.message}`);
-          }
           await cleanup();
-          scaleLog('I', `匹配到体脂秤: name="${name}" id=${id} rssi=${rssi}（依据：${nameHit ? '名字含AFU' : 'serviceData含fc50'}）`);
+          let wlDeviceType = null, wlProtocolVer = null;
+          if (m.adv) {
+            wlDeviceType = m.adv.ok ? m.adv.flags : null;
+            wlProtocolVer = m.adv.protocolVer;
+            scaleLog('I', `广播协议数据: flags=0x${m.adv.flags.toString(16)} category=${m.adv.category} subtype=${m.adv.subtype} protocolVer=${m.adv.protocolVer}${m.adv.ok ? '' : '（类目不符，用默认 deviceType）'}`);
+          } else {
+            scaleLog('W', `匹配命中但广播无 0xAC 协议数据，deviceType 用默认 0x27（依据：${m.reason}）`);
+          }
+          scaleLog('I', `匹配到体脂秤: name="${name}" id=${id} rssi=${rssi}（依据：${m.reason}）`);
           resolve({ deviceId: id, name, wlDeviceType, wlProtocolVer });
         });
         // scanMode 2 = SCAN_MODE_LOW_LATENCY（前台高占空比，找秤更快）
         await ble.requestLEScan({ allowDuplicates: false, scanMode: 2 });
-        scaleLog('I', 'LE 扫描已启动（全量无过滤 + LOW_LATENCY，回调内按 名字AFU/serviceData-fc50 匹配）');
+        scaleLog('I', 'LE 扫描已启动（全量无过滤 + LOW_LATENCY，匹配：名字AFU / 厂商0x27AC / serviceData-fc50）');
       } catch (e) {
         if (!settled) {
           settled = true; clearTimeout(timer); await cleanup();
@@ -1076,6 +1142,29 @@ export class ScaleManager {
         }
       }
     });
+  }
+
+  // 记住上次的秤（直连优先，省扫描；秤地址为静态随机，重装官方 App 前一般不变）
+  _rememberedKey() { return '.meta/scale-device.json'; }
+
+  async _loadRememberedDevice() {
+    try {
+      const raw = await this.fm.readFile(this._rememberedKey());
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || !d.deviceId) return null;
+      // 60 天内的记录才直连（地址可能因重置变化）
+      if (d.at && Date.now() - d.at > 60 * 86400 * 1000) return null;
+      return d;
+    } catch (_) { return null; }
+  }
+
+  async _saveRememberedDevice(deviceId, name) {
+    try {
+      await this.fm.writeFile(this._rememberedKey(),
+        JSON.stringify({ deviceId, name: name || '', at: Date.now() }));
+      scaleLog('I', `已记住体脂秤: ${name || deviceId}`);
+    } catch (_) {}
   }
 
   // 从 GATT 树定位协议与通道：
@@ -1518,6 +1607,7 @@ export class ScaleManager {
       scaleLog('W', `会话 #${session.seq} 中止（${reason}）stage=${session.stage}`, sessionSnapshot(session));
       try { if (session._scanHandle) await session._scanHandle.remove(); } catch (_) {}
       try { await session.ble.stopLEScan(); } catch (_) {}
+      if (session._scanCountdown) { while (session._scanCountdown.length) clearInterval(session._scanCountdown.pop()); }
       await this._cleanupConnection(session);
       session.resultReject && session.resultReject(new Error(reason === 'error' ? '连接中断，请重试' : '已取消称重'));
       logSessionEnd(session, reason === 'error' ? 'error' : 'cancelled');

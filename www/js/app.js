@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.20.1';
+const APP_VERSION = '3.20.2';
 const APP_VERSION_DATE = '2026-10-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.20.2', date: '2026-10-26',
+    items: [
+      '优化：搜秤成功率与速度 — ① 连接成功后记住这台秤（.meta/scale-device.json），下次点「蓝牙称重」直连优先（8s 超时自动转扫描），秤醒着时秒连；② 广播匹配新增厂商数据 0x27AC/0xAC 指纹（秤处于隐私模式不带名也能识别）；③ 扫描窗 30s→45s 并带倒计时提示（含"踩秤唤醒/关闭官方 App"提醒）；④ 未找到秤的报错按场景给出排查建议；近距离无名广播的厂商数据原文进日志便于识别'
+    ]
+  },
   {
     ver: '3.20.1', date: '2026-10-26',
     items: [
