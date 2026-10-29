@@ -328,3 +328,33 @@ describe('recognizeImages 图片预识别（两阶段发送）', () => {
     }
   });
 });
+
+// v3.20.3 — 图片识别辅助上下文：携带用户随图发送的文字
+describe('SparkLLM.buildRecognitionContext', () => {
+  test('用户附言放在最前', () => {
+    const ctx = SparkLLM.buildRecognitionContext({
+      userText: '帮我看这杯的配料表',
+      foodTypesMd: '## 主食\n- 包子',
+      historyLines: ['用户: 早上好', 'AI: 早']
+    });
+    assert.ok(ctx.startsWith('【用户附言（随图发送，识别时请结合）】\n帮我看这杯的配料表'), ctx);
+    const iNote = ctx.indexOf('用户附言');
+    const iFood = ctx.indexOf('食物种类清单');
+    const iHist = ctx.indexOf('今日对话记录');
+    assert.ok(iNote < iFood && iFood < iHist, '三段顺序应为 附言→清单→对话');
+  });
+
+  test('空段跳过、全空返回空串（零上下文识别）', () => {
+    assert.equal(SparkLLM.buildRecognitionContext({}), '');
+    assert.equal(SparkLLM.buildRecognitionContext({ userText: '  ' }), '');
+    const only = SparkLLM.buildRecognitionContext({ userText: '', foodTypesMd: '## 主食\n- 米饭' });
+    assert.ok(only.startsWith('【用户食物种类清单'));
+    assert.ok(!only.includes('用户附言') && !only.includes('今日对话记录'));
+  });
+
+  test('随图文字为空白/无文字时不产生空附言段', () => {
+    // 纯图片发送（无文字）——上下文不应出现空附言头
+    const ctx = SparkLLM.buildRecognitionContext({ userText: '', historyLines: ['用户: 昨天吃了火锅'] });
+    assert.equal(ctx, '【今日对话记录】\n用户: 昨天吃了火锅');
+  });
+});

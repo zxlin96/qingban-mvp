@@ -336,10 +336,25 @@ export class SparkLLM {
 
   // ===== 图片预识别 — 两阶段发送的第一阶段 =====
   // 图片单独发给视觉模型：不带主对话系统提示词（省掉整个固定前缀），仅一句极简识别指令
-  // + 可选轻量辅助上下文（食物种类清单/当日对话，由调用方构建，context 参数传入）；
+  // + 可选轻量辅助上下文（用户附言/食物种类清单/当日对话，由调用方构建，context 参数传入）；
   // 返回识别文字后由调用方与用户文字合并为纯文本消息走主对话（文本模型、无图片重复编码）。
   // 失败抛错，由调用方回退为「原图+文字」直发。max_tokens 给 4096 余量（thinking 模式会消耗输出 token）。
   static RECOGNIZE_HINT = '请识别图片内容，简要输出。若为食物：列出食物与分量，估算总热量（kcal）；若为体重秤/运动/其他：客观描述关键信息。只输出识别结果，不要给建议。';
+
+  // 组装图片识别辅助上下文（纯函数，可单测）。
+  // 用户附言（随图发送的文字）放最前——用户点明的关注点对识别最关键；
+  // 食物清单、今日对话依次附后。空段跳过，全空返回 ''（调用方按零上下文识别）。
+  static buildRecognitionContext({ userText = '', foodTypesMd = '', historyLines = [] } = {}) {
+    const parts = [];
+    const t = String(userText || '').trim();
+    if (t) parts.push(`【用户附言（随图发送，识别时请结合）】\n${t}`);
+    const ft = String(foodTypesMd || '').trim();
+    if (ft) parts.push(`【用户食物种类清单（识别时优先对照）】\n${ft}`);
+    if (Array.isArray(historyLines) && historyLines.length > 0) {
+      parts.push(`【今日对话记录】\n${historyLines.join('\n')}`);
+    }
+    return parts.join('\n\n');
+  }
 
   async recognizeImages(images, { retries = 2, timeoutMs = 60000, context = '' } = {}) {
     this._refreshConn();

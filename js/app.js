@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.20.2';
+const APP_VERSION = '3.20.3';
 const APP_VERSION_DATE = '2026-10-26';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.20.3', date: '2026-10-26',
+    items: [
+      '优化：发图识别现在会带上用户随图发送的文字 — 此前视觉预识别只看图（识别指令+食物清单+今日对话），用户在文字里点明的关注点（如"看配料表"）视觉模型并不知道；现作为【用户附言】置于识别上下文首位（组装逻辑抽为 SparkLLM.buildRecognitionContext 纯函数，附 3 项单测，全量 190 过），主对话阶段行为不变'
+    ]
+  },
   {
     ver: '3.20.2', date: '2026-10-26',
     items: [
@@ -2440,14 +2446,16 @@ ${habits}
   // 构建图片预识别的辅助上下文：用户食物种类清单 + 当日对话记录
   // 供视觉模型结合"用户平时吃什么、今天聊了什么"识别图片（家常菜名、上午提过的餐食不再凭空猜）
   // 任一部分读取失败只跳过该部分，全部为空时返回空串 — 识别仍按原极简提示词进行
-  async _buildRecognitionContext() {
-    const parts = [];
+  // 构建图片识别辅助上下文：IO 在这里（读清单/取历史），组装交给
+  // SparkLLM.buildRecognitionContext 纯函数；userText 为用户随图发送的文字
+  async _buildRecognitionContext(userText = '') {
+    const parts = { userText, foodTypesMd: '', historyLines: [] };
     try {
       const foodTypes = await this.fm.readFile('rules/food-types.md');
       // 全部分类均为"(暂无记录)"的初始模板不注入，避免浪费 token
       const hasEntry = foodTypes && foodTypes.split('\n').some(l => /^- /.test(l) && !l.includes('暂无记录'));
       if (hasEntry) {
-        parts.push(`【用户食物种类清单（识别时优先对照）】\n${foodTypes.substring(0, 1500)}`);
+        parts.foodTypesMd = foodTypes.substring(0, 1500);
       }
     } catch (_) { /* 清单读取失败不影响识别 */ }
     try {
@@ -2464,9 +2472,9 @@ ${habits}
         lines.unshift(line);
         total += line.length;
       }
-      if (lines.length > 0) parts.push(`【今日对话记录】\n${lines.join('\n')}`);
+      parts.historyLines = lines;
     } catch (_) { /* 历史读取失败不影响识别 */ }
-    return parts.join('\n\n');
+    return SparkLLM.buildRecognitionContext(parts);
   }
 
   // ===== 发送消息 =====
@@ -2513,7 +2521,7 @@ ${habits}
       this._reqStage = 'recognizing';
       this._showReqStatus();
       let recogContext = '';
-      try { recogContext = await this._buildRecognitionContext(); } catch (_) { /* 上下文构建失败按零上下文识别 */ }
+      try { recogContext = await this._buildRecognitionContext(text); } catch (_) { /* 上下文构建失败按零上下文识别 */ }
       try {
         recognition = await this.llm.recognizeImages(photos, recogContext ? { context: recogContext } : {});
       } catch (e) {
