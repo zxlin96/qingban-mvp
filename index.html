@@ -155,6 +155,13 @@
       <rect x="3" y="4" width="18" height="16" rx="3"/>
       <path d="M8 10a4 4 0 0 1 8 0"/>
     </symbol>
+    <symbol id="icon-runner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="15" cy="4.5" r="2"/>
+      <path d="M11 8.5l4 2.5-1.5 4.5-4.5 4"/>
+      <path d="M15 11l4 1.5"/>
+      <path d="M13.5 15.5L19 21"/>
+      <path d="M11 8.5L5.5 10l-1 3"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -196,6 +203,7 @@
       <button class="btn icon-btn" id="memoryBtn" title="记忆 — 查看轻伴记住了什么"><svg class="ico"><use href="#icon-folder"/></svg></button>
       <button class="btn icon-btn" id="trendBtn" title="趋势 — 体重/热量/打卡可视化"><svg class="ico"><use href="#icon-chart"/></svg></button>
       <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
+      <button class="btn icon-btn" id="exerciseBtn" title="运动 — 计时/测距/消耗记录"><svg class="ico"><use href="#icon-runner"/></svg></button>
     </div>
   </header>
 
@@ -710,6 +718,10 @@
         <div id="trendMacroBox" class="trend-box"></div>
       </div>
       <div class="settings-group">
+        <div class="settings-group-title">🏃 运动消耗（近 7 天）</div>
+        <div id="trendExerciseBox" class="trend-box"></div>
+      </div>
+      <div class="settings-group">
         <div class="settings-group-title">✅ 打卡热力图（近 28 天）</div>
         <div id="trendHabitBox" class="trend-box"></div>
       </div>
@@ -764,6 +776,92 @@
 
 <!-- 通知横幅 — 大模型通过 send_notification 工具触发，从顶部滑入 -->
 <div class="notif-banner-container" id="notifBannerContainer"></div>
+
+<!-- 运动面板 — 秒表计时/GPS 测距/消耗记录 -->
+<div class="habit-overlay" id="exerciseOverlay" style="display:none;">
+  <div class="habit-panel">
+    <div class="habit-header">
+      <span class="habit-title">🏃 运动</span>
+      <div class="habit-header-actions">
+        <button class="btn accent habit-add-btn" id="exercisePresetAddBtn">+ 添加常用</button>
+        <button class="btn icon-btn" id="closeExercise" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+      </div>
+    </div>
+    <div class="habit-overview">
+      <div class="habit-summary" id="exerciseSummary">加载中...</div>
+    </div>
+    <div class="exercise-cards">
+      <div class="exercise-timer-card" id="exerciseTimerCard"></div>
+      <div class="exercise-section-title">⚡ 快捷记录</div>
+      <div id="exerciseQuickArea"></div>
+      <div class="exercise-section-title">📋 最近 7 天</div>
+      <div id="exerciseHistory"></div>
+      <div class="exercise-empty" id="exerciseEmpty" style="display:none;">
+        <div class="habit-empty-icon">🏃</div>
+        <div>还没有运动记录<br>点上方常用运动一键记录，或开始计时</div>
+      </div>
+      <div class="exercise-week-stat" id="exerciseWeekStat" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 添加/管理常用运动 -->
+<div class="file-viewer" id="exercisePresetOverlay" style="display:none;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <span class="title">常用运动管理</span>
+      <button class="btn icon-btn" id="closeExercisePreset" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+    </div>
+    <div class="modal-body" style="padding:16px;">
+      <div class="settings-row">
+        <label>运动名称</label>
+        <input type="text" id="exercisePresetName" class="settings-input" placeholder="如：跳绳、游泳、夜跑">
+      </div>
+      <div class="settings-row">
+        <label>图标</label>
+        <div class="habit-icon-picker" id="exerciseIconPicker">
+          <span class="exercise-icon-option active" data-icon="💪">💪</span>
+          <span class="exercise-icon-option" data-icon="🚶">🚶</span>
+          <span class="exercise-icon-option" data-icon="🏃">🏃</span>
+          <span class="exercise-icon-option" data-icon="🏀">🏀</span>
+          <span class="exercise-icon-option" data-icon="🏋️">🏋️</span>
+          <span class="exercise-icon-option" data-icon="🚴">🚴</span>
+          <span class="exercise-icon-option" data-icon="🏊">🏊</span>
+          <span class="exercise-icon-option" data-icon="🧘">🧘</span>
+          <span class="exercise-icon-option" data-icon="🏸">🏸</span>
+          <span class="exercise-icon-option" data-icon="⛰️">⛰️</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>运动类型（决定消耗估算基准）</label>
+        <select id="exercisePresetType" class="settings-input">
+          <option value="walk">快走 / 散步</option>
+          <option value="run">跑步</option>
+          <option value="cycle">骑行</option>
+          <option value="basketball">篮球</option>
+          <option value="gym">健身房 / 力量</option>
+          <option value="swim">游泳</option>
+          <option value="rope">跳绳</option>
+          <option value="yoga">瑜伽 / 拉伸</option>
+          <option value="badminton">羽毛球等球类</option>
+          <option value="hike">爬山 / 徒步</option>
+          <option value="other">其他</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label>常用时长（分钟）</label>
+        <input type="number" id="exercisePresetMin" class="settings-input" value="30" min="5" step="5">
+      </div>
+      <div class="settings-actions">
+        <button class="btn accent" id="exercisePresetConfirm">添加</button>
+      </div>
+      <div class="settings-row" style="margin-top:12px;">
+        <label>已保存的常用（点 × 删除）</label>
+        <div id="exercisePresetList" class="exercise-preset-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- 打卡面板 — 习惯追踪 -->
 <div class="habit-overlay" id="habitOverlay" style="display:none;">

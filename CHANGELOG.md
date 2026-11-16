@@ -1,5 +1,18 @@
 # 轻伴 MVP 变更日志
 
+## 2026-11-17 (v3.22.0)
+
+### 新增 — 运动板块：秒表计时 + GPS 测距 + 配速级消耗估算
+
+> 饭后快走/篮球/健身房三类运动的记录此前散落在对话与习惯打卡里，没有结构化数据、没有消耗估算。本版新增独立运动板块：时长靠秒表实测、距离靠 GPS 实测，消耗按「速度→MET」查表，估算精度从"拍脑袋强度"升级到"配速级"
+
+- **运动面板**：顶栏新增「🏃 运动」入口（habit-overlay 同款面板骨架）——秒表计时卡（时间戳实时计算 `Date.now()-startTs`，跨面板关闭/进程重启无漂移，状态存 `.meta/exercise-timer.json`；结束后弹出保存条：时长/距离/强度/备注可改，消耗实时预览）+ 常用运动一键快捷记录（首启内置饭后快走 30min/篮球 60min/健身房 60min 三个预设，快捷时长档位仿 habit-quick-checkin 范式）+ 近 7 天按日历史（单条可撤销）+ 周统计（次数/分钟/公里/消耗/活跃天数）；「+ 添加常用」支持自定义运动（名称/emoji/MET 类型/常用时长）
+- **GPS 自动测距**：户外类型（快走/跑步/骑行/爬山）开始计时时自动测距——APK 走 `@capacitor/geolocation` 原生插件（新增 ACCESS_FINE_LOCATION 权限，开始测距时触发系统授权框，接入模式与蓝牙秤的 `window.Capacitor.Plugins.X` 探测范式一致），浏览器/PWA 直接 `navigator.geolocation`（HTTPS/localhost）；定位不可用时降级"仅计时"并 toast 提示。距离累计 Haversine + 三重过滤（精度>30m 丢弃、段距<5m 抖动拒收、隐含速度超限防漂移瞬移——步行 20/骑行 60 km/h），状态持久化 15s 节流、stop 时取内存与持久化较大值防丢段。已知限制：熄屏后 Android Doze 停 GPS 更新（不做前台服务），提示亮屏运动、距离可结束后手改；篮球/健身房不测距
+- **消耗估算精度升级**：`ExerciseManager.estimateKcal` 有实测距离（≥5min）时按「速度→SPEED_MET 查表」估算（快走 3.5-6.5km/h 三档、跑步 7-13km/h 五档、骑行 15-26km/h 五档，Compendium MET 值），metSource='speed'；无距离回退低/中/高强度档，metSource='intensity'；kcal = MET × 体重 × 时长，体重快照取趋势数据最新值（缺失 60kg 兜底）；估算依据（MET 值/按配速/按强度）在 toast、保存条预览、运动日志 MD 中全链路透传
+- **AI 运动工具**：`record_exercise`（name/duration_min 必填，distance_km/intensity/time/note/date 可选——对话说"打了一小时篮球""饭后走了3公里"自动记录并回复消耗与本周次数；运动日志 exercise/YYYY-MM-DD.md 由系统自动生成，不依赖 AI write_file）+ `get_exercise_status`（当日明细 + 近 7 天汇总）；AI 人设升级 v17：文件地图补运动日志条目，写入规则明确"提到运动 → 只调 record_exercise（时长不明先 ask_user），同名习惯打卡系统自动联动、重复调 checkin_habit 会双计"，运动能力/限制仍走 rules/exercise.md
+- **习惯自动联动**：记录运动时按「精确 → 互相包含 → 类型关键词」三级匹配同名习惯自动打卡（单位含"分"按时长计、否则按 1 次），联动结果随 toast 展示且计入 streak/完成率；运动数据进趋势面板（新增「🏃 运动消耗（近 7 天）」柱状图，`StatsManager.buildExerciseSvg`）与 AI 周报（`buildWeeklyDataSection` 新增运动明细段，周报 prompt 结构补运动解读）；INDEX.md/按需加载路由新增 exercise/ 分类
+- **测试**：新建 exercise-manager.test.js（类型匹配/配速 MET 档位/消耗估算双路径/MD 生成/周汇总文本/预设种子与软删/onChange 24 项）+ exercise-tracker.test.js（Haversine 已知距离/抖动与超速过滤/批量轨迹/秒表格式化/秒表全流程/持久化往返/增量与批量口径一致 17 项），全量 **247 项通过**
+
 ## 2026-11-17 (v3.21.0)
 
 ### 新增 — 激励系统：通知智能化 + 补卡券 + 里程碑 + 周报推送

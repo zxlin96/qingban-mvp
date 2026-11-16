@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.21.0';
+const APP_VERSION = '3.22.0';
 const APP_VERSION_DATE = '2026-11-17';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,17 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.22.0', date: '2026-11-17',
+    items: [
+      '新增：运动板块 — 顶栏新增「🏃 运动」入口：秒表计时卡（时间戳实时计算，跨面板关闭/重启无漂移，结束后弹出保存条可改时长/距离/强度/备注）+ 常用运动一键快捷记录（首启内置饭后快走/篮球/健身房，可自定义）+ 近 7 天按日历史与周统计',
+      '新增：GPS 自动测距 — 户外类型（快走/跑步/骑行/爬山）计时自动累计距离（APK 走 @capacitor/geolocation 新增定位权限，浏览器走 navigator.geolocation），Haversine + 三重过滤（精度>30m/抖动<5m/超速漂移），结束后可手改；篮球/健身房不测距。熄屏后系统停 GPS 为已知限制，提示亮屏使用',
+      '新增：消耗估算精度升级 — 有实测距离时按「速度→MET 查表」（配速 5.2km/h 快走≈4.3 MET、跑步 8km/h≈8.3 MET），无距离回退强度档（低/中/高三档）；kcal=MET×体重×时长，体重快照取趋势最新数据；估算依据（MET/按配速/按强度）全链路透传展示',
+      '新增：AI 运动工具 — record_exercise（对话说"打了一小时篮球"自动记录，带距离时按配速估算，自动写 exercise/日期.md 运动日志）+ get_exercise_status（查询当日/近 7 天运动汇总）；AI 人设 v17：运动只调 record_exercise，同名习惯打卡系统自动联动不重复调用',
+      '新增：习惯自动联动 — 记录运动时按名称/类型关键词匹配同名习惯自动打卡（如"饭后快走"联动快走习惯计入 streak），toast 提示联动结果；运动数据进趋势面板（🏃 运动消耗近 7 天柱状图）与 AI 周报（运动明细段）',
+      '测试：新增 exercise-manager.test.js（类型匹配/配速 MET 档位/消耗估算/MD 生成/周汇总/预设种子与软删 24 项）+ exercise-tracker.test.js（Haversine/抖动与超速过滤/秒表流程/状态持久化 17 项），全量 247 项通过'
+    ]
+  },
   {
     ver: '3.21.0', date: '2026-11-17',
     items: [
@@ -541,6 +552,8 @@ import { OnDemandLoader } from './on-demand-loader.js';
 import { BackupManager } from './backup-manager.js';
 import { SettlementGate } from './settlement-gate.js';
 import { StatsManager } from './stats-manager.js';
+import { ExerciseManager } from './exercise-manager.js';
+import { ExerciseTracker } from './exercise-tracker.js';
 import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1, scaleLog, getScaleLog } from './scale-manager.js';
 
 class App {
@@ -559,6 +572,8 @@ class App {
     this.backupManager = new BackupManager(this.fm, APP_VERSION);
     this._settlementGate = new SettlementGate();
     this.statsManager = new StatsManager(this.fm);
+    this.exerciseManager = new ExerciseManager(this.fm);
+    this.exerciseTracker = new ExerciseTracker(this.fm);
     this.scaleManager = new ScaleManager(this.fm);
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
@@ -700,6 +715,7 @@ class App {
     this._registerAskUserCallback(); // 注册 ask_user 工具回调
     this._registerNotificationCallback(); // 注册 send_notification 工具回调
     this._registerHabitCallbacks(); // 注册习惯打卡工具回调
+    this._registerExerciseCallbacks(); // 注册运动记录工具回调（v3.22.0）
     window.__qbStage = 'notificationManager.init';
     await this._withTimeout(this.notificationManager.init(), 4000, 'notificationManager.init');
     this._startHabitReminderCheck(); // 启动未完成习惯提醒检查（前台横幅路径）
@@ -814,6 +830,7 @@ class App {
           if (state.isActive) {
             this._checkDayRollover();
             this._checkBackgroundInterruption();
+            this._refreshExercisePanelIfOpen(); // 运动计时跨后台恢复（elapsed 按时间戳实时计算）
           } else {
             this._backgroundedAt = Date.now();
           }
@@ -821,6 +838,7 @@ class App {
         window.Capacitor.Plugins.App?.addListener?.('resume', () => {
           this._checkDayRollover();
           this._checkBackgroundInterruption();
+          this._refreshExercisePanelIfOpen();
         });
       } catch (e) {
         console.log('[DayCheck] Capacitor App plugin not available');
@@ -2488,6 +2506,33 @@ ${habits}
     });
     document.getElementById('habitCustomConfirm').addEventListener('click', () => this._confirmCustomCheckin());
 
+    // 运动面板（v3.22.0）
+    document.getElementById('exerciseBtn').addEventListener('click', () => this.showExercisePanel());
+    document.getElementById('closeExercise').addEventListener('click', () => {
+      document.getElementById('exerciseOverlay').style.display = 'none';
+    });
+    document.getElementById('exerciseOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'exerciseOverlay') {
+        document.getElementById('exerciseOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('exercisePresetAddBtn').addEventListener('click', () => this._showExercisePresetManage());
+    document.getElementById('closeExercisePreset').addEventListener('click', () => {
+      document.getElementById('exercisePresetOverlay').style.display = 'none';
+    });
+    document.getElementById('exercisePresetOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'exercisePresetOverlay') {
+        document.getElementById('exercisePresetOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('exercisePresetConfirm').addEventListener('click', () => this._confirmAddExercisePreset());
+    document.querySelectorAll('.exercise-icon-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        document.querySelectorAll('.exercise-icon-option').forEach(o => o.classList.remove('active'));
+        opt.classList.add('active');
+      });
+    });
+
     // 关闭文件查看器
     document.getElementById('closeViewer').addEventListener('click', () => {
       document.getElementById('fileViewer').classList.remove('show');
@@ -3431,10 +3476,12 @@ ${habits}
     // 动态添加饮食记录和对话摘要
     const dietFiles = files.filter(f => f.path.startsWith('diet/')).sort((a, b) => b.path.localeCompare(a.path));
     const chatFiles = files.filter(f => f.path.startsWith('chat/')).sort((a, b) => b.path.localeCompare(a.path));
+    const exerciseFiles = files.filter(f => f.path.startsWith('exercise/')).sort((a, b) => b.path.localeCompare(a.path));
     const insightFiles = files.filter(f => f.path.startsWith('insights/')).sort((a, b) => b.path.localeCompare(a.path));
 
     if (dietFiles.length > 0) groups.push({ label: '饮食记录', files: dietFiles });
     if (chatFiles.length > 0) groups.push({ label: '对话摘要', files: chatFiles });
+    if (exerciseFiles.length > 0) groups.push({ label: '运动记录', files: exerciseFiles });
     if (insightFiles.length > 0) groups.push({ label: '洞察报告', files: insightFiles });
 
     // 构建标签
@@ -4883,6 +4930,447 @@ updated: ${profile.startDate}
     await this._renderHabitPanel();
   }
 
+  // ===== 运动板块（v3.22.0 — 秒表计时/GPS 测距/消耗记录）=====
+
+  // 注册运动工具回调到 LLMService
+  _registerExerciseCallbacks() {
+    // record_exercise — 对话中记录运动（时长/距离 → MET 消耗估算 + 同名习惯联动打卡）
+    this.llmService.onRecordExercise = async (args) => {
+      return this._addExerciseRecord({
+        name: args.name,
+        durationMin: args.duration_min,
+        distanceKm: args.distance_km,
+        intensity: args.intensity,
+        time: args.time,
+        note: args.note,
+        date: args.date,
+        source: 'ai'
+      });
+    };
+
+    // get_exercise_status — 查询运动状态（当日明细 + 近 7 天汇总）
+    this.llmService.onGetExerciseStatus = async (date) => {
+      const targetDate = date || this.exerciseManager._getToday();
+      const day = await this.exerciseManager.getDaySummary(targetDate);
+      const week = await this.exerciseManager.getWeekSummary(7);
+      return {
+        date: targetDate,
+        today: {
+          count: day.count,
+          totalMin: day.totalMin,
+          totalKm: day.totalKm,
+          totalKcal: day.totalKcal,
+          records: day.records.map(r => ({ name: r.name, time: r.time, durationMin: r.durationMin, distanceKm: r.distanceKm, kcal: r.kcal }))
+        },
+        week: {
+          count: week.count,
+          activeDays: week.activeDays,
+          totalMin: week.totalMin,
+          totalKm: week.totalKm,
+          totalKcal: week.totalKcal
+        }
+      };
+    };
+
+    // 数据变化 → 刷新面板
+    this.exerciseManager.onChangeCallback = () => {
+      this._refreshExercisePanelIfOpen();
+    };
+  }
+
+  // 统一记录入口：解析最新体重 → 落盘 → 同名习惯联动打卡 → toast 反馈
+  async _addExerciseRecord({ name, icon, typeKey, durationMin, distanceKm, intensity, time, note, date, source }) {
+    const weightKg = await this._latestWeightKg();
+    const result = await this.exerciseManager.addRecord({ name, icon, typeKey, durationMin, distanceKm, intensity, time, note, date, source, weightKg });
+    const habitSync = await this._syncExerciseHabit(result.record);
+    const r = result.record;
+    const distText = r.distanceKm ? ` · ${r.distanceKm}km` : '';
+    const syncText = habitSync ? `\n已联动「${habitSync.name}」打卡` : '';
+    this.showToast(`${r.icon} ${r.name} 已记录`, `${r.durationMin}分钟${distText} · 消耗约${r.kcal}kcal（MET ${r.met}·${r.metSource === 'speed' ? '按配速' : '按强度'}）${syncText}`, 'success');
+    const week = await this.exerciseManager.getWeekSummary(7);
+    return {
+      success: true,
+      name: r.name,
+      durationMin: r.durationMin,
+      distanceKm: r.distanceKm,
+      kcal: r.kcal,
+      met: r.met,
+      metSource: r.metSource,
+      weekCount: week.count,
+      weekKcal: week.totalKcal,
+      habitSync
+    };
+  }
+
+  // 最新体重（趋势数据最新一条），无记录返回 null（估算走 60kg 兜底）
+  async _latestWeightKg() {
+    try {
+      const { weights } = await this.statsManager.getDailyStats();
+      return weights.length > 0 ? weights[weights.length - 1].weight : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 运动记录联动同名习惯打卡：精确 → 互相包含 → 类型关键词命中；不重复弹 streak toast（运动 toast 已提及联动）
+  async _syncExerciseHabit(record) {
+    try {
+      const habits = await this.habitManager.getHabits();
+      if (habits.length === 0) return null;
+      let habit = habits.find(h => h.name === record.name);
+      if (!habit) habit = habits.find(h => h.name.includes(record.name) || record.name.includes(h.name));
+      if (!habit) {
+        const typeKeywords = ExerciseManager.getDef(record.typeKey).keywords || [];
+        habit = habits.find(h => typeKeywords.some(k => h.name.includes(k)));
+      }
+      if (!habit) return null;
+      // 打卡量：习惯单位为分钟类按时长计，其他按 1 次
+      const amount = (habit.unit || '').includes('分') ? record.durationMin : 1;
+      await this.habitManager.checkin(habit.id, amount, `运动联动：${record.name}${record.durationMin}分钟`);
+      this._syncDailyReminders().catch(() => {}); // 打卡后刷新当日提醒文案（不弹 streak toast，避免双重提示）
+      const progress = await this.habitManager.getTodayProgress(habit.id);
+      return { name: habit.name, completed: progress.isCompleted };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 打开运动面板
+  async showExercisePanel() {
+    document.getElementById('exerciseOverlay').style.display = 'flex';
+    await this._renderExercisePanel();
+    this._startExerciseTimerTick();
+  }
+
+  async _refreshExercisePanelIfOpen() {
+    const overlay = document.getElementById('exerciseOverlay');
+    if (overlay.style.display === 'flex') {
+      await this._renderExercisePanel();
+      this._startExerciseTimerTick();
+    }
+  }
+
+  // 渲染运动面板（摘要 / 计时卡 / 快捷记录 / 历史 / 周统计）
+  async _renderExercisePanel() {
+    const today = this.exerciseManager._getToday();
+    const [day, week, presets, running] = await Promise.all([
+      this.exerciseManager.getDaySummary(today),
+      this.exerciseManager.getWeekSummary(7),
+      this.exerciseManager.getPresets(),
+      this.exerciseTracker.getRunning()
+    ]);
+    this._exercisePresets = presets; // 计时开始/保存时读取
+
+    // 摘要行
+    document.getElementById('exerciseSummary').textContent = day.count > 0
+      ? `今日 ${day.count} 次 · ${day.totalMin} 分钟${day.totalKm > 0 ? ` · ${day.totalKm} km` : ''} · 消耗约 ${day.totalKcal} kcal`
+      : `今日还没动一动 · 本周活跃 ${week.activeDays}/7 天`;
+
+    // 计时卡（运行中 / 结束待保存 / 待机）
+    this._exerciseLastWeightKg = await this._latestWeightKg();
+    this._renderExerciseTimerCard(running);
+
+    // 快捷记录区（预设 chips → 时长档位 + 计时入口）
+    const quickArea = document.getElementById('exerciseQuickArea');
+    quickArea.innerHTML = presets.map(p => `
+      <div class="exercise-preset-row">
+        <span class="exercise-preset-name"><span class="exercise-preset-icon">${p.icon}</span>${escapeHtml(p.name)}</span>
+        ${p.quickMins.map(m => `<button class="exercise-quick-btn" data-preset-id="${p.id}" data-min="${m}">+${m}分钟</button>`).join('')}
+        <button class="exercise-preset-timer-btn" data-timer-preset-id="${p.id}">▶ 计时</button>
+      </div>
+    `).join('');
+
+    quickArea.querySelectorAll('.exercise-quick-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const preset = presets.find(p => p.id === e.target.dataset.presetId);
+        if (!preset) return;
+        e.target.disabled = true;
+        try {
+          await this._addExerciseRecord({
+            name: preset.name, icon: preset.icon, typeKey: preset.typeKey,
+            durationMin: Number(e.target.dataset.min), source: 'quick'
+          });
+        } finally {
+          e.target.disabled = false;
+        }
+      });
+    });
+
+    quickArea.querySelectorAll('.exercise-preset-timer-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const preset = presets.find(p => p.id === e.target.dataset.timerPresetId);
+        if (preset) await this._startExerciseTimer(preset);
+      });
+    });
+
+    // 历史列表（近 7 天按日分组）+ 周统计
+    const historyEl = document.getElementById('exerciseHistory');
+    const emptyEl = document.getElementById('exerciseEmpty');
+    const weekStatEl = document.getElementById('exerciseWeekStat');
+    const records = await this.exerciseManager.getRecentRecords(7);
+
+    if (records.length === 0) {
+      historyEl.innerHTML = '';
+      weekStatEl.style.display = 'none';
+      emptyEl.style.display = 'block';
+    } else {
+      emptyEl.style.display = 'none';
+      const byDate = new Map();
+      for (const r of records) {
+        if (!byDate.has(r.date)) byDate.set(r.date, []);
+        byDate.get(r.date).push(r);
+      }
+      const yesterday = this.exerciseManager._addDays(today, -1);
+      const weekLabel = '日一二三四五六';
+      const groups = [...byDate.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+      historyEl.innerHTML = groups.map(([date, list]) => {
+        const label = date === today ? '今天'
+          : date === yesterday ? '昨天'
+          : `${date.slice(5)} 周${weekLabel[new Date(date + 'T00:00:00').getDay()]}`;
+        const rows = list.sort((a, b) => (a.time || '').localeCompare(b.time || '')).map(r => `
+          <div class="exercise-record-row">
+            <span class="exercise-record-main">${r.icon} ${escapeHtml(r.name)}${r.note ? `<span style="color:var(--muted2)">（${escapeHtml(r.note)}）</span>` : ''}</span>
+            <span class="exercise-record-metrics">${r.durationMin}分钟${r.distanceKm ? ` · ${r.distanceKm}km` : ''} · ~${r.kcal}kcal${r.time ? ` · ${r.time}` : ''}</span>
+            <button class="exercise-record-delete" data-record-id="${r.id}" title="撤销这条记录">×</button>
+          </div>`).join('');
+        return `<div class="exercise-day-group"><div class="exercise-day-label">${label}</div>${rows}</div>`;
+      }).join('');
+
+      weekStatEl.style.display = 'block';
+      weekStatEl.innerHTML = `本周：<strong>${week.count}</strong> 次 · ${week.totalMin} 分钟${week.totalKm > 0 ? ` · ${week.totalKm} km` : ''} · 消耗约 ~${week.totalKcal} kcal · 活跃 ${week.activeDays}/7 天`;
+
+      historyEl.querySelectorAll('.exercise-record-delete').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          if (confirm('撤销这条运动记录？（已联动的习惯打卡不会自动撤销）')) {
+            await this.exerciseManager.deleteRecord(e.target.dataset.recordId);
+          }
+        });
+      });
+    }
+  }
+
+  // 计时卡三态：running（运行中）/ stopping（结束待保存表单）/ idle（待机）
+  _renderExerciseTimerCard(running) {
+    const card = document.getElementById('exerciseTimerCard');
+    const stopResult = this._exerciseStopResult;
+
+    if (running) {
+      card.className = 'exercise-timer-card running';
+      const distText = running.gpsEnabled
+        ? (Math.max(running.distanceM || 0, this.exerciseTracker.getLiveDistanceM()) >= 50
+          ? `${(Math.max(running.distanceM || 0, this.exerciseTracker.getLiveDistanceM()) / 1000).toFixed(1)}km`
+          : '定位中…')
+        : '';
+      card.innerHTML = `
+        <div class="exercise-timer-display">
+          <span class="exercise-timer-time" id="exerciseTimerTime">${ExerciseTracker.formatElapsed(running.elapsedMs)}</span>
+          ${distText ? `<span class="exercise-timer-dist" id="exerciseTimerDist">${distText}</span>` : ''}
+          <span class="exercise-timer-name">${running.icon} ${escapeHtml(running.name)}${running.gpsEnabled ? ' · GPS 测距中' : ' · 仅计时'}</span>
+        </div>
+        <div class="exercise-timer-actions">
+          <button class="btn accent" id="exerciseTimerStop">■ 结束并记录</button>
+          <button class="btn" id="exerciseTimerCancel">取消</button>
+        </div>
+        ${running.gpsEnabled ? '<div class="exercise-timer-hint">熄屏后 GPS 会暂停，建议亮屏运动；距离结束后可手动修改。</div>' : ''}`;
+      document.getElementById('exerciseTimerStop').addEventListener('click', () => this._stopExerciseTimer());
+      document.getElementById('exerciseTimerCancel').addEventListener('click', async () => {
+        if (confirm('取消本次计时？不会保存记录。')) {
+          await this.exerciseTracker.cancel();
+          await this._renderExercisePanel();
+        }
+      });
+      return;
+    }
+
+    if (stopResult) {
+      card.className = 'exercise-timer-card';
+      card.innerHTML = `
+        <div class="exercise-save-form">
+          <div class="exercise-save-row">
+            <input type="number" id="exerciseSaveMin" class="settings-input" value="${stopResult.durationMin}" min="1" title="时长（分钟）">
+            <input type="number" id="exerciseSaveKm" class="settings-input" value="${stopResult.distanceKm ?? ''}" step="0.1" min="0" placeholder="距离 km（可空）">
+          </div>
+          <div class="exercise-intensity-chips" id="exerciseIntensityChips">
+            <span class="exercise-intensity-chip" data-i="low">轻松</span>
+            <span class="exercise-intensity-chip active" data-i="medium">中等</span>
+            <span class="exercise-intensity-chip" data-i="high">剧烈</span>
+          </div>
+          <div class="exercise-save-row">
+            <input type="text" id="exerciseSaveNote" class="settings-input" placeholder="备注（如健身房练了腿、半场 3v3）">
+          </div>
+          <div class="exercise-timer-actions">
+            <button class="btn accent" id="exerciseSaveConfirm">保存记录</button>
+            <button class="btn" id="exerciseSaveDiscard">放弃</button>
+          </div>
+          <div class="exercise-timer-hint">${stopResult.gpsWasActive ? '距离来自 GPS 实测，可直接修改（熄屏期间可能不完整）。' : ''}保存后自动写入运动日志并联动同名习惯打卡。</div>
+        </div>`;
+      // 强度档切换 + 消耗预览实时刷新
+      const updatePreview = () => {
+        const min = Number(document.getElementById('exerciseSaveMin').value) || 1;
+        const kmRaw = document.getElementById('exerciseSaveKm').value.trim();
+        const km = kmRaw === '' ? null : Number(kmRaw);
+        const chip = card.querySelector('.exercise-intensity-chip.active');
+        const est = ExerciseManager.estimateKcal({
+          typeKey: stopResult.typeKey, durationMin: min, distanceKm: km,
+          intensity: chip?.dataset.i || 'medium', weightKg: this._exerciseLastWeightKg
+        });
+        document.getElementById('exerciseSaveConfirm').textContent =
+          `保存记录 · 约${est.kcal}kcal（MET ${est.met}·${est.metSource === 'speed' ? '按配速' : '按强度'}）`;
+      };
+      card.querySelectorAll('.exercise-intensity-chip').forEach(ch => {
+        ch.addEventListener('click', () => {
+          card.querySelectorAll('.exercise-intensity-chip').forEach(c => c.classList.remove('active'));
+          ch.classList.add('active');
+          updatePreview();
+        });
+      });
+      document.getElementById('exerciseSaveMin').addEventListener('input', updatePreview);
+      document.getElementById('exerciseSaveKm').addEventListener('input', updatePreview);
+      document.getElementById('exerciseSaveConfirm').addEventListener('click', () => this._confirmSaveTimerRecord());
+      document.getElementById('exerciseSaveDiscard').addEventListener('click', () => {
+        this._exerciseStopResult = null;
+        this._renderExercisePanel();
+      });
+      updatePreview();
+      return;
+    }
+
+    card.className = 'exercise-timer-card';
+    card.innerHTML = `
+      <div class="exercise-timer-idle">
+        <span>⏱️ 秒表计时（户外运动自动 GPS 测距）</span>
+        <button class="btn" id="exerciseTimerStartFree">自由计时</button>
+      </div>`;
+    document.getElementById('exerciseTimerStartFree').addEventListener('click', () => this._startExerciseTimer(null));
+  }
+
+  // 开始计时（preset 为 null 时自由计时）
+  async _startExerciseTimer(preset) {
+    const typeKey = preset ? preset.typeKey : 'other';
+    const outdoor = ExerciseManager.getDef(typeKey).outdoor;
+    const r = await this.exerciseTracker.start({
+      name: preset ? preset.name : '自由运动',
+      icon: preset ? preset.icon : '💪',
+      typeKey,
+      presetId: preset ? preset.id : null,
+      gps: outdoor
+    });
+    this._exerciseStopResult = null;
+    if (outdoor && !r.gpsActive) {
+      this.showToast('已开始计时（仅计时）', r.gpsReason === 'permission_denied'
+        ? '定位权限未授权，距离可结束后手动填写'
+        : '定位不可用，距离可结束后手动填写', 'info');
+    }
+    await this._renderExercisePanel();
+    this._startExerciseTimerTick();
+  }
+
+  async _stopExerciseTimer() {
+    const r = await this.exerciseTracker.stop();
+    if (!r) return;
+    this._exerciseStopResult = r;
+    this._stopExerciseTimerTick();
+    await this._renderExercisePanel();
+  }
+
+  // 保存计时产生的运动记录
+  async _confirmSaveTimerRecord() {
+    const r = this._exerciseStopResult;
+    if (!r) return;
+    const min = Number(document.getElementById('exerciseSaveMin').value) || r.durationMin;
+    const kmRaw = document.getElementById('exerciseSaveKm').value.trim();
+    const km = kmRaw === '' ? null : Number(kmRaw);
+    const chip = document.querySelector('#exerciseTimerCard .exercise-intensity-chip.active');
+    const note = document.getElementById('exerciseSaveNote').value.trim();
+    this._exerciseStopResult = null;
+    await this._addExerciseRecord({
+      name: r.name, icon: r.icon, typeKey: r.typeKey,
+      durationMin: min, distanceKm: km, intensity: chip?.dataset.i || 'medium',
+      note, source: 'timer'
+    });
+    await this._renderExercisePanel();
+  }
+
+  // 秒表显示 1s tick（仅面板打开且有活动计时；时间由 tracker 按时间戳实时计算，此处只刷 DOM）
+  _startExerciseTimerTick() {
+    this._stopExerciseTimerTick();
+    this._exerciseTickInterval = setInterval(async () => {
+      const overlay = document.getElementById('exerciseOverlay');
+      if (!overlay || overlay.style.display !== 'flex') return;
+      const timeEl = document.getElementById('exerciseTimerTime');
+      if (!timeEl) {
+        this._stopExerciseTimerTick();
+        return;
+      }
+      const running = await this.exerciseTracker.getRunning();
+      if (!running) {
+        this._stopExerciseTimerTick();
+        return;
+      }
+      timeEl.textContent = ExerciseTracker.formatElapsed(running.elapsedMs);
+      const distEl = document.getElementById('exerciseTimerDist');
+      if (distEl && running.gpsEnabled) {
+        const meters = Math.max(running.distanceM || 0, this.exerciseTracker.getLiveDistanceM());
+        if (meters >= 50) distEl.textContent = `${(meters / 1000).toFixed(1)}km`;
+      }
+    }, 1000);
+  }
+
+  _stopExerciseTimerTick() {
+    if (this._exerciseTickInterval) {
+      clearInterval(this._exerciseTickInterval);
+      this._exerciseTickInterval = null;
+    }
+  }
+
+  // 常用运动管理弹窗
+  async _showExercisePresetManage() {
+    document.getElementById('exercisePresetName').value = '';
+    document.getElementById('exercisePresetMin').value = '30';
+    document.getElementById('exercisePresetType').value = 'other';
+    document.querySelectorAll('.exercise-icon-option').forEach(o => o.classList.remove('active'));
+    const defaultIcon = document.querySelector('.exercise-icon-option[data-icon="💪"]');
+    if (defaultIcon) defaultIcon.classList.add('active');
+    await this._renderExercisePresetList();
+    document.getElementById('exercisePresetOverlay').style.display = 'flex';
+  }
+
+  async _renderExercisePresetList() {
+    const listEl = document.getElementById('exercisePresetList');
+    const presets = await this.exerciseManager.getPresets();
+    if (presets.length === 0) {
+      listEl.innerHTML = '<div style="font-size:12px;color:var(--muted2);">（还没有常用运动）</div>';
+      return;
+    }
+    listEl.innerHTML = presets.map(p => `
+      <div class="exercise-preset-manage-row">
+        <span>${p.icon} ${escapeHtml(p.name)}<span style="color:var(--muted2);font-size:11.5px;"> · 默认 ${p.defaultMin} 分钟</span></span>
+        <button class="exercise-record-delete" data-preset-del-id="${p.id}" title="删除常用">×</button>
+      </div>`).join('');
+    listEl.querySelectorAll('[data-preset-del-id]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        if (confirm('删除这个常用运动？（已有运动记录保留）')) {
+          await this.exerciseManager.deletePreset(e.target.dataset.presetDelId);
+          await this._renderExercisePresetList();
+          await this._renderExercisePanel();
+        }
+      });
+    });
+  }
+
+  async _confirmAddExercisePreset() {
+    const name = document.getElementById('exercisePresetName').value.trim();
+    if (!name) { alert('请输入运动名称'); return; }
+    const typeKey = document.getElementById('exercisePresetType').value;
+    const defaultMin = Number(document.getElementById('exercisePresetMin').value) || 30;
+    const iconEl = document.querySelector('.exercise-icon-option.active');
+    const icon = iconEl ? iconEl.dataset.icon : '💪';
+    const quickMins = [...new Set([15, 30, defaultMin, Math.round(defaultMin * 1.5)])].sort((a, b) => a - b);
+    await this.exerciseManager.addPreset({ name, icon, typeKey, defaultMin, quickMins });
+    document.getElementById('exercisePresetOverlay').style.display = 'none';
+    await this._renderExercisePanel();
+  }
+
   // 显示通知横幅
   _showNotificationBanner(notif) {
     const container = document.getElementById('notifBannerContainer');
@@ -5234,6 +5722,7 @@ updated: ${profile.startDate}
     const weightBox = document.getElementById('trendWeightBox');
     const calBox = document.getElementById('trendCalorieBox');
     const macroBox = document.getElementById('trendMacroBox');
+    const exerciseBox = document.getElementById('trendExerciseBox');
     const habitBox = document.getElementById('trendHabitBox');
     weightBox.innerHTML = '<div class="trend-empty">加载中...</div>';
     try {
@@ -5244,6 +5733,13 @@ updated: ${profile.startDate}
       // 三大营养素图：用最新体重换算蛋白质建议区间（1.2~1.6g/kg）
       const latestWeight = weights.length > 0 ? weights[weights.length - 1].weight : null;
       macroBox.innerHTML = StatsManager.buildMacroSvg(calories, { today, weightKg: latestWeight });
+      // 运动消耗图（v3.22.0）：直接读运动原始 JSON 的周汇总
+      try {
+        const exerciseWeek = await this.exerciseManager.getWeekSummary(7);
+        exerciseBox.innerHTML = StatsManager.buildExerciseSvg(exerciseWeek.days, { today });
+      } catch (_) {
+        exerciseBox.innerHTML = '<div class="trend-empty">暂无运动记录</div>';
+      }
       // 热力图直接读打卡原始 JSON，不走 stats 缓存
       let checkins = [];
       try {
@@ -5254,6 +5750,7 @@ updated: ${profile.startDate}
       weightBox.innerHTML = '<div class="trend-empty">加载失败: ' + e.message + '</div>';
       calBox.innerHTML = '';
       macroBox.innerHTML = '';
+      exerciseBox.innerHTML = '';
       habitBox.innerHTML = '';
     }
   }
@@ -5296,14 +5793,24 @@ updated: ${profile.startDate}
       console.warn('[周报] 营养观察汇总失败:', e.message);
     }
 
-    const dataSection = StatsManager.buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes);
+    // 近 7 天运动明细（v3.22.0 运动板块）
+    let exerciseText = '';
+    try {
+      const exerciseRecords = await this.exerciseManager.getRecentRecords(7).then(rs => rs.filter(r => r.date >= startDate && r.date <= endDate));
+      const exerciseWeek = await this.exerciseManager.getWeekSummary(7);
+      exerciseText = ExerciseManager.buildWeeklySummaryText(exerciseWeek, exerciseRecords);
+    } catch (e) {
+      console.warn('[周报] 运动汇总失败:', e.message);
+    }
+
+    const dataSection = StatsManager.buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes, exerciseText);
     const prompt = `你是轻伴的周报助手。请基于以下真实数据生成本周（${startDate} ~ ${endDate}）减重周报，350-500 字。
 
 ${dataSection}
 
 ## 要求
 1. 数据必须原值引用，不得编造数据中不存在的信息
-2. 结构：热量摄入解读 → 营养素与补剂 → 体重变化 → 习惯完成情况 → 下周 1-3 条具体可执行的建议
+2. 结构：热量摄入解读 → 营养素与补剂 → 运动情况（有记录时结合时长/距离/消耗点评，无记录不展开）→ 体重变化 → 习惯完成情况 → 下周 1-3 条具体可执行的建议
 3. 「营养素与补剂」段：解读三大营养素日均与蛋白质是否达标（减脂期建议 1.2~1.6g/kg 体重）；结合「营养观察」指出微量元素缺口（如钙/omega-3/维C/B族/铁）；补剂建议**食物优先**，仅对持续出现的缺口用"可以考虑XX补剂"的措辞，注明个体差异、遵医嘱，不做诊断、不推荐剂量
 4. 语气温暖、不评判；数据缺失的维度如实说明"本周未记录"，不要臆测`;
 

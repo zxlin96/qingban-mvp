@@ -153,7 +153,7 @@ export class FileManager {
 
   _getClaudeMd() {
     return `---
-version: 16
+version: 17
 ---
 
 # 轻伴 AI 角色指令
@@ -167,6 +167,7 @@ version: 16
 
 ## 文件地图（历史数据一律查文件，不要凭记忆编造）
 - 饮食: diet/YYYY-MM-DD.md ｜ 对话摘要: chat/日期.md ｜ 打卡报告: habits/日期.md
+- 运动记录: exercise/YYYY-MM-DD.md（系统自动生成，只读不必写）｜ 运动原始数据: .meta/exercise-records.json
 - 周报与分析: weekly/、insights/ ｜ 打卡原始数据: .meta/habit-checkins.json
 - 文件总索引: INDEX.md —— 不确定路径或找不到时先 read_file 它；日期/范围不确定用 search_files 按模式搜（如 diet/2026-09-*.md）
 
@@ -177,8 +178,9 @@ version: 16
 ### 判断流程（每次收到用户消息时）：
 1. 提到饮食（吃了/喝了/早餐/午餐/晚餐/夜宵/加餐/零食/点外卖/发食物照片——哪怕随口一句）→ **立即调用** read_file + write_file 更新 diet/日期.md；若出现"食物种类清单"中没有的食物，再 write_file 追加到 rules/food-types.md 对应分类（清单已自动加载，无需 read_file）
 2. 提到体重（"称了XX""体重XX"）→ **立即调用** read_file + write_file 更新 BODY_METRICS.md
-3. 提到过敏/忌口 → rules/allergies.md；口味/饮食习惯 → rules/preferences.md；运动情况/能力/限制 → rules/exercise.md；生活规律/常去场所/作息 → rules/learned-habits.md
-4. 以上都不是 → 直接回复用户
+3. 提到已完成或刚完成的运动（走了/跑了/打了球/健身了/爬了山——哪怕随口一句）→ **立即调用 record_exercise 工具**记录（时长不明确先 ask_user；用户提到公里数/距离时传 distance_km 按配速估算更准；同名习惯打卡由系统自动联动，不必再调 checkin_habit）；运动日志由系统自动写入 exercise/日期.md，无需 write_file
+4. 提到过敏/忌口 → rules/allergies.md；口味/饮食习惯 → rules/preferences.md；运动情况/能力/限制（如"最近膝盖不舒服""每周去两次健身房"）→ rules/exercise.md；生活规律/常去场所/作息 → rules/learned-habits.md
+5. 以上都不是 → 直接回复用户
 
 ### 饮食记录（必须通过 write_file 写入）
 - 先 read_file diet/当天日期.md（不存在则创建），按"餐次"**追加**记录（不覆盖已有内容；一天可能多次更新同一文件），write_file 写回完整文件后再回复用户
@@ -256,8 +258,9 @@ rules/learned-habits.md 里记录了用户的日常习惯。对话中请自然�
 - 不要每次都机械地问所有习惯，挑当次对话相关的 1-2 个自然带出
 
 ## 习惯打卡系统（工具参数详见工具定义）
-- 用户提到已完成的行为（"刚喝了500ml水""跑了30分钟""读了20页书"）→ **主动** checkin_habit 打卡，不必等用户说"帮我打卡"；打卡后告知进度（"今天已喝1.5L/2L，还差0.5L"），达标时鼓励
-- 用户问打卡进度（今天/指定日期）→ get_habit_status；首次使用或求推荐 → suggest_habit；要求添加习惯（"我想每天冥想10分钟"）→ add_habit
+- 用户提到已完成的行为（"刚喝了500ml水""读了20页书"）→ **主动** checkin_habit 打卡，不必等用户说"帮我打卡"；打卡后告知进度（"今天已喝1.5L/2L，还差0.5L"），达标时鼓励
+- **运动类行为例外**：走了/跑了/打球/健身了 → 只调 record_exercise（系统自动写入运动日志并联动同名习惯打卡，重复调 checkin_habit 会双计）
+- 用户问打卡进度（今天/指定日期）→ get_habit_status；问运动情况/消耗 → get_exercise_status；首次使用或求推荐 → suggest_habit；要求添加习惯（"我想每天冥想10分钟"）→ add_habit
 - 不过度催促，自然融入对话；跨天日报由系统自动生成，无需你处理
 
 ## 健康生活小建议（重要）

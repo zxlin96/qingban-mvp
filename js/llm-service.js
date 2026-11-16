@@ -473,6 +473,39 @@ ${habitSection}`;
             required: ['meals']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'record_exercise',
+          description: '记录一次运动（秒表级实测时长/距离 → MET 消耗估算，自动写入运动日志并联动同名习惯打卡）。用户提到任何已完成或刚做完的运动时调用：走了/跑了/打球/健身了等。时长不明确时先用 ask_user 问清；用户提到公里数/距离时传 distance_km（按配速估算消耗更准）；运动记录由系统自动写入 exercise/日期.md，无需再 write_file；同名习惯打卡由系统自动联动，无需再调 checkin_habit。',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: '运动名称，如"饭后快走""篮球""健身房力量训练"' },
+              duration_min: { type: 'number', description: '时长（分钟），如 30' },
+              distance_km: { type: 'number', description: '距离（公里），如 2.6。用户提到公里数时传入；无距离信息则不传（篮球/健身房等通常没有距离）' },
+              intensity: { type: 'string', enum: ['low', 'medium', 'high'], description: '强度（可选，默认 medium）：low=轻松散步，medium=中等，high=剧烈对抗/大重量' },
+              time: { type: 'string', description: '运动时间 HH:MM（可选，用户提到时传入）' },
+              note: { type: 'string', description: '备注（可选），如健身房练的部位、篮球半场几打几' },
+              date: { type: 'string', description: '日期 YYYY-MM-DD（可选，补记昨天时传）' }
+            },
+            required: ['name', 'duration_min']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'get_exercise_status',
+          description: '查询运动记录状态：当日记录明细与消耗估算、近 7 天运动汇总（次数/时长/距离/消耗）。用户问运动情况/最近动了几次/今天消耗了多少时调用。',
+          parameters: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: '查询日期 YYYY-MM-DD，不传默认今天' }
+            }
+          }
+        }
       }
     ];
   }
@@ -609,6 +642,26 @@ ${habitSection}`;
             result = 'record_metrics 回调未注册';
           }
           displayName = `record_metrics(${args.date || 'today'}, ${Array.isArray(args.meals) ? args.meals.length : 0}餐${args.weight ? ', ' + args.weight + 'kg' : ''}${args.protein_g ? ', 蛋白' + args.protein_g + 'g' : ''})`;
+          break;
+
+        case 'record_exercise':
+          if (this.onRecordExercise) {
+            const exerciseResult = await this.onRecordExercise(args);
+            result = JSON.stringify(exerciseResult);
+          } else {
+            result = 'record_exercise 回调未注册';
+          }
+          displayName = `record_exercise("${args.name}", ${args.duration_min}min${args.distance_km ? ', ' + args.distance_km + 'km' : ''})`;
+          break;
+
+        case 'get_exercise_status':
+          if (this.onGetExerciseStatus) {
+            const exerciseStatusResult = await this.onGetExerciseStatus(args.date || null);
+            result = JSON.stringify(exerciseStatusResult);
+          } else {
+            result = 'get_exercise_status 回调未注册';
+          }
+          displayName = `get_exercise_status(${args.date || 'today'})`;
           break;
 
         default:

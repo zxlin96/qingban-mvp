@@ -17,6 +17,7 @@ export class IndexManager {
       rules: [],
       diet: [],
       chat: [],
+      exercise: [],
       insights: [],
       archive: [],
       other: []
@@ -34,6 +35,8 @@ export class IndexManager {
         categories.diet.push(entry);
       } else if (file.path.startsWith('chat/')) {
         categories.chat.push(entry);
+      } else if (file.path.startsWith('exercise/')) {
+        categories.exercise.push(entry);
       } else if (file.path.startsWith('insights/')) {
         categories.insights.push(entry);
       } else if (file.path.startsWith('archive/')) {
@@ -46,6 +49,7 @@ export class IndexManager {
     // 排序：饮食和对话按日期倒序
     categories.diet.sort((a, b) => b.path.localeCompare(a.path));
     categories.chat.sort((a, b) => b.path.localeCompare(a.path));
+    categories.exercise.sort((a, b) => b.path.localeCompare(a.path));
     categories.insights.sort((a, b) => b.path.localeCompare(a.path));
 
     let content = `# 轻伴文件索引
@@ -82,6 +86,15 @@ export class IndexManager {
       }
     }
 
+    content += `\n## 运动记录（${categories.exercise.length}）\n`;
+    if (categories.exercise.length === 0) {
+      content += `（暂无）\n`;
+    } else {
+      for (const e of categories.exercise) {
+        content += `- ${e.path} — ${e.summary}\n`;
+      }
+    }
+
     content += `\n## 洞察与报告（${categories.insights.length}）\n`;
     if (categories.insights.length === 0) {
       content += `（暂无）\n`;
@@ -106,7 +119,7 @@ export class IndexManager {
     }
 
     // 统计
-    content += `\n---\n总计: ${files.length} 个文件 | 饮食: ${categories.diet.length} | 对话: ${categories.chat.length} | 洞察: ${categories.insights.length}`;
+    content += `\n---\n总计: ${files.length} 个文件 | 饮食: ${categories.diet.length} | 对话: ${categories.chat.length} | 运动: ${categories.exercise.length} | 洞察: ${categories.insights.length}`;
 
     await this.fm.writeFile('INDEX.md', content);
 
@@ -114,6 +127,7 @@ export class IndexManager {
       totalFiles: files.length,
       dietCount: categories.diet.length,
       chatCount: categories.chat.length,
+      exerciseCount: categories.exercise.length,
       insightsCount: categories.insights.length,
       archiveCount: categories.archive.length,
       lineCount: content.split('\n').length
@@ -224,6 +238,25 @@ export class IndexManager {
       return { files: filesToRead, strategy: 'insights' };
     }
 
+    // 策略4.5：运动记录查询（v3.22.0）— 近 7 天运动日志 + 原始记录 JSON
+    if (/运动|锻炼|跑步|快走|散步|篮球|健身|游泳|骑行|爬山|消耗/.test(t)) {
+      const end = new Date(currentDate);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      const lines = indexContent.split('\n');
+      for (const line of lines) {
+        const match = line.match(/- (exercise\/\d{4}-\d{2}-\d{2}\.md)/);
+        if (match) {
+          const date = match[1].replace('exercise/', '').replace('.md', '');
+          if (date >= start.toISOString().substring(0, 10) && date <= end.toISOString().substring(0, 10)) {
+            filesToRead.push(match[1]);
+          }
+        }
+      }
+      filesToRead.push('.meta/exercise-records.json');
+      return { files: filesToRead, strategy: 'exercise' };
+    }
+
     // 策略5：最近 N 天
     const recentMatch = userText.match(/最近(\d+)/);
     if (recentMatch) {
@@ -285,6 +318,14 @@ export class IndexManager {
       const dateStr = path.replace('chat/', '').replace('.md', '');
       const userCount = (content.match(/## 用户/g) || []).length;
       return `${dateStr} | ${userCount} 轮对话`;
+    }
+
+    if (path.startsWith('exercise/')) {
+      const dateStr = path.replace('exercise/', '').replace('.md', '');
+      const kcalMatch = content.match(/总估算消耗[::]\s*[~≈约]?\s*(\d+)\s*k?cal/i);
+      const minMatch = content.match(/总时长[::]\s*(\d+)\s*分钟/);
+      const countMatch = content.match(/记录次数[::]\s*(\d+)\s*次/);
+      return `${dateStr} | ${countMatch ? countMatch[1] + ' 次运动' : '无记录'} | ${minMatch ? minMatch[1] + ' 分钟' : ''} | ~${kcalMatch ? kcalMatch[1] : 0} kcal`;
     }
 
     if (path.startsWith('insights/')) {

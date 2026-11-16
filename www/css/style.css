@@ -3020,3 +3020,247 @@ html.web-env .pwa-hint {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
 }
 html.web-env .pwa-hint span { flex: 1; }
+
+/* ===== Exercise Panel（运动板块 v3.22.0）=====
+   面板骨架复用 .habit-overlay/.habit-panel，此处仅新增运动专属组件；颜色一律走主题变量 */
+
+.exercise-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 18px;
+}
+.exercise-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 12px 0 8px;
+}
+.exercise-section-title:first-child { margin-top: 0; }
+
+/* 秒表计时卡 */
+.exercise-timer-card {
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 4px;
+}
+.exercise-timer-card.running {
+  border-color: var(--accent);
+}
+.exercise-timer-idle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.exercise-timer-idle .btn { flex: 1; }
+.exercise-timer-display {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.exercise-timer-time {
+  font-family: var(--mono);
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.exercise-timer-dist {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.exercise-timer-name {
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1;
+}
+.exercise-timer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.exercise-timer-actions .btn { flex: 1; }
+.exercise-timer-hint {
+  font-size: 11.5px;
+  color: var(--muted2);
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+/* 计时结束保存条 */
+.exercise-save-form {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rule);
+}
+.exercise-save-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.exercise-save-row .settings-input { flex: 1; }
+.exercise-intensity-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.exercise-intensity-chip {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 12.5px;
+  text-align: center;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.exercise-intensity-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 快捷记录 chips */
+.exercise-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.exercise-preset-name {
+  font-size: 14px;
+  color: var(--ink);
+  flex: 1;
+  min-width: 90px;
+}
+.exercise-preset-name .exercise-preset-icon { margin-right: 6px; }
+.exercise-quick-btn {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.exercise-quick-btn:hover { border-color: var(--accent); color: var(--accent); }
+.exercise-preset-timer-btn {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.exercise-preset-timer-btn:hover { background: var(--accent); color: #fff; }
+
+/* 历史记录列表 */
+.exercise-day-group {
+  margin-bottom: 10px;
+}
+.exercise-day-label {
+  font-size: 11.5px;
+  color: var(--muted2);
+  margin-bottom: 5px;
+}
+.exercise-record-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 9px 12px;
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+.exercise-record-main {
+  flex: 1;
+  color: var(--ink);
+  min-width: 0;
+}
+.exercise-record-metrics {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.exercise-record-delete {
+  border: none;
+  background: none;
+  color: var(--muted2);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.exercise-record-delete:hover { color: var(--warn, #e5697e); }
+
+/* 周统计 */
+.exercise-week-stat {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 9px 12px;
+  margin-top: 10px;
+  line-height: 1.8;
+}
+.exercise-empty {
+  text-align: center;
+  color: var(--muted2);
+  font-size: 12.5px;
+  line-height: 1.8;
+  padding: 16px 0 8px;
+}
+
+/* 常用运动管理弹窗 */
+.exercise-preset-list { display: flex; flex-direction: column; gap: 6px; }
+.exercise-preset-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+.exercise-preset-manage-row span { flex: 1; }
+.exercise-icon-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.exercise-icon-option {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--bg3);
+  transition: all 0.15s;
+}
+.exercise-icon-option.active { border-color: var(--accent); background: var(--bg4, var(--bg3)); }

@@ -431,8 +431,48 @@ export class StatsManager {
     return map;
   }
 
+  // 运动消耗柱状图 — 最近 days 天（输入 exerciseManager.getWeekSummary(days).days：[{date, count, min, km, kcal}]）
+  // kcal 柱 + caption 周总消耗/总距离/活跃天数（v3.22.0 运动板块）
+  static buildExerciseSvg(exerciseDays, { days = 7, today = null } = {}) {
+    const W = 340, H = 160, L = 40, R = 14, T = 16, B = 24;
+    const iw = W - L - R, ih = H - T - B;
+    const end = today || this._todayStatic();
+    const dayList = [];
+    for (let i = days - 1; i >= 0; i--) dayList.push(this._shiftDate(end, -i));
+    const map = new Map((exerciseDays || []).map((d) => [d.date, d]));
+    const rows = dayList.map((d) => ({ date: d, ...(map.get(d) || { count: 0, min: 0, km: 0, kcal: 0 }) }));
+    const hasAny = rows.some((r) => r.kcal > 0);
+    if (!hasAny) {
+      return '<div class="trend-empty">暂无运动记录，运动面板一键记录或对话说「走了3公里」即可</div>';
+    }
+    const maxVal = Math.max(150, ...rows.map((r) => r.kcal)) * 1.1;
+    const slot = iw / days;
+    const bw = Math.min(34, slot * 0.6);
+    const bars = rows.map((r, i) => {
+      const cx = L + slot * i + slot / 2;
+      if (!r.kcal) {
+        return `<rect x="${(cx - bw / 2).toFixed(1)}" y="${(T + ih - 2).toFixed(1)}" width="${bw.toFixed(1)}" height="2" fill="var(--rule)" rx="1"><title>${r.date} 无运动记录</title></rect>
+          <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
+      }
+      const h = Math.max(2, ((r.kcal / maxVal) * ih));
+      return `<rect x="${(cx - bw / 2).toFixed(1)}" y="${(T + ih - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="var(--accent3)"><title>${r.date} ${r.count}次 ${r.min}分钟${r.km > 0 ? ` ${r.km}km` : ''} ~${r.kcal}kcal</title></rect>
+        <text x="${cx.toFixed(1)}" y="${(T + ih - h - 4).toFixed(1)}" text-anchor="middle" class="trend-val">${Math.round(r.kcal)}</text>
+        <text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="trend-axis">${r.date.slice(5)}</text>`;
+    }).join('');
+    const totalKcal = rows.reduce((s, r) => s + r.kcal, 0);
+    const totalKm = Math.round(rows.reduce((s, r) => s + r.km, 0) * 10) / 10;
+    const activeDays = rows.filter((r) => r.count > 0).length;
+    return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+  <line x1="${L}" y1="${(T + ih / 2).toFixed(1)}" x2="${W - R}" y2="${(T + ih / 2).toFixed(1)}" stroke="var(--rule)" stroke-dasharray="2 4" stroke-opacity="0.6"/>
+  <text x="4" y="${(T + ih / 2 + 4).toFixed(1)}" class="trend-axis">${Math.round(maxVal / 2)}</text>
+  ${bars}
+</svg>
+<div class="trend-caption">周消耗 ~${totalKcal} kcal · ${totalKm > 0 ? `总距离 ${totalKm} km · ` : ''}活跃 ${activeDays}/${days} 天</div>`;
+  }
+
   // 周报的数据摘要段（供提示词嵌入）。macroNotes 可选：近 7 天 diet 文件中的「营养观察」行汇总
-  static buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes = '') {
+  // exerciseText 可选（v3.22.0）：ExerciseManager.buildWeeklySummaryText 生成的近 7 天运动明细
+  static buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes = '', exerciseText = '') {
     const start = this._shiftDate(endDate, -6);
     const cal = calories.filter((c) => c.date >= start && c.date <= endDate);
     const wt = weights.filter((w) => w.date >= start && w.date <= endDate);
@@ -454,6 +494,9 @@ ${macroStr}
 
 ## 近 7 天营养观察（每日按食物组记录的缺口）
 ${macroNotes || '（无记录）'}
+
+## 近 7 天运动记录（时长/距离/估算消耗）
+${exerciseText || '（本周无运动记录）'}
 
 ## 近 7 天体重记录
 ${wtStr}

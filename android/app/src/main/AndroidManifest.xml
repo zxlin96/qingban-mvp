@@ -48,4 +48,9 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s"
         tools:node="replace" />
+
+    <!-- 运动测距（@capacitor/geolocation，v3.22.0）：仅秒表计时期间前台定位累计步行/跑步距离，
+         不做后台定位与前台服务；运行时授权由插件在开始测距时触发系统授权框。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>
