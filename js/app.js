@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.22.0';
+const APP_VERSION = '3.22.1';
 const APP_VERSION_DATE = '2026-11-17';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.22.1', date: '2026-11-17',
+    items: [
+      '优化：拍照记录饮食逐菜分解 — 此前视觉预识别指令只要求"估算总热量"，主对话看不到原图、只能转述一个总数；现识别指令要求逐样输出每个菜品/食物的名称、估算分量、单项热量（kcal）与蛋白质/碳水/脂肪估算（g），末尾汇总总热量与三大营养素合计，拿不准的菜品标注（推测）；逐菜营养顺既有 diet/日期.md 记录格式（每条含估算营养）直接落盘，体重秤/运动等其他图片识别行为不变'
+    ]
+  },
   {
     ver: '3.22.0', date: '2026-11-17',
     items: [
