@@ -247,8 +247,8 @@ export class NotificationManager {
   // ===== 通知文案模板（纯静态函数，可单测）=====
   // 约束：LocalNotifications 的内容是预置的，发送时不能跑 LLM — 文案 = 模板 + 结构化数据
 
-  // 晨间问候：昨日体重变化 + 昨日打卡概况
-  static buildMorningBrief({ yesterdayWeight, prevWeight, yesterdayCheckins } = {}) {
+  // 晨间问候：昨日体重变化 + 昨日打卡概况（+ streak 提及 / 周末语气变体）
+  static buildMorningBrief({ yesterdayWeight, prevWeight, yesterdayCheckins, maxStreak = 0, isWeekend = false, seed = '' } = {}) {
     const parts = [];
     if (typeof yesterdayWeight === 'number') {
       let seg = `昨天体重 ${yesterdayWeight}kg`;
@@ -258,14 +258,65 @@ export class NotificationManager {
       }
       parts.push(seg);
     }
-    if (yesterdayCheckins > 0) parts.push(`昨天完成 ${yesterdayCheckins} 次打卡，继续保持！`);
-    if (parts.length === 0) parts.push('新的一天从一顿好早餐开始');
+    if (yesterdayCheckins > 0) {
+      parts.push(`昨天完成 ${yesterdayCheckins} 次打卡${maxStreak >= 3 ? `，🔥 连续 ${maxStreak} 天中` : ''}`);
+    }
+    if (parts.length === 0) {
+      parts.push(isWeekend
+        ? '周末早安，睡到自然醒也没关系'
+        : this._pickVariant(['新的一天从一顿好早餐开始', '早上好，今天想怎么吃？先记下来吧', '新的一天，记录从第一餐开始'], seed));
+    }
     return `${parts.join('。')}。点开和我聊聊今天的计划吧`;
   }
 
-  // 打卡提醒（系统级定点 — 注册时无法预知当日进度，用通用文案，点击进打卡面板看真实进度）
-  static buildHabitReminderText() {
-    return '该打卡啦 ✅ 点开看看今天的习惯进度';
+  // 打卡提醒（系统级定点 — 注册时按最近数据生成动态文案，打卡/撤销后当日重注册同步进度）
+  // 分支优先级：全达标正面 > 晚间损失框架 > 周末轻松 > 晚间温和 > 通用鼓励；同分支内按 seed 确定性轮换变体
+  static buildHabitReminderText({ doneCount = 0, totalCount = 0, maxStreak = 0, isWeekend = false, slot = 'noon', seed = '' } = {}) {
+    const allDone = totalCount > 0 && doneCount >= totalCount;
+    if (allDone) {
+      return this._pickVariant([
+        maxStreak >= 3 ? `✓ 今天全部达标 · 🔥 连续 ${maxStreak} 天，明天见` : '✓ 今天全部达标，可以安心休息啦',
+        maxStreak > 0 ? `✓ 打卡完成 · 连续 ${maxStreak} 天，节奏很稳` : '✓ 今日打卡完成，干得漂亮',
+        '✓ 今日习惯全绿，明天也交给你了',
+      ], seed);
+    }
+    const remaining = Math.max(1, totalCount - doneCount);
+    if (!isWeekend && slot === 'evening' && maxStreak >= 3) {
+      return this._pickVariant([
+        `⚠️ 连续 ${maxStreak} 天的记录，今天还差 ${remaining} 个习惯`,
+        `🔥 连续 ${maxStreak} 天还剩最后一步 — 还差 ${remaining} 个习惯没打卡`,
+        `别让连续 ${maxStreak} 天的记录今晚断掉，还差 ${remaining} 个习惯`,
+      ], seed);
+    }
+    if (isWeekend) {
+      return this._pickVariant([
+        '周末啦 🌿 想起来了就顺手打个卡，没状态也没关系',
+        '周末打卡不设闹钟 — 点开看看，想到哪个习惯就点哪个',
+        '今天是周末，抽 10 秒打个卡就算赢 ✅',
+      ], seed);
+    }
+    if (slot === 'evening') {
+      return this._pickVariant([
+        '今天过半的习惯还没打卡，睡前补上吧 ✅',
+        '晚间打卡时间 — 点开看看今天还差哪个习惯',
+        '今日打卡还差一点点，点进来 10 秒搞定',
+      ], seed);
+    }
+    return this._pickVariant([
+      '该打卡啦 ✅ 点开看看今天的习惯进度',
+      '打卡时间到 ✅ 今天的目标进度就在面板里',
+      '顺手打个卡 ✅ 小习惯的复利正在累积',
+      '喝水的、步数的 — 点开面板 10 秒打个卡',
+    ], seed);
+  }
+
+  // 按种子确定性挑选变体（同一天同分支文案稳定，跨天轮换避免通知疲劳）
+  static _pickVariant(list, seed) {
+    if (!Array.isArray(list) || list.length === 0) return '';
+    let h = 0;
+    const s = String(seed || '');
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return list[h % list.length];
   }
 
   // 晚间复盘提醒

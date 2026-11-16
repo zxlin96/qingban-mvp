@@ -59,6 +59,49 @@ describe('提醒文案模板', () => {
     assert.ok(NotificationManager.buildEveningReviewText().length > 4);
   });
 
+  test('buildHabitReminderText：全达标正面文案（含 streak）', () => {
+    const r = NotificationManager.buildHabitReminderText({ doneCount: 3, totalCount: 3, maxStreak: 5, seed: '2026-11-16' });
+    assert.ok(r.startsWith('✓'), '全达标应为正面文案');
+    assert.ok(r.includes('连续 5 天'), '有 streak 时提及');
+    const noStreak = NotificationManager.buildHabitReminderText({ doneCount: 1, totalCount: 1, seed: 'x' });
+    assert.ok(noStreak.startsWith('✓'));
+    assert.ok(!noStreak.includes('连续'), '无 streak 不硬凑');
+  });
+
+  test('buildHabitReminderText：晚间损失框架（streak≥3 且未全达标、非周末）', () => {
+    const r = NotificationManager.buildHabitReminderText({ doneCount: 0, totalCount: 2, maxStreak: 4, slot: 'evening', seed: 'd1' });
+    assert.ok(r.includes('连续 4 天'), '损失框架应提及 streak');
+    assert.ok(r.includes('还差 2 个习惯'), '应提及剩余数');
+    const noon = NotificationManager.buildHabitReminderText({ doneCount: 0, totalCount: 2, maxStreak: 4, slot: 'noon', seed: 'd1' });
+    assert.ok(!noon.includes('连续'), '中午不用损失框架施压');
+    const low = NotificationManager.buildHabitReminderText({ doneCount: 0, totalCount: 2, maxStreak: 2, slot: 'evening', seed: 'd1' });
+    assert.ok(!low.includes('连续 2 天'), 'streak<3 不用损失框架');
+  });
+
+  test('buildHabitReminderText：周末轻松语气（优先于损失框架）+ 无参兜底', () => {
+    const wk = NotificationManager.buildHabitReminderText({ doneCount: 0, totalCount: 2, maxStreak: 9, isWeekend: true, slot: 'evening', seed: 'd2' });
+    assert.ok(wk.includes('周末'), '周末用轻松语气');
+    assert.ok(!wk.includes('连续 9 天'), '周末不用损失框架');
+    assert.ok(NotificationManager.buildHabitReminderText().length > 4, '无参兜底非空');
+  });
+
+  test('_pickVariant：同 seed 稳定、空 seed 取首个、空列表兜底', () => {
+    const list = ['a', 'b', 'c'];
+    assert.equal(NotificationManager._pickVariant(list, '2026-11-16'), NotificationManager._pickVariant(list, '2026-11-16'), '同 seed 结果稳定');
+    assert.equal(NotificationManager._pickVariant(list, ''), 'a');
+    assert.equal(NotificationManager._pickVariant([], 'x'), '');
+  });
+
+  test('buildMorningBrief：streak 提及与周末变体（原行为不回归）', () => {
+    const r = NotificationManager.buildMorningBrief({ yesterdayCheckins: 2, maxStreak: 6, seed: 'x' });
+    assert.ok(r.includes('昨天完成 2 次打卡'));
+    assert.ok(r.includes('连续 6 天'));
+    const wk = NotificationManager.buildMorningBrief({ maxStreak: 6, isWeekend: true, seed: 'x' });
+    assert.ok(wk.includes('周末早安'), '周末无数据时用周末变体');
+    const noCheckins = NotificationManager.buildMorningBrief({ yesterdayWeight: 79.5, maxStreak: 9 });
+    assert.ok(!noCheckins.includes('打卡'), '昨日无打卡不提打卡（streak 也不硬提）');
+  });
+
   test('isQuietHours：22:00 ~ 次日 7:00 静默', () => {
     for (const h of [22, 23, 0, 3, 6]) assert.equal(NotificationManager.isQuietHours(h), true, `hour=${h} 应静默`);
     for (const h of [7, 12, 21]) assert.equal(NotificationManager.isQuietHours(h), false, `hour=${h} 不静默`);

@@ -1,5 +1,20 @@
 # 轻伴 MVP 变更日志
 
+## 2026-11-17 (v3.21.0)
+
+### 新增 — 激励系统：通知智能化 + 补卡券 + 里程碑 + 周报推送
+
+> 使用积极性下降（周末尤甚、工作日偶发）的诊断：现有激励件全是被动、静态、通用文案——通知千篇一律导致疲劳、streak 断了无补救、打卡无即时反馈、周报生成后无人知晓。本版围绕「损失厌恶 + 即时反馈 + 降低周末门槛」重构激励闭环
+
+- **通知文案智能化**：打卡提醒按注册时真实数据分支——全达标→正面文案「✓ 连续 X 天，明天见」；晚间未达标且 streak≥3→损失框架「连续 X 天要断了，还差 N 个习惯」；中午温和不施压；周末换轻松语气（优先于损失框架）；各分支多条变体按日期确定性轮换，避免通知疲劳。打卡/撤销后当日重注册定点提醒（cancel+register 幂等），晚间文案随真实进度实时切换。晨间问候在昨日有打卡且 streak≥3 时提及「🔥 连续 X 天中」，无数据时周末用周末变体
+- **补卡券（每周 1 张）**：昨天漏打卡的习惯可在打卡面板用券补回——`makeupCheckin()` 校验仅限昨天/配额/习惯 active，写入带 `makeup` 标记的真实日期记录（amount=dailyGoal），`calculateStreak` 按日期读取自动接上、算法零改动；配额存 `.meta/habit-makeup.json`（ISO 周号 weekKey，周切换自动重置）；面板顶部显示「昨日未达标习惯 + 剩余张数」补卡条
+- **打卡即时反馈**：三条打卡路径（快速/自定义/AI `checkin_habit`）统一接 `_afterCheckin`——toast 显示当前 streak，streak 达 7/21/50/100 天触发里程碑庆祝（`HabitManager.isMilestone` 纯函数）；打卡面板汇总行新增「近 7 天完成率」（聚合 `calculateCompletionRate`，数据此前已计算但从未展示）
+- **周报推送**：周日结算生成 AI 周报后 `_notifyWeeklyReportReady` 预约下一个周一 08:30 系统通知（周一 fresh-start 效应，原生轨 schedule.at App 被杀仍可达），点击直达趋势页（`onNotificationTap` 新增 type=report 路由，横幅新增 📊 图标）；周五早安问候 prompt 附带「🌈 周末轻计划」（2 条轻松建议），周末语气放松、建议强度减半
+- **AI 人设 v16**：CLAUDE.md 新增「记录不审判」条款——外出就餐/周末聚餐/偶尔吃多时不评价热量、不说教、禁用"罪恶/失控/放纵/破戒"类词汇，肯定记录行为本身（"记下来就是赢，数据因真实而有用"），落点向前看
+- **修复 npm test 在 Node 24+ 失效**：Node 24 不再把目录当作 `--test` 参数（报 Cannot find module），改为 glob 模式 `node --test "test/*.test.js"`
+- **测试**：新建 habit-manager.test.js（streak 基础/补卡券全流程/ISO 周号/里程碑/习惯概览 12 项，该模块此前零单测）+ notification-reminders.test.js 文案模板 5 项，全量 **206 项通过**
+- **涉及文件**：`js/notification-manager.js`、`js/habit-manager.js`、`js/app.js`、`js/file-manager.js`、`css/style.css`、`package.json`、`test/habit-manager.test.js`、`test/notification-reminders.test.js` 及三目录同步副本
+
 ## 2026-10-26 (v3.20.3)
 
 ### 优化 — 发图识别携带用户随图文字

@@ -1,13 +1,13 @@
 {
   "name": "qingban-mvp",
-  "version": "3.20.3",
+  "version": "3.21.0",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node server.js",
     "sync": "node scripts/sync-web.mjs && node scripts/sync-android-version.mjs",
     "verify": "node scripts/sync-web.mjs --check && node scripts/sync-android-version.mjs --check",
-    "test": "node --test test/",
+    "test": "node --test \"test/*.test.js\"",
     "prompt:eval": "node scripts/prompt-eval.mjs"
   },
   "dependencies": {

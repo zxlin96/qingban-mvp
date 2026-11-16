@@ -42,7 +42,7 @@ css/  →  www/css/  →  android/app/src/main/assets/public/css/
 - **后端**：`server.js` 单文件，`/api/chat`（非流式）、`/api/chat/stream`（SSE）、`/api/health`（健康检查），其余走静态文件服务。`cleanMessages()` 会剥离非标准字段（如 `_pendingAction`）避免讯飞拒绝。
 - **LLM 服务**：`js/spark-llm.js`（讯飞/OpenAI/Anthropic 多协议适配）、`js/llm-service.js`（KV Cache 三层缓存 + 工具调度）、`js/mock-llm.js`（离线 mock）。
 - **业务模块**：`chat-manager.js`、`diet-recorder.js`（饮食记录）、`habit-manager.js`（习惯打卡）、`file-manager.js`、`index-manager.js`、`profile-learner.js`、`notification-manager.js`、`auto-dream.js`、`on-demand-loader.js`、`settings.js`、`app-config.js`。
-- **AI 记忆**：AI 角色指令内嵌于 `js/file-manager.js` 的 `_getClaudeMd()`（v12），用户数据文件（PROFILE/BODY_METRICS/rules 等）为 IndexedDB 虚拟文件，由 AI 通过 `read_file`/`write_file` 工具读写；`data/` 目录仅存用户数据模板（CLAUDE.md 已删，运行时不用）
+- **AI 记忆**：AI 角色指令内嵌于 `js/file-manager.js` 的 `_getClaudeMd()`（v16），用户数据文件（PROFILE/BODY_METRICS/rules 等）为 IndexedDB 虚拟文件，由 AI 通过 `read_file`/`write_file` 工具读写；`data/` 目录仅存用户数据模板（CLAUDE.md 已删，运行时不用）
 - **Capacitor**：`appId: com.qingban.mvp`，`androidScheme: https`，启用 `CapacitorHttp`、`allowMixedContent`。
 
 ## 合规限制

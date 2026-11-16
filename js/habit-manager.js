@@ -1,13 +1,23 @@
 // habit-manager.js
 // 习惯打卡管理模块 — 习惯定义、打卡记录、统计计算、AI 推荐
-// 存储：IndexedDB（.meta/habits.json + .meta/habit-checkins.json）
+// 存储：IndexedDB（.meta/habits.json + .meta/habit-checkins.json + .meta/habit-makeup.json）
+
+// streak 里程碑（打卡后达到任一节点触发庆祝，v3.21.0 激励系统）
+const STREAK_MILESTONES = [7, 21, 50, 100];
 
 export class HabitManager {
   constructor(fileManager) {
     this.fm = fileManager;
     this.habitsPath = '.meta/habits.json';
     this.checkinsPath = '.meta/habit-checkins.json';
+    this.makeupPath = '.meta/habit-makeup.json';
+    this.makeupLimit = 1; // 每周补卡券张数
     this.onChangeCallback = null; // 数据变化时通知 UI 刷新
+  }
+
+  // 里程碑判定（纯函数，供 UI 庆祝与单测）
+  static isMilestone(streak) {
+    return STREAK_MILESTONES.includes(streak);
   }
 
   // ===== 习惯定义 CRUD =====
@@ -131,6 +141,81 @@ export class HabitManager {
       isCompleted: amount >= goal,
       checkinCount: checkins.length
     };
+  }
+
+  // ===== 习惯概览与补卡券 =====
+
+  // 习惯概览（供通知文案动态分支）：当日达标数 / 总数 / 各习惯最大 streak
+  async getHabitOverview() {
+    const habits = await this.getHabits();
+    const checkins = await this._loadCheckins();
+    const today = this._getToday();
+    const todayCheckins = checkins.filter(c => c.date === today);
+    let doneCount = 0;
+    let maxStreak = 0;
+    for (const habit of habits) {
+      const amount = todayCheckins.filter(c => c.habitId === habit.id).reduce((s, c) => s + (c.amount || 0), 0);
+      if (amount >= habit.dailyGoal) doneCount++;
+      const streak = await this.calculateStreak(habit.id);
+      if (streak > maxStreak) maxStreak = streak;
+    }
+    return { doneCount, totalCount: habits.length, maxStreak };
+  }
+
+  // 昨日未达标的习惯列表（供打卡面板补卡条展示）
+  async getYesterdayUnmetHabits() {
+    const yesterday = this._addDays(this._getToday(), -1);
+    const habits = await this.getHabits();
+    const checkins = await this._loadCheckins();
+    const yesterdayCheckins = checkins.filter(c => c.date === yesterday);
+    return habits
+      .filter(h => {
+        const amount = yesterdayCheckins.filter(c => c.habitId === h.id).reduce((s, c) => s + (c.amount || 0), 0);
+        return amount < h.dailyGoal;
+      });
+  }
+
+  // 补卡券配额（周切换自动重置）
+  async getMakeupQuota() {
+    const weekKey = this._getWeekKey(this._getToday());
+    const state = await this._loadMakeup();
+    const usedThisWeek = state.weekKey === weekKey ? (state.usedCount || 0) : 0;
+    return { canUse: usedThisWeek < this.makeupLimit, usedThisWeek, limit: this.makeupLimit, weekKey };
+  }
+
+  // 补卡：仅限昨天，写入带 makeup 标记的真实日期记录（calculateStreak 按日期读取，自动接上，算法零改动）
+  async makeupCheckin(habitId, date) {
+    const yesterday = this._addDays(this._getToday(), -1);
+    if (date !== yesterday) {
+      return { success: false, reason: 'invalid_date', message: '补卡券只能补昨天的打卡' };
+    }
+    const habit = await this.getHabit(habitId);
+    if (!habit || habit.active === false) {
+      return { success: false, reason: 'no_habit', message: '习惯不存在或已删除' };
+    }
+    const quota = await this.getMakeupQuota();
+    if (!quota.canUse) {
+      return { success: false, reason: 'quota_exhausted', message: `本周补卡券已用完（${quota.usedThisWeek}/${quota.limit}）` };
+    }
+    const checkins = await this._loadCheckins();
+    const checkin = {
+      id: this._generateId('checkin'),
+      habitId,
+      date,
+      amount: habit.dailyGoal || 1,
+      note: '补卡',
+      makeup: true,
+      timestamp: new Date().toISOString()
+    };
+    checkins.push(checkin);
+    await this._saveCheckins(checkins);
+
+    const weekKey = quota.weekKey;
+    const state = await this._loadMakeup();
+    const records = (state.weekKey === weekKey ? state.records : []).concat([{ date, habitId, ts: checkin.timestamp }]);
+    await this._saveMakeup({ weekKey, usedCount: quota.usedThisWeek + 1, records });
+    this._notifyChange();
+    return { success: true, checkin };
   }
 
   // ===== 统计计算 =====
@@ -372,6 +457,20 @@ ${profile || '（暂无档案）'}
     await this.fm.writeFile(this.checkinsPath, JSON.stringify(checkins));
   }
 
+  async _loadMakeup() {
+    const raw = await this.fm.readFile(this.makeupPath);
+    if (!raw) return { weekKey: '', usedCount: 0, records: [] };
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return { weekKey: '', usedCount: 0, records: [] };
+    }
+  }
+
+  async _saveMakeup(state) {
+    await this.fm.writeFile(this.makeupPath, JSON.stringify(state));
+  }
+
   // ===== 工具方法 =====
 
   _generateId(prefix) {
@@ -389,6 +488,16 @@ ${profile || '（暂无档案）'}
     d.setDate(d.getDate() + days);
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  // ISO 周号（周一为一周起点，与 auto-dream._getWeekNumber 同口径）→ '2026-W46'
+  _getWeekKey(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const day = d.getDay() || 7; // 周日转 7
+    d.setDate(d.getDate() + 4 - day); // 移到本周四
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
   }
 
   _notifyChange() {

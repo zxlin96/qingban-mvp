@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.20.3';
-const APP_VERSION_DATE = '2026-10-26';
+const APP_VERSION = '3.21.0';
+const APP_VERSION_DATE = '2026-11-17';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,18 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.21.0', date: '2026-11-17',
+    items: [
+      '新增：激励系统 — 打卡提醒文案智能化（告别千篇一律）：全达标→正面文案「✓ 连续 X 天，明天见」；晚间 20:00 未达标且 streak≥3→损失框架「连续 X 天要断了」；中午温和不施压；周末换轻松语气；文案按日期轮换避免通知疲劳。打卡/撤销后当日重注册提醒，晚间文案随真实进度实时切换',
+      '新增：补卡券（每周 1 张）— 昨天漏打卡的习惯可在打卡面板用券补回，写入真实日期记录、streak 自动接上；面板显示「昨日未达标习惯 + 剩余张数」，周切换自动重置',
+      '新增：打卡即时反馈 — 打卡/补卡成功弹 toast 显示当前 streak；streak 达 7/21/50/100 天触发里程碑庆祝；打卡面板汇总行新增「近 7 天完成率」（数据此前已计算但从未展示）',
+      '新增：周报推送 — 周日结算生成 AI 周报后，自动预约周一早 8:30 系统通知引导打开（fresh-start 效应），点击直达趋势页；周五早安问候附带「🌈 周末轻计划」，周末语气放松、建议强度减半',
+      '优化：AI 人设升级 v16 — 新增「记录不审判」条款：外出就餐/周末聚餐/偶尔吃多时不评价热量、不说教、禁用"罪恶/失控/放纵"类词汇，肯定记录行为本身（记下来就是赢）',
+      '修复：npm test 在 Node 24+ 失效 — Node 24 不再把目录当作 --test 参数，改为 glob 模式 "test/*.test.js"',
+      '测试：新增 habit-manager.test.js（streak/补卡券/里程碑/ISO 周号 12 项，该模块此前零单测）+ 通知文案模板 5 项，全量 206 项通过'
+    ]
+  },
   {
     ver: '3.20.3', date: '2026-10-26',
     items: [
@@ -1345,6 +1357,7 @@ class App {
             report = await this._stepTimeout(this._generateWeeklyReport(yesterdayDate), 150000, 'AI 周报');
           }
           console.log('[DayRollover] AI 周报已生成:', report.path);
+          this._notifyWeeklyReportReady(report);
           if (this._dtUpdateStep) this._dtUpdateStep(stepWeeklyReport, 'done');
         } catch (e) {
           console.error('[DayRollover] AI 周报失败:', e.message);
@@ -1404,13 +1417,21 @@ class App {
     const evening = t(s.eveningTime) || { hour: 21, minute: 30 };
 
     const items = [];
+    // 晨间/打卡提醒共用一次数据收集（体重 + 打卡进度 + streak）
+    let morningData = null;
+    const getMorningData = async () => {
+      if (!morningData) morningData = await this._collectMorningData();
+      return morningData;
+    };
     if (s.morningEnabled !== false) {
-      const data = await this._collectMorningData();
+      const data = await getMorningData();
       items.push({ key: 'morning', enabled: true, hour: morning.hour, minute: morning.minute, type: 'custom', title: '早安 ☀️', body: NotificationManager.buildMorningBrief(data) });
     }
     if (s.habitEnabled !== false) {
-      items.push({ key: 'habitNoon', enabled: true, hour: noon.hour, minute: noon.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText() });
-      items.push({ key: 'habitEvening', enabled: true, hour: habitEvening.hour, minute: habitEvening.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText() });
+      const data = await getMorningData();
+      const habitArgs = { doneCount: data.doneCount, totalCount: data.totalCount, maxStreak: data.maxStreak, isWeekend: data.isWeekend, seed: data.seed };
+      items.push({ key: 'habitNoon', enabled: true, hour: noon.hour, minute: noon.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText({ ...habitArgs, slot: 'noon' }) });
+      items.push({ key: 'habitEvening', enabled: true, hour: habitEvening.hour, minute: habitEvening.minute, type: 'custom', title: '打卡提醒', body: NotificationManager.buildHabitReminderText({ ...habitArgs, slot: 'evening' }) });
     }
     if (s.eveningEnabled !== false) {
       items.push({ key: 'evening', enabled: true, hour: evening.hour, minute: evening.minute, type: 'custom', title: '晚间复盘', body: NotificationManager.buildEveningReviewText() });
@@ -1418,7 +1439,7 @@ class App {
     return this.notificationManager.syncDailyReminders(items);
   }
 
-  // 收集晨间问候文案数据：昨日体重（含较前值变化）+ 昨日打卡次数
+  // 收集晨间问候文案数据：昨日体重（含较前值变化）+ 昨日打卡次数 + 习惯概览（供通知文案动态分支）
   async _collectMorningData() {
     try {
       const today = this.chatManager.getEffectiveToday();
@@ -1432,14 +1453,31 @@ class App {
         checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
       } catch (_) { /* 打卡数据损坏时按 0 次 */ }
       const yesterdayCheckins = checkins.filter((c) => c.date === yesterday).length;
+      let overview = { doneCount: 0, totalCount: 0, maxStreak: 0 };
+      try {
+        overview = await this.habitManager.getHabitOverview();
+      } catch (_) { /* 习惯数据异常时按无习惯处理 */ }
       return {
         yesterdayWeight: yw ? yw.weight : null,
         prevWeight: pw ? pw.weight : null,
-        yesterdayCheckins
+        yesterdayCheckins,
+        ...overview,
+        isWeekend: this._isWeekendDate(today),
+        seed: today
       };
     } catch (e) {
       console.warn('[App] 晨间数据收集失败:', e.message);
       return {};
+    }
+  }
+
+  // 周六/周日判定（'YYYY-MM-DD'，解析失败按工作日）
+  _isWeekendDate(dateStr) {
+    try {
+      const dow = new Date(`${dateStr}T00:00:00`).getDay();
+      return dow === 0 || dow === 6;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1937,6 +1975,24 @@ ${currentExercise}
       const habits = await this.fm.readFile('rules/learned-habits.md') || '';
       const exercise = await this.fm.readFile('rules/exercise.md') || '';
 
+      // 周五/周末日期感知（v3.21.0）：周五附「周末轻计划」，周末语气放松、建议强度减半
+      let dayNote = '';
+      let wordLimit = 300;
+      try {
+        const dow = new Date(`${today}T00:00:00`).getDay();
+        if (dow === 5) {
+          wordLimit = 350;
+          dayNote = `
+今天是周五。在「今日建议」之后额外加一节：
+
+### 🌈 周末轻计划
+- [2 条轻松的周末小建议，贴合用户习惯（如散步、户外活动、一顿慢慢吃的饭），带期待感，不说教]`;
+        } else if (dow === 0 || dow === 6) {
+          dayNote = `
+今天是周末。语气比工作日更轻松随意，建议强度减半，不强调热量数字，主打放松与恢复。`;
+        }
+      } catch (_) { /* 日期解析失败按工作日处理 */ }
+
       // 构建 LLM prompt
       const prompt = `请根据以下数据，为用户生成一份简洁的「昨日总结」和「今日建议」。
 
@@ -1962,7 +2018,7 @@ ${exercise}
 ${habits}
 
 ## 输出要求
-请用以下格式输出（不要超过 300 字）：
+请用以下格式输出（不要超过 ${wordLimit} 字）：
 
 ### 📊 昨日总结
 - 饮食：[昨天吃了什么、总热量、蛋白质/碳水/脂肪概要、是否超标]
@@ -1973,7 +2029,7 @@ ${habits}
 ### 💡 今日建议
 - 饮食：[2-3 条具体建议，基于昨天的饮食情况；若昨日记录有「营养观察」缺口（如无奶制品/蔬果少），优先建议对应食物]
 - 运动：[1-2 条建议，考虑用户的运动能力和限制]
-- 提醒：[1 条温馨提醒，比如喝水、注意某事]
+- 提醒：[1 条温馨提醒，比如喝水、注意某事]${dayNote}
 
 语气要像朋友一样亲切自然，不要用说教的口吻。如果昨天没有数据，可以跳过昨日总结，直接给今日建议。`;
 
@@ -4396,7 +4452,7 @@ updated: ${profile.startDate}
       const key = extra?.reminderKey || '';
       if (key === 'habitNoon' || key === 'habitEvening' || extra?.type === 'habit') {
         this.showHabitPanel();
-      } else if (key === 'evening') {
+      } else if (key === 'evening' || extra?.type === 'report') {
         this._openTrendPanel();
       }
       // morning / 其他 → 聊天页（App 默认视图），无额外路由
@@ -4425,6 +4481,7 @@ updated: ${profile.startDate}
       await this.habitManager.checkin(habit.id, amount, note);
       const progress = await this.habitManager.getTodayProgress(habit.id);
       this._refreshHabitPanelIfOpen();
+      this._afterCheckin(habit.id);
       return {
         success: true,
         habit: habit.name,
@@ -4481,6 +4538,23 @@ updated: ${profile.startDate}
     this.habitManager.onChangeCallback = () => {
       this._refreshHabitPanelIfOpen();
     };
+  }
+
+  // 打卡后统一反馈（v3.21.0 激励系统）：toast（含 streak / 里程碑庆祝）+ 刷新当日提醒文案
+  // 打卡/补卡后当日重注册定点提醒 — 晚间文案随进度切换（全达标正面 ↔ 损失框架），cancel+register 幂等
+  async _afterCheckin(habitId, { title = '已打卡' } = {}) {
+    try {
+      const stats = await this.habitManager.getHabitStats(habitId);
+      const streak = stats.currentStreak;
+      if (HabitManager.isMilestone(streak)) {
+        this.showToast(`🏆 连续 ${streak} 天！`, '里程碑达成 — 坚持的力量', 'success');
+      } else if (streak > 1) {
+        this.showToast(title, `🔥 连续 ${streak} 天，继续`, 'success');
+      } else {
+        this.showToast(title, '第一步已经迈出来了 🎉', 'success');
+      }
+    } catch (_) { /* 反馈失败不影响打卡本身 */ }
+    this._syncDailyReminders().catch(() => {});
   }
 
   // 启动未完成习惯提醒检查
@@ -4574,6 +4648,7 @@ updated: ${profile.startDate}
     // 渲染习惯卡片
     const cardsHtml = [];
     let completedCount = 0;
+    let rateSum = 0;
 
     for (const habit of habits) {
       const checkins = await this.habitManager.getCheckinsByHabit(habit.id, viewDate, viewDate);
@@ -4581,6 +4656,12 @@ updated: ${profile.startDate}
       const percentage = habit.dailyGoal > 0 ? Math.min(100, Math.round((amount / habit.dailyGoal) * 100)) : 0;
       const isCompleted = amount >= habit.dailyGoal;
       if (isCompleted) completedCount++;
+
+      // 近 7 天完成率（聚合均值展示在 summary 行）
+      try {
+        const rate = await this.habitManager.calculateCompletionRate(habit.id, 7);
+        rateSum += rate.completionRate;
+      } catch (_) { /* 完成率计算失败不影响卡片 */ }
 
       const streak = await this.habitManager.calculateStreak(habit.id);
       const streakHtml = streak > 0 ? `<span class="habit-card-streak">🔥 ${streak}天</span>` : '';
@@ -4617,8 +4698,35 @@ updated: ${profile.startDate}
       `);
     }
 
-    cardsContainer.innerHTML = cardsHtml.join('');
-    document.getElementById('habitSummary').textContent = `${completedCount}/${habits.length} 已完成`;
+    // 昨日补卡条（仅今天视图；有漏打卡习惯才显示，v3.21.0 补卡券）
+    let makeupHtml = '';
+    if (isToday) {
+      try {
+        const unmet = await this.habitManager.getYesterdayUnmetHabits();
+        if (unmet.length > 0) {
+          const quota = await this.habitManager.getMakeupQuota();
+          const remain = Math.max(0, quota.limit - quota.usedThisWeek);
+          const rows = unmet.map(h => `
+            <div class="habit-makeup-row">
+              <span class="habit-makeup-name">${h.icon} ${h.name}</span>
+              <button class="habit-makeup-btn" data-habit-id="${h.id}" ${quota.canUse ? '' : 'disabled'}>${quota.canUse ? '用券补卡' : '本周券已用完'}</button>
+            </div>`).join('');
+          makeupHtml = `
+            <div class="habit-makeup-bar">
+              <div class="habit-makeup-title">🎫 昨日有 ${unmet.length} 个习惯未达标 · 补卡券本周剩 ${remain} 张</div>
+              ${rows}
+            </div>`;
+        }
+      } catch (_) { /* 补卡条渲染失败不影响主面板 */ }
+    }
+
+    cardsContainer.innerHTML = makeupHtml + cardsHtml.join('');
+    const summaryText = `${completedCount}/${habits.length} 已完成`;
+    if (habits.length > 0) {
+      document.getElementById('habitSummary').textContent = `${summaryText} · 近7天完成率 ${Math.round(rateSum / habits.length)}%`;
+    } else {
+      document.getElementById('habitSummary').textContent = summaryText;
+    }
 
     // 绑定快速打卡按钮
     cardsContainer.querySelectorAll('.habit-quick-checkin').forEach(btn => {
@@ -4629,6 +4737,7 @@ updated: ${profile.startDate}
         } else {
           const amount = parseFloat(e.target.dataset.amount);
           await this.habitManager.checkin(habitId, amount);
+          this._afterCheckin(habitId);
           await this._renderHabitPanel();
         }
       });
@@ -4643,6 +4752,21 @@ updated: ${profile.startDate}
           await this.habitManager.deleteHabit(habitId);
           await this._renderHabitPanel();
         }
+      });
+    });
+
+    // 绑定补卡按钮（用券补昨天，streak 自动接上）
+    cardsContainer.querySelectorAll('.habit-makeup-btn:not([disabled])').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const habitId = e.target.dataset.habitId;
+        const yesterday = this.habitManager._addDays(this.habitManager._getToday(), -1);
+        const r = await this.habitManager.makeupCheckin(habitId, yesterday);
+        if (r.success) {
+          this._afterCheckin(habitId, { title: '已补卡，streak 接上了' });
+        } else {
+          this.showToast('补卡失败', r.message, 'error');
+        }
+        await this._renderHabitPanel();
       });
     });
   }
@@ -4752,8 +4876,10 @@ updated: ${profile.startDate}
     const amount = parseFloat(document.getElementById('habitCustomAmount').value);
     const note = document.getElementById('habitCustomNote').value.trim();
     if (!amount || amount <= 0) { alert('请输入有效的数量'); return; }
-    await this.habitManager.checkin(this._customCheckinHabitId, amount, note);
+    const habitId = this._customCheckinHabitId;
+    await this.habitManager.checkin(habitId, amount, note);
     document.getElementById('habitCustomCheckinOverlay').style.display = 'none';
+    this._afterCheckin(habitId);
     await this._renderHabitPanel();
   }
 
@@ -4767,6 +4893,7 @@ updated: ${profile.startDate}
       exercise: '🏃',
       weight: '⚖️',
       sleep: '😴',
+      report: '📊',
       custom: '🔔'
     };
     const icon = icons[notif.type] || icons.custom;
@@ -5185,6 +5312,29 @@ ${dataSection}
     const path = `weekly/${endDate}.md`;
     await this.fm.writeFile(path, content);
     return { path, content };
+  }
+
+  // 周报生成成功（v3.21.0 激励系统）：应用内横幅 + 预约下一个周一 08:30 系统推送
+  // 周一 fresh-start 效应打开率最高；原生轨走 schedule.at（App 被杀仍可达），Web 轨尽力而为
+  async _notifyWeeklyReportReady(report) {
+    try {
+      this._showNotificationBanner({ title: '📊 本周周报已生成', message: report.path, type: 'report' });
+      const now = new Date();
+      const target = new Date(now);
+      target.setHours(8, 30, 0, 0);
+      let daysAhead = (((8 - target.getDay()) % 7) + 7) % 7 || 7; // 下一个周一（周日 → 明天）
+      if (daysAhead === 7 && target > now) daysAhead = 0;         // 今天恰是周一且 08:30 未过 → 今天早上
+      target.setDate(target.getDate() + daysAhead);
+      const delayMinutes = Math.max(1, Math.round((target - now) / 60000));
+      await this.notificationManager.schedule({
+        title: '📊 上周周报已生成',
+        message: '热量、体重、习惯一周全景，点开趋势页看看',
+        delayMinutes,
+        type: 'report'
+      });
+    } catch (e) {
+      console.warn('[App] 周报推送预约失败:', e.message);
+    }
   }
 
   async _onWeeklyReportClick() {
