@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.22.1';
+const APP_VERSION = '3.22.2';
 const APP_VERSION_DATE = '2026-11-17';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.22.2', date: '2026-11-17',
+    items: [
+      '修复：拍照记饮食仍只报总热量 — 两层根因双层修复：① 人设升级 v18：新增"食物照片回复必须逐样列出（名称+分量+单项kcal+蛋白/碳水/脂肪），拿不准标注（推测），不允许只报总热量"硬规则（此前只约束 diet 文件格式，聊天回复被主模型自由压缩成总热量账本）；② 识别指令改结构化逐行格式「名称｜分量｜~kcal｜蛋白/碳水/脂肪」一行一样、宁多勿漏，并明确"不要因不确定而只给总数"；设备端 CLAUDE.md 启动时自动升级到 v18，无需重装重置'
+    ]
+  },
   {
     ver: '3.22.1', date: '2026-11-17',
     items: [
