@@ -414,18 +414,36 @@ export class StatsManager {
       const x = L + col * (CELL + GAP), y = T + row * (CELL + GAP);
       const n = countMap.get(d) || 0;
       const opacity = n === 0 ? 0 : n === 1 ? 0.35 : n === 2 ? 0.65 : 1;
-      const fill = n === 0 ? 'var(--bg3)' : 'var(--accent)';
+      // 零打卡格必须与卡片底色（.trend-box 的 --bg3）可区分：v3.22.2 及之前两者同为 --bg3，
+      // 无打卡数据时整卡空白，无法区分「没打卡」和「数据读取坏了」（v3.22.3）
+      const fill = n === 0 ? 'var(--bg2)' : 'var(--accent)';
       return `<rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="6" fill="${fill}"${n ? ` fill-opacity="${opacity}"` : ''}><title>${d}：${n} 次打卡</title></rect>`;
     }).join('');
+    // 图注带窗口内累计次数：数据没读出来时「共 0 次打卡」一目了然
+    const total = dayList.reduce((s, d) => s + (countMap.get(d) || 0), 0);
+    const caption = total > 0
+      ? `最近 ${days} 天 · 共 ${total} 次打卡 · 颜色越深当日打卡越多`
+      : `最近 ${days} 天 · 暂无打卡记录`;
     return `<svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">${rects}</svg>
-<div class="trend-caption">最近 ${days} 天 · 颜色越深当日打卡越多</div>`;
+<div class="trend-caption">${caption}</div>`;
   }
 
   // 汇总某习惯列表 + 打卡记录 → 每日打卡次数 map（热力图输入）
+  // 容错（v3.22.3）：.meta/habit-checkins.json 可被 AI write_file 误写成 {习惯ID: [记录]} 形状，
+  // 旧版 for...of 直接抛 TypeError 且被上层吞掉 → 热力图整卡空白无从排查；此处拍平聚合并 warn
   static aggregateCheckinCounts(checkins) {
+    let list = checkins;
+    if (list && !Array.isArray(list) && typeof list === 'object') {
+      console.warn('[热力图] habit-checkins.json 不是数组（疑似被误写为对象映射），按对象值拍平聚合');
+      list = Object.values(list).flat();
+    }
+    if (!Array.isArray(list)) {
+      if (list != null) console.warn('[热力图] habit-checkins.json 数据类型异常: ' + typeof list + '，按无数据处理');
+      list = [];
+    }
     const map = {};
-    for (const c of checkins || []) {
-      if (!c.date) continue;
+    for (const c of list) {
+      if (!c || !c.date) continue;
       map[c.date] = (map[c.date] || 0) + 1;
     }
     return map;

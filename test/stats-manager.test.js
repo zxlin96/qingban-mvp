@@ -194,6 +194,38 @@ describe('SVG 图表生成', () => {
     assert.ok(cell && Number(cell[1]) >= 30, '格子尺寸按画布反推铺满（回归：旧版 11px 格子仅占画布 30%）');
   });
 
+  test('buildHabitHeatmap：零打卡格与卡片底色可区分（回归：v3.22.2 与卡片同为 --bg3，空数据整卡空白）', () => {
+    const svg = StatsManager.buildHabitHeatmap({ '2026-09-18': 1 }, { today: '2026-09-18' });
+    assert.ok(svg.includes('fill="var(--bg2)"'), '零打卡格应为 --bg2（卡片底色为 --bg3）');
+    assert.ok(!svg.includes('fill="var(--bg3)"'), '不得再出现与卡片底色相同的 --bg3 格');
+    assert.ok(svg.includes('fill="var(--accent)"'), '有打卡格仍为 --accent');
+  });
+
+  test('buildHabitHeatmap：图注带窗口内累计次数，无记录提示暂无打卡', () => {
+    const counts = StatsManager.aggregateCheckinCounts([
+      { date: '2026-09-18' }, { date: '2026-09-18' }, { date: '2026-09-12' },
+      { date: '2026-08-01' }, // 窗口外历史不计入累计
+    ]);
+    const svg = StatsManager.buildHabitHeatmap(counts, { today: '2026-09-18' });
+    assert.ok(svg.includes('共 3 次打卡'), '28 天窗口内累计 3 次');
+    assert.ok(!svg.includes('共 4 次打卡'), '窗口外打卡不摊入图注累计');
+    const empty = StatsManager.buildHabitHeatmap({}, { today: '2026-09-18' });
+    assert.ok(empty.includes('暂无打卡记录'));
+    assert.ok(!empty.includes('共 0 次'));
+  });
+
+  test('aggregateCheckinCounts：对象映射容错拍平（AI 误写 habit-checkins.json 为 {习惯ID:[记录]}）', () => {
+    const counts = StatsManager.aggregateCheckinCounts({
+      'h-water': [{ date: '2026-09-18' }, { date: '2026-09-17' }],
+      'h-sport': { date: '2026-09-18' },
+    });
+    assert.equal(counts['2026-09-18'], 2);
+    assert.equal(counts['2026-09-17'], 1);
+    assert.deepEqual(StatsManager.aggregateCheckinCounts('损坏字符串'), {}, '非数组非对象按无数据处理不抛错');
+    assert.deepEqual(StatsManager.aggregateCheckinCounts(42), {});
+    assert.deepEqual(StatsManager.aggregateCheckinCounts(null), {});
+  });
+
   test('_shiftDate 跨月与月初回退', () => {
     assert.equal(StatsManager._shiftDate('2026-09-01', -1), '2026-08-31');
     assert.equal(StatsManager._shiftDate('2026-08-31', 1), '2026-09-01');

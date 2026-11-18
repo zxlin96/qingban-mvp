@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.22.2';
-const APP_VERSION_DATE = '2026-11-17';
+const APP_VERSION = '3.22.3';
+const APP_VERSION_DATE = '2026-11-18';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.22.3', date: '2026-11-18',
+    items: [
+      '修复：打卡热力图整卡空白无法排查 — 零打卡格从与卡片同底色（--bg3）改为可区分的浅色（--bg2），空数据也能看到网格轮廓；图注新增近 28 天累计打卡次数（无记录时提示「暂无打卡记录」）；打卡数据读取/解析失败时面板显式报错（旧版静默吞异常渲染空白，无法区分「没打卡」和「数据坏了」）；AI 若误将 habit-checkins.json 写成对象映射自动拍平容错聚合'
+    ]
+  },
   {
     ver: '3.22.2', date: '2026-11-17',
     items: [
@@ -5753,11 +5759,19 @@ updated: ${profile.startDate}
         exerciseBox.innerHTML = '<div class="trend-empty">暂无运动记录</div>';
       }
       // 热力图直接读打卡原始 JSON，不走 stats 缓存
+      // 读取/解析失败必须显式报错：旧版静默吞掉异常渲染空网格，与卡片底色同色的零值格让整卡空白，
+      // 无法区分「没打卡数据」和「数据读取坏了」（v3.22.3）
       let checkins = [];
+      let checkinError = null;
       try {
         checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
-      } catch (_) { /* 打卡数据损坏时热力图显示为空 */ }
-      habitBox.innerHTML = StatsManager.buildHabitHeatmap(StatsManager.aggregateCheckinCounts(checkins), { today });
+      } catch (e) {
+        checkinError = e;
+        console.warn('[趋势] 打卡数据读取失败:', e);
+      }
+      habitBox.innerHTML = checkinError
+        ? '<div class="trend-empty">打卡数据读取失败: ' + checkinError.message + '</div>'
+        : StatsManager.buildHabitHeatmap(StatsManager.aggregateCheckinCounts(checkins), { today });
     } catch (e) {
       weightBox.innerHTML = '<div class="trend-empty">加载失败: ' + e.message + '</div>';
       calBox.innerHTML = '';
