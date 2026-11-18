@@ -10,6 +10,9 @@ export class LLMService {
     this.toolCallLog = [];
     // ask_user 回调 — 由 App 层注入，返回 Promise<string>
     this.onAskUser = null;
+    // 宠物工具回调（v3.23.0）— 由 App 层注入
+    this.onGetPetStatus = null;
+    this.onPetCare = null;
 
     // ===== KV Cache 优化：三层缓存 =====
     // 第一层：System Prompt 固定前缀缓存
@@ -251,7 +254,18 @@ ${exercise || '（暂无记录）'}`;
       }
     }
 
-    // ===== 组装最终提示词：固定前缀 → 用户档案/身体指标(动态) → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 =====
+    // 读取宠物状态（v3.23.0）— 一行摘要注入动态段尾部，变化不影响 KV 缓存前缀
+    let petSection = '（用户还没有宠物，可在宠物面板领养）';
+    if (this.onGetPetStatus) {
+      try {
+        const pet = await this.onGetPetStatus();
+        if (pet && pet.summary) petSection = pet.summary;
+      } catch (e) {
+        // 静默失败，不影响主流程
+      }
+    }
+
+    // ===== 组装最终提示词：固定前缀 → 用户档案/身体指标(动态) → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 → 宠物状态 =====
     // 固定前缀在最前面且为纯静态（CLAUDE.md + rules/），服务端 KV Cache 可以长期复用这部分
     // 动态内容放在后面，变化不会影响前缀的缓存
     return `${fixedPrefix}
@@ -282,7 +296,11 @@ ${dietSection}
 
 ---
 # 今日打卡状态（动态注入）
-${habitSection}`;
+${habitSection}
+
+---
+# 宠物状态（动态注入，系统已对打卡/记录/运动/称重自动发放宠物奖励）
+${petSection}`;
   }
 
   // 定义可用工具
@@ -506,6 +524,33 @@ ${habitSection}`;
             }
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'pet_status',
+          description: '查询用户虚拟宠物的状态：名字/等级/饱食/清洁/心情/健康/轻币/背包，以及是否生病或离家出走。用户问宠物怎么样了/宠物饿了没/想看宠物时调用。',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'pet_care',
+          description: '照料用户的虚拟宠物（消耗背包物品或轻币互动）。用户明确要求照顾宠物（"帮我喂喂它""给它洗个澡""带它玩""给它喂药"）时调用。喂食/治病必须传 item 物品 key；玩耍不传 item 则免费摸摸头。宠物状态由系统在用户做出打卡/记录饮食/运动/称重等行为后自动奖励，无需你代发奖励。',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['status', 'feed', 'clean', 'play', 'heal'], description: '操作：status=看状态，feed=喂食，clean=清洁（soap香皂/bath泡泡浴），play=玩耍（yarn毛线球/ball皮球，不传 item 则摸摸头），heal=治病（medicine感冒药）' },
+              item: { type: 'string', description: '物品 key（可选）：apple 苹果/carrot 胡萝卜/riceball 饭团/cake 蛋糕/bento 大餐/yarn 毛线球/ball 皮球/soap 香皂/bath 泡泡浴/medicine 感冒药。喂食和治病时必传' }
+            },
+            required: ['action']
+          }
+        }
       }
     ];
   }
@@ -662,6 +707,26 @@ ${habitSection}`;
             result = 'get_exercise_status 回调未注册';
           }
           displayName = `get_exercise_status(${args.date || 'today'})`;
+          break;
+
+        case 'pet_status':
+          if (this.onGetPetStatus) {
+            const petStatusResult = await this.onGetPetStatus();
+            result = petStatusResult ? JSON.stringify(petStatusResult) : '用户还没有宠物（可在宠物面板领养）';
+          } else {
+            result = '宠物状态回调未注册';
+          }
+          displayName = `pet_status()`;
+          break;
+
+        case 'pet_care':
+          if (this.onPetCare) {
+            const petCareResult = await this.onPetCare(args.action, args.item || null);
+            result = JSON.stringify(petCareResult);
+          } else {
+            result = '宠物照料回调未注册';
+          }
+          displayName = `pet_care("${args.action}"${args.item ? `, "${args.item}"` : ''})`;
           break;
 
         default:

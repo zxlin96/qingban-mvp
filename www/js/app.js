@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.22.3';
-const APP_VERSION_DATE = '2026-11-18';
+const APP_VERSION = '3.23.0';
+const APP_VERSION_DATE = '2026-11-19';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,16 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.23.0', date: '2026-11-19',
+    items: [
+      '新增：宠物系统（对标 QQ 宠物）— 首次打开宠物面板可领养小鸡/企鹅/仓鼠/小猫并命名；四维状态（饱食/清洁/心情/健康）+ 成长等级（破壳→传说 10 级）；打卡/记三餐/运动/称重自动奖励轻币与宠粮掉落并涨成长值；饥饿/清洁/心情随跨天衰减，需手动喂食/清洁/玩耍；连续低水位 2 天会生病、连续生病 7 天不管会离家出走（不死，可接回家）；轻币商店售食物/玩具/清洁用品/感冒药',
+      '新增：宠物面板（顶栏新入口）+ 聊天区右下角常驻悬浮球 — 悬浮球表情随物种、状态环颜色随最差状态值变化，点击打开面板；面板含形象舞台动画/四维状态条/背包使用/轻币商店/成长日志，可一键隐藏悬浮球',
+      '新增：AI 深度集成 — 宠物状态每轮注入系统提示词动态段（不影响 KV 缓存前缀）；新增 pet_status / pet_care 工具（AI 可代喂食/清洁/玩耍/治病）；AI 人设升级 v19：可自然聊宠物但保持克制不催促，设备端启动自动升级',
+      '新增：跨天结算新增「宠物状态结算」步骤（衰减/生病判定，可在结算设置中开关）；生病/出走即时推送通知；宠物成长日志自动落盘 pet/日期.md（系统生成，AI 只读）',
+      '测试：新增 pet-manager 28 项单测（创建/四类行为奖励去重/升级边界/衰减幂等/生病出走时序/商店与物品拒绝路径/日志摘要），全量 278 过'
+    ]
+  },
   {
     ver: '3.22.3', date: '2026-11-18',
     items: [
@@ -573,6 +583,7 @@ import { StatsManager } from './stats-manager.js';
 import { ExerciseManager } from './exercise-manager.js';
 import { ExerciseTracker } from './exercise-tracker.js';
 import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1, scaleLog, getScaleLog } from './scale-manager.js';
+import { PetManager } from './pet-manager.js';
 
 class App {
   constructor() {
@@ -593,6 +604,8 @@ class App {
     this.exerciseManager = new ExerciseManager(this.fm);
     this.exerciseTracker = new ExerciseTracker(this.fm);
     this.scaleManager = new ScaleManager(this.fm);
+    this.petManager = new PetManager(this.fm);
+    this._petSetupSpecies = null; // 首次引导：当前选中的物种
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -734,8 +747,10 @@ class App {
     this._registerNotificationCallback(); // 注册 send_notification 工具回调
     this._registerHabitCallbacks(); // 注册习惯打卡工具回调
     this._registerExerciseCallbacks(); // 注册运动记录工具回调（v3.22.0）
+    this._registerPetCallbacks(); // 注册宠物状态/照料工具回调（v3.23.0）
     window.__qbStage = 'notificationManager.init';
     await this._withTimeout(this.notificationManager.init(), 4000, 'notificationManager.init');
+    this._refreshPetFloat().catch(() => {}); // 悬浮球随启动恢复（v3.23.0）
     this._startHabitReminderCheck(); // 启动未完成习惯提醒检查（前台横幅路径）
     window.__qbStage = 'syncDailyReminders';
     // 注册系统级每日定点提醒（晨间问候/打卡提醒/晚间复盘 — 权限未授予时静默跳过原生注册）
@@ -1339,6 +1354,24 @@ class App {
       }
     }
 
+    // 步骤 3.7: 宠物状态结算（v3.23.0）— 跨天衰减/生病判定（纯 JS 无 LLM）+ 生病/出走即时通知
+    if (setlOn('petTick')) {
+      if (this._dtAddStep) this._dtAddStep('宠物状态结算');
+      const stepPet = this._dtStepIndex - 1;
+      if (stepDone(stepPet)) {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepPet, 'done');
+      } else {
+        try {
+          const petResult = await this._stepTimeout(this.petManager.tickDaily(yesterdayDate), 10000, '宠物结算');
+          if (petResult.changed) await this._notifyPetStatusChange(petResult);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepPet, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 宠物结算失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepPet, 'error', e.message);
+        }
+      }
+    }
+
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
     if (needWeekly && setlOn('weeklyHabitSummary')) {
@@ -1591,7 +1624,8 @@ class App {
       ['weeklyReport', 'setlWeeklyReport'],
       ['rebuildIndex', 'setlRebuildIndex'],
       ['refreshReminders', 'setlRefreshReminders'],
-      ['autoDream', 'setlAutoDream']
+      ['autoDream', 'setlAutoDream'],
+      ['petTick', 'setlPetTick']
     ];
   }
 
@@ -1616,7 +1650,7 @@ class App {
     saveSettings(window.QINGBAN_SETTINGS);
 
     document.getElementById('settlementOverlay').style.display = 'none';
-    this.showToast('结算设置已保存', `已启用 ${enabledCount}/10 个步骤，下次跨天结算生效`, 'success');
+    this.showToast('结算设置已保存', `已启用 ${enabledCount}/${App.SETTLEMENT_KEYS.length} 个步骤，下次跨天结算生效`, 'success');
   }
 
   _resetSettlement() {
@@ -2551,6 +2585,19 @@ ${habits}
       });
     });
 
+    // 宠物面板（v3.23.0）：顶栏按钮 / 悬浮球 → 打开；面板内容动态重绘 → 事件委托
+    document.getElementById('petBtn').addEventListener('click', () => this.showPetPanel());
+    document.getElementById('petFloatBall').addEventListener('click', () => this.showPetPanel());
+    document.getElementById('closePet').addEventListener('click', () => {
+      document.getElementById('petOverlay').style.display = 'none';
+    });
+    document.getElementById('petOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'petOverlay') {
+        document.getElementById('petOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('petContent').addEventListener('click', (e) => this._onPetContentClick(e));
+
     // 关闭文件查看器
     document.getElementById('closeViewer').addEventListener('click', () => {
       document.getElementById('fileViewer').classList.remove('show');
@@ -2871,6 +2918,7 @@ ${habits}
 
       // 落盘（含秤内历史补录），AI 下一轮对话经系统提示词即可读到
       const rec = await recordBodyMeasurement(this.fm, meas, profile, new Date(), raw.historyRecords || []);
+      this.petManager.onWeight().catch(() => {}); // 宠物称重奖励（v3.23.0）
       await this.renderFileTree();
 
       // 结果卡片
@@ -4526,7 +4574,15 @@ updated: ${profile.startDate}
     // record_metrics 结构化双写回调（阶段四 · 4.4）
     this.llmService.onRecordMetrics = async (args) => {
       const today = this.chatManager.getEffectiveToday();
-      return this.statsManager.recordMetrics(args || {}, today);
+      const result = await this.statsManager.recordMetrics(args || {}, today);
+      // 宠物奖励（v3.23.0）：三餐（每日 3 次）/称重（每日 1 次），去重由 PetManager 内部处理
+      try {
+        if (result && result.success && args) {
+          if (Array.isArray(args.meals) && args.meals.length > 0) await this.petManager.onMeal();
+          if (typeof args.weight === 'number' && args.weight > 0) await this.petManager.onWeight();
+        }
+      } catch (_) { /* 宠物奖励失败不影响记录 */ }
+      return result;
     };
   }
 
@@ -4619,6 +4675,19 @@ updated: ${profile.startDate}
         this.showToast(title, '第一步已经迈出来了 🎉', 'success');
       }
     } catch (_) { /* 反馈失败不影响打卡本身 */ }
+    // 宠物奖励（v3.23.0）：打卡产币/掉落 + 全达标/里程碑奖励由 PetManager 内部去重，升级时 toast
+    try {
+      const [stats, overview] = await Promise.all([
+        this.habitManager.getHabitStats(habitId),
+        this.habitManager.getHabitOverview()
+      ]);
+      const allDone = overview.totalCount > 0 && overview.doneCount >= overview.totalCount;
+      const reward = await this.petManager.onCheckin(habitId, { allDone, streak: stats.currentStreak });
+      if (reward && reward.levelUp) {
+        const pet = await this.petManager.getState();
+        this.showToast('🎉 宠物升级', `${pet ? pet.name : '宠物'} 升到 Lv.${reward.levelUp}（${PetManager.LEVEL_NAMES[reward.levelUp - 1]}），继续加油`, 'success');
+      }
+    } catch (_) { /* 宠物奖励失败不影响打卡 */ }
     this._syncDailyReminders().catch(() => {});
   }
 
@@ -5005,6 +5074,7 @@ updated: ${profile.startDate}
     const distText = r.distanceKm ? ` · ${r.distanceKm}km` : '';
     const syncText = habitSync ? `\n已联动「${habitSync.name}」打卡` : '';
     this.showToast(`${r.icon} ${r.name} 已记录`, `${r.durationMin}分钟${distText} · 消耗约${r.kcal}kcal（MET ${r.met}·${r.metSource === 'speed' ? '按配速' : '按强度'}）${syncText}`, 'success');
+    this.petManager.onExercise().catch(() => {}); // 宠物运动奖励（v3.23.0）：产币/心情，清洁 -10
     const week = await this.exerciseManager.getWeekSummary(7);
     return {
       success: true,
@@ -5387,6 +5457,296 @@ updated: ${profile.startDate}
     await this.exerciseManager.addPreset({ name, icon, typeKey, defaultMin, quickMins });
     document.getElementById('exercisePresetOverlay').style.display = 'none';
     await this._renderExercisePanel();
+  }
+
+  // ===== 宠物（v3.23.0 对标 QQ 宠物：状态四维/喂养互动/轻币商店/成长等级）=====
+
+  // 注册宠物工具回调到 LLMService（pet_status / pet_care）+ 数据变化联动 UI
+  _registerPetCallbacks() {
+    // pet_status — AI 查询宠物状态（摘要行同时用于 buildSystemPrompt 动态注入）
+    this.llmService.onGetPetStatus = async () => {
+      const state = await this.petManager.getState();
+      if (!state) return null;
+      return {
+        name: state.name,
+        species: state.species,
+        level: state.level,
+        exp: state.exp,
+        coins: state.coins,
+        stats: state.stats,
+        sick: state.sick,
+        ranAway: state.ranAway,
+        inventory: state.inventory,
+        summary: PetManager.summaryLine(state)
+      };
+    };
+
+    // pet_care — AI 代操作：action = status | feed | clean | play | heal（feed/heal 需带 item 物品 key）
+    this.llmService.onPetCare = async (action, item) => {
+      if (action === 'status') {
+        const state = await this.petManager.getState();
+        return state
+          ? { success: true, summary: PetManager.summaryLine(state), stats: state.stats, sick: state.sick, ranAway: state.ranAway }
+          : { success: false, message: '用户还没有宠物' };
+      }
+      if (action === 'feed' || action === 'clean' || action === 'heal') {
+        if (!item) {
+          return { success: false, message: '请指定物品 key（商店内：食物 apple/carrot/riceball/cake/bento，清洁 soap/bath，药品 medicine）' };
+        }
+        return this.petManager.useItem(item);
+      }
+      if (action === 'play') {
+        return item ? this.petManager.useItem(item) : this.petManager.freePlay(); // 无玩具 → 免费摸摸头
+      }
+      return { success: false, message: `未知操作: ${action}（可选 status/feed/clean/play/heal）` };
+    };
+
+    // 数据变化 → 刷新面板 + 悬浮球
+    this.petManager.onChangeCallback = () => {
+      this._refreshPetPanelIfOpen();
+      this._refreshPetFloat();
+    };
+  }
+
+  // 跨天结算后宠物生病/出走即时通知（一次性，不扩 DAILY_IDS）
+  async _notifyPetStatusChange(petResult) {
+    try {
+      const state = await this.petManager.getState();
+      if (!state) return;
+      if (petResult.ranAway) {
+        await this.notificationManager.schedule({
+          title: `${state.name} 出走了`,
+          message: '病了太久没人照顾，它留下字条离开了。打开宠物面板接它回家吧。',
+          delayMinutes: 0,
+          type: 'custom'
+        });
+      } else if (petResult.becameSick) {
+        await this.notificationManager.schedule({
+          title: `${state.name} 生病了`,
+          message: '一直饿肚子/脏兮兮的，它生病了。喂点吃的、洗个澡，或喂感冒药吧。',
+          delayMinutes: 0,
+          type: 'custom'
+        });
+      }
+    } catch (_) { /* 通知失败不影响结算 */ }
+  }
+
+  // 打开宠物面板（顶栏按钮 / 悬浮球共用）
+  async showPetPanel() {
+    document.getElementById('petOverlay').style.display = 'flex';
+    await this._renderPetPanel();
+  }
+
+  async _refreshPetPanelIfOpen() {
+    const overlay = document.getElementById('petOverlay');
+    if (overlay && overlay.style.display === 'flex') await this._renderPetPanel();
+  }
+
+  // 悬浮球：表情随物种、状态环颜色随最差状态值；无宠物/出走/隐藏开关时不显示
+  async _refreshPetFloat() {
+    const ball = document.getElementById('petFloatBall');
+    if (!ball) return;
+    let state = null;
+    try {
+      state = await this.petManager.getState();
+    } catch (_) { /* 读取失败隐藏即可 */ }
+    if (!state || state.ranAway || state.hideFloat) {
+      ball.style.display = 'none';
+      return;
+    }
+    ball.style.display = 'flex';
+    document.getElementById('petFloatEmoji').textContent = PetManager.speciesDef(state.species).icon;
+    const min = Math.min(state.stats.hunger, state.stats.clean, state.stats.mood, state.stats.health);
+    document.getElementById('petFloatDot').className = 'pet-float-dot' + (min < 30 ? ' bad' : min < 60 ? ' warn' : '');
+  }
+
+  // 状态条行（val < 30 红 / < 60 黄）
+  _petStatRow(label, val) {
+    const cls = val < 30 ? 'bad' : val < 60 ? 'warn' : '';
+    return `<div class="pet-stat"><span class="pet-stat-label">${label}</span><div class="pet-stat-bar"><div class="pet-stat-fill ${cls}" style="width:${val}%"></div></div><span class="pet-stat-val">${val}</span></div>`;
+  }
+
+  // 物品网格项（bag: { apple: 2, ... }，data-use/use 或 data-buy/buy 供事件委托）
+  _petItemGrid(items, bag, mode) {
+    return items.map(i => {
+      const count = bag[i.key] || 0;
+      const effect = i.heal ? '治病'
+        : [i.hunger, i.clean, i.mood].filter(Boolean).map(v => `+${v}`).join('/');
+      const label = mode === 'shop'
+        ? `<div class="pet-item-price">🪙 ${i.price}</div>`
+        : `<div class="pet-item-count">×${count}</div>`;
+      return `<button class="${mode === 'shop' ? 'pet-shop-item' : 'pet-inv-item'}" data-${mode}="${i.key}" type="button" title="${escapeHtml(i.name)}（${effect}）">
+        <div class="pet-item-icon">${i.icon}</div>
+        <div class="pet-item-name">${escapeHtml(i.name)}</div>
+        <div class="pet-item-effect">${effect}</div>
+        ${label}
+      </button>`;
+    }).join('');
+  }
+
+  async _renderPetPanel() {
+    const summaryEl = document.getElementById('petSummary');
+    const contentEl = document.getElementById('petContent');
+    let state;
+    try {
+      state = await this.petManager.getState();
+    } catch (e) {
+      summaryEl.textContent = '宠物数据读取失败';
+      contentEl.innerHTML = `<div class="pet-setup"><div class="pet-setup-note">读取失败：${escapeHtml(e.message)}<br>请重启应用重试。</div></div>`;
+      return;
+    }
+
+    // ===== 首次引导：物种选择 + 命名 =====
+    if (!state) {
+      summaryEl.textContent = '还没有宠物';
+      const active = this._petSetupSpecies || PetManager.SPECIES[0].key;
+      // 切换物种会整块重绘，保留用户已输入的名字
+      const prevInput = document.getElementById('petNameInput');
+      const prevName = prevInput ? prevInput.value : '';
+      contentEl.innerHTML = `
+        <div class="pet-setup">
+          <div class="pet-setup-title">领养一只小伙伴</div>
+          <div class="pet-setup-note">它靠你的真实减肥行为过日子：打卡、记饮食、运动、称重都会让它更开心，还会掉落宠粮和轻币。<br>长时间不照顾它，它会饿肚子、生病，甚至离家出走哦。</div>
+          <div class="pet-species-picker">
+            ${PetManager.SPECIES.map(s => `<button class="pet-species-option ${s.key === active ? 'active' : ''}" data-pet-species="${s.key}" type="button"><span class="pet-species-emoji">${s.icon}</span><span class="pet-species-label">${s.label}</span></button>`).join('')}
+          </div>
+          <div class="settings-row pet-setup-input">
+            <input type="text" class="settings-input" id="petNameInput" placeholder="给它取个名字（最多 8 字）" maxlength="8" value="${escapeHtml(prevName)}">
+          </div>
+          <button class="btn accent" id="petSetupConfirm" type="button">领养它</button>
+        </div>`;
+      return;
+    }
+
+    // ===== 主面板 =====
+    const def = PetManager.speciesDef(state.species);
+    const lv = PetManager.levelOf(state.exp);
+    const s = state.stats;
+    summaryEl.textContent = `${def.icon} ${state.name} · Lv.${lv.level} ${lv.name} · 🪙 ${state.coins} 轻币`;
+
+    // 形象与气泡（状态驱动）
+    const emojiCls = state.sick ? 'sick' : s.clean < 30 ? 'dirty' : s.mood < 40 ? 'mood-low' : '';
+    const emoji = state.ranAway ? '📮' : def.icon;
+    const bubble = state.ranAway ? '留下一张字条……'
+      : state.sick ? '🤒 没精神，好像生病了'
+      : s.hunger < 30 ? '肚子咕咕叫…'
+      : s.clean < 30 ? '身上黏黏的…'
+      : s.mood < 40 ? '好无聊啊……'
+      : (s.hunger >= 80 && s.mood >= 80) ? '今天也元气满满！'
+      : '主人要常来找我玩呀';
+
+    // 等级进度
+    const levelBar = lv.nextExp === null
+      ? `<div class="pet-level-row"><span class="pet-level-name">Lv.${lv.level} ${lv.name}</span><div class="pet-level-bar"><div class="pet-level-fill" style="width:100%"></div></div><span class="pet-level-next">满级</span></div>`
+      : `<div class="pet-level-row"><span class="pet-level-name">Lv.${lv.level} ${lv.name}</span><div class="pet-level-bar"><div class="pet-level-fill" style="width:${Math.round(lv.progress * 100)}%"></div></div><span class="pet-level-next">成长 ${state.exp}/${lv.nextExp}</span></div>`;
+
+    // 生病提示
+    const sickBanner = state.ranAway
+      ? `<div class="pet-away-card">
+          <div class="pet-away-emoji">📮</div>
+          <div class="pet-setup-title">${escapeHtml(state.name)} 出走了</div>
+          <div class="pet-away-note">"对不起…病了这么久都没人来照顾我，我先去朋友家住几天。<br>等你想起我的时候，随时来接我回家。"</div>
+          <button class="btn accent" id="petComeBackBtn" type="button">接它回家</button>
+        </div>`
+      : state.sick
+        ? `<div class="pet-sick-banner">🤒 <b>${escapeHtml(state.name)} 生病了</b> — 喂点吃的、洗个澡，或喂💊感冒药（商店有售）。病太久了它会离家出走！</div>`
+        : '';
+
+    // 背包（按用途分组展示）
+    const inv = state.inventory || {};
+    const invCount = Object.values(inv).reduce((a, b) => a + (b || 0), 0);
+    const foodItems = PetManager.SHOP.filter(i => i.kind === 'food');
+    const careItems = PetManager.SHOP.filter(i => i.kind === 'care');
+    const toyItems = PetManager.SHOP.filter(i => i.kind === 'toy');
+    const invHtml = invCount === 0
+      ? `<div class="pet-inv-empty">背包空空如也 — 打卡/记饮食/运动会掉落物品，也可以在下面商店用轻币买</div>`
+      : `<div class="pet-inv-grid">${this._petItemGrid(foodItems.concat(toyItems, careItems), inv, 'inv')}</div>`;
+
+    // 成长日志（近 8 条，最新在前）
+    const logs = (state.log || []).slice(-8).reverse();
+    const logHtml = logs.length === 0
+      ? `<div class="pet-log"><div class="pet-log-item">暂无动态</div></div>`
+      : `<div class="pet-log">${logs.map(l => `<div class="pet-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="pet-log-more">仅显示最近 8 条</div>' : ''}`;
+
+    contentEl.innerHTML = `
+      <div class="pet-stage">
+        <div class="pet-stage-emoji ${emojiCls}">${emoji}</div>
+        <div class="pet-stage-bubble">${bubble}</div>
+        ${levelBar}
+      </div>
+      <div class="pet-stats">
+        ${this._petStatRow('饱食', s.hunger)}
+        ${this._petStatRow('清洁', s.clean)}
+        ${this._petStatRow('心情', s.mood)}
+        ${this._petStatRow('健康', s.health)}
+      </div>
+      ${sickBanner}
+      <div class="pet-actions">
+        <button class="btn" id="petFreePlayBtn" type="button">🫳 摸摸头（每日 3 次）</button>
+        <button class="btn" id="petHideFloatBtn" type="button">${state.hideFloat ? '显示悬浮球' : '隐藏悬浮球'}</button>
+      </div>
+      <div class="pet-section-title">🎒 背包（点物品使用）</div>
+      ${invHtml}
+      <div class="pet-section-title">🛒 轻币商店（余额 🪙 ${state.coins}）</div>
+      <div class="pet-shop-grid">${this._petItemGrid(PetManager.SHOP, inv, 'shop')}</div>
+      <div class="pet-section-title">📖 成长日志</div>
+      ${logHtml}`;
+  }
+
+  // 宠物面板事件委托（内容区动态重绘，按钮统一在此分发）
+  async _onPetContentClick(e) {
+    const speciesBtn = e.target.closest('[data-pet-species]');
+    if (speciesBtn) {
+      this._petSetupSpecies = speciesBtn.dataset.petSpecies;
+      await this._renderPetPanel();
+      return;
+    }
+    if (e.target.closest('#petSetupConfirm')) {
+      const nameInput = document.getElementById('petNameInput');
+      try {
+        const { state, created } = await this.petManager.createPet(this._petSetupSpecies || 'chick', nameInput ? nameInput.value : '');
+        if (created) {
+          this.showToast('🐾 领养成功', `${state.name} 已加入你的减肥之旅`, 'success');
+          await this._renderPetPanel();
+          this._refreshPetFloat();
+        }
+      } catch (err) {
+        this.showToast('领养失败', err.message, 'error');
+      }
+      return;
+    }
+    if (e.target.closest('#petFreePlayBtn')) {
+      const r = await this.petManager.freePlay();
+      this.showToast(r.success ? '🫳 摸了摸头' : '今天先到这里', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    if (e.target.closest('#petHideFloatBtn')) {
+      const state = await this.petManager.getState();
+      if (state) {
+        state.hideFloat = !state.hideFloat;
+        await this.petManager._saveState(state);
+        this._refreshPetFloat();
+        await this._renderPetPanel();
+      }
+      return;
+    }
+    if (e.target.closest('#petComeBackBtn')) {
+      const r = await this.petManager.comeBack();
+      this.showToast(r.success ? '🏠 回家啦' : '它不在外面', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    const useBtn = e.target.closest('[data-inv]');
+    if (useBtn) {
+      const r = await this.petManager.useItem(useBtn.dataset.inv);
+      this.showToast(r.success ? '✅' : '没用上', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    const buyBtn = e.target.closest('[data-shop]');
+    if (buyBtn) {
+      const r = await this.petManager.buy(buyBtn.dataset.shop);
+      this.showToast(r.success ? '🛒 买到啦' : '没买成', r.message, r.success ? 'success' : 'info');
+      return;
+    }
   }
 
   // 显示通知横幅

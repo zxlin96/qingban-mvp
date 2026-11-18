@@ -44,7 +44,8 @@ const DEFAULT_SETTINGS = {
     weeklyReport: true,           // AI 周报（昨日为周日时生成）
     rebuildIndex: true,           // 重建记忆索引
     refreshReminders: true,       // 刷新每日定点提醒（静默）
-    autoDream: true               // Auto Dream 自动触发（静默）
+    autoDream: true,              // Auto Dream 自动触发（静默）
+    petTick: true                 // 宠物状态结算（衰减/生病判定，v3.23.0）
   }
 };
 

@@ -162,6 +162,13 @@
       <path d="M13.5 15.5L19 21"/>
       <path d="M11 8.5L5.5 10l-1 3"/>
     </symbol>
+    <symbol id="icon-pet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5.5" cy="9" r="2"/>
+      <circle cx="9" cy="4.5" r="2"/>
+      <circle cx="15" cy="4.5" r="2"/>
+      <circle cx="18.5" cy="9" r="2"/>
+      <path d="M12 10.5c3.6 0 6 2.4 6 5.2 0 2.5-2.2 4.3-6 4.3s-6-1.8-6-4.3c0-2.8 2.4-5.2 6-5.2z"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -204,6 +211,7 @@
       <button class="btn icon-btn" id="trendBtn" title="趋势 — 体重/热量/打卡可视化"><svg class="ico"><use href="#icon-chart"/></svg></button>
       <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
       <button class="btn icon-btn" id="exerciseBtn" title="运动 — 计时/测距/消耗记录"><svg class="ico"><use href="#icon-runner"/></svg></button>
+      <button class="btn icon-btn" id="petBtn" title="宠物 — 喂养互动/轻币商店/成长"><svg class="ico"><use href="#icon-pet"/></svg></button>
     </div>
   </header>
 
@@ -610,6 +618,9 @@
         <div class="settings-row">
           <label><input type="checkbox" id="setlAutoDream" class="settings-check"> Auto Dream 自动触发 <span class="settings-hint">(静默)</span></label>
         </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlPetTick" class="settings-check"> 宠物状态结算（衰减/生病）</label>
+        </div>
       </div>
 
       <div class="settings-actions">
@@ -776,6 +787,28 @@
 
 <!-- 通知横幅 — 大模型通过 send_notification 工具触发，从顶部滑入 -->
 <div class="notif-banner-container" id="notifBannerContainer"></div>
+
+<!-- 宠物悬浮球 — 常驻陪伴入口（表情随状态变化，点击开宠物面板） -->
+<div class="pet-float-ball" id="petFloatBall" style="display:none;" title="宠物">
+  <span class="pet-float-emoji" id="petFloatEmoji">🐤</span>
+  <span class="pet-float-dot" id="petFloatDot"></span>
+</div>
+
+<!-- 宠物面板 — 形象舞台/四维状态/互动/轻币商店/成长日志（v3.23.0） -->
+<div class="habit-overlay" id="petOverlay" style="display:none;">
+  <div class="habit-panel pet-panel">
+    <div class="habit-header">
+      <span class="habit-title">🐾 宠物</span>
+      <div class="habit-header-actions">
+        <button class="btn icon-btn" id="closePet" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+      </div>
+    </div>
+    <div class="habit-overview">
+      <div class="habit-summary" id="petSummary">加载中...</div>
+    </div>
+    <div class="pet-body" id="petContent"></div>
+  </div>
+</div>
 
 <!-- 运动面板 — 秒表计时/GPS 测距/消耗记录 -->
 <div class="habit-overlay" id="exerciseOverlay" style="display:none;">
