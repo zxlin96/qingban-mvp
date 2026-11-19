@@ -13,6 +13,8 @@ export class LLMService {
     // 宠物工具回调（v3.23.0）— 由 App 层注入
     this.onGetPetStatus = null;
     this.onPetCare = null;
+    // 宠物旅行工具回调（v3.24.0）— 由 App 层注入
+    this.onPetTravel = null;
 
     // ===== KV Cache 优化：三层缓存 =====
     // 第一层：System Prompt 固定前缀缓存
@@ -551,6 +553,21 @@ ${petSection}`;
             required: ['action']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'pet_travel',
+          description: '查询或操作用户的虚拟宠物旅行（旅行青蛙式：宠物 Lv.5 解锁，收拾行李→跨天出发→旅行 1-3 天→寄明信片带特产回家）。用户问宠物旅行状态/去哪玩了/明信片（"宠物去哪玩了""它回来了吗""帮我给它装点吃的路上吃"）时调用。装行李只能装食物，装好行李后下次跨天结算自动出发。',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['status', 'pack', 'unpack'], description: '操作：status=查旅行状态（解锁/行李/目的地/归期），pack=装行李（必传 item 食物 key），unpack=取出行李（必传 item）' },
+              item: { type: 'string', description: '食物 key（pack/unpack 时必传）：apple 苹果/carrot 胡萝卜/riceball 饭团/cake 蛋糕/bento 大餐' }
+            },
+            required: ['action']
+          }
+        }
       }
     ];
   }
@@ -727,6 +744,16 @@ ${petSection}`;
             result = '宠物照料回调未注册';
           }
           displayName = `pet_care("${args.action}"${args.item ? `, "${args.item}"` : ''})`;
+          break;
+
+        case 'pet_travel':
+          if (this.onPetTravel) {
+            const petTravelResult = await this.onPetTravel(args.action, args.item || null);
+            result = JSON.stringify(petTravelResult);
+          } else {
+            result = '宠物旅行回调未注册';
+          }
+          displayName = `pet_travel("${args.action}"${args.item ? `, "${args.item}"` : ''})`;
           break;
 
         default:

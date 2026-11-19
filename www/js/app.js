@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.23.0';
-const APP_VERSION_DATE = '2026-11-19';
+const APP_VERSION = '3.24.0';
+const APP_VERSION_DATE = '2026-11-20';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,16 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.24.0', date: '2026-11-20',
+    items: [
+      '新增：宠物旅行系统（旅行青蛙式）— Lv.5「轻盈」解锁；收拾行李（只能装食物，1 件约 1-2 天、2 件以上 2-3 天）→ 下次跨天结算自动出发（目的地从公园/海边/山顶/古镇/温泉等 10 处随机）→ 旅行中暂停饥饿/清洁衰减与生病判定（心情每日 +5）→ 归期随机回家',
+      '新增：AI 明信片 — 旅行中每日按概率寄回明信片（跨天结算时 LLM 结合目的地/旅行天数/用户打卡情况生成第一人称文案，失败重试 1 次后降级模板），落盘 .meta/pet-postcards.json 滚动保留 30 张，收到时推送「📮 XX 寄来一张明信片」，面板新增明信片区',
+      '新增：回家结算与行为挂钩 — 随机带回 1-2 件旅行限定特产（🍡三色团子/🍵高山茶/🎐风铃/🪨纪念石，商店不售），基础 +30 成长/+10 币；旅行期间每日习惯全达标则每天额外 +15 成长/+3 币；出发/回家均推送通知',
+      '新增：pet_travel 工具（AI 可查旅行状态/代装行李/取出），人设升级 v20 旅行段；面板旅行区（解锁引导/打包视图/旅行状态横幅）、旅行中互动按钮禁用；v3.23 老存档自动补齐 travel 字段免迁移',
+      '测试：pet-manager 新增 15 项旅行单测（纯函数确定化/解锁门槛/装包取出/出发/旅行中免衰减免生病/归期回家/行为加成/明信片滚动），全量 293 过'
+    ]
+  },
   {
     ver: '3.23.0', date: '2026-11-19',
     items: [
@@ -606,6 +616,7 @@ class App {
     this.scaleManager = new ScaleManager(this.fm);
     this.petManager = new PetManager(this.fm);
     this._petSetupSpecies = null; // 首次引导：当前选中的物种
+    this._petPackOpen = false; // 旅行行李打包视图展开态
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -1363,7 +1374,7 @@ class App {
       } else {
         try {
           const petResult = await this._stepTimeout(this.petManager.tickDaily(yesterdayDate), 10000, '宠物结算');
-          if (petResult.changed) await this._notifyPetStatusChange(petResult);
+          if (petResult.changed) await this._handlePetTickEvents(yesterdayDate, petResult);
           if (this._dtUpdateStep) this._dtUpdateStep(stepPet, 'done');
         } catch (e) {
           console.error('[DayRollover] 宠物结算失败:', e.message);
@@ -5501,6 +5512,24 @@ updated: ${profile.startDate}
       return { success: false, message: `未知操作: ${action}（可选 status/feed/clean/play/heal）` };
     };
 
+    // pet_travel — AI 旅行操作：action = status | pack | unpack（pack/unpack 需带 item 食物 key）
+    this.llmService.onPetTravel = async (action, item) => {
+      if (action === 'status') {
+        const travel = await this.petManager.getTravelStatus();
+        if (!travel) return { success: false, message: '用户还没有宠物' };
+        return { success: true, travel };
+      }
+      if (action === 'pack') {
+        if (!item) return { success: false, message: '请指定要装进行李的食物 key（apple 苹果/carrot 胡萝卜/riceball 饭团/cake 蛋糕/bento 大餐）' };
+        return this.petManager.packBag(item);
+      }
+      if (action === 'unpack') {
+        if (!item) return { success: false, message: '请指定要从行李取出的物品 key' };
+        return this.petManager.unpackBag(item);
+      }
+      return { success: false, message: `未知操作: ${action}（可选 status/pack/unpack）` };
+    };
+
     // 数据变化 → 刷新面板 + 悬浮球
     this.petManager.onChangeCallback = () => {
       this._refreshPetPanelIfOpen();
@@ -5508,8 +5537,8 @@ updated: ${profile.startDate}
     };
   }
 
-  // 跨天结算后宠物生病/出走即时通知（一次性，不扩 DAILY_IDS）
-  async _notifyPetStatusChange(petResult) {
+  // 跨天结算后宠物事件分发：生病/出走/出发/明信片/回家 → 通知（一次性，不扩 DAILY_IDS）
+  async _handlePetTickEvents(yesterdayDate, petResult) {
     try {
       const state = await this.petManager.getState();
       if (!state) return;
@@ -5528,7 +5557,86 @@ updated: ${profile.startDate}
           type: 'custom'
         });
       }
+      // 旅行出发（v3.24.0）
+      if (petResult.departed) {
+        const dest = PetManager.getDestination(petResult.destination);
+        await this.notificationManager.schedule({
+          title: `${state.name} 出发去旅行了`,
+          message: `背上行囊去了${dest.name} ${dest.icon}，行李里有你准备的便当。等它寄明信片回来吧。`,
+          delayMinutes: 0,
+          type: 'custom'
+        });
+      }
+      // 明信片：LLM 生成（失败重试 1 次 → 降级模板），照 AI 周报的失败模式
+      // 注意：两次生成失败都不能抛出 —— 必须落到模板兜底，否则明信片永远不落盘
+      if (petResult.postcardIntent) {
+        const intent = petResult.postcardIntent;
+        try {
+          let text = null;
+          try {
+            text = await this._stepTimeout(this._generatePetPostcard(yesterdayDate, intent), 120000, '宠物明信片');
+          } catch (e1) {
+            console.warn('[PetPostcard] 首次生成失败，10s 后重试:', e1.message);
+            await new Promise((r) => setTimeout(r, 10000));
+            try {
+              text = await this._stepTimeout(this._generatePetPostcard(yesterdayDate, intent), 120000, '宠物明信片');
+            } catch (e2) {
+              console.warn('[PetPostcard] 重试仍失败，使用模板文案:', e2.message);
+            }
+          }
+          const dest = PetManager.getDestination(intent.destination);
+          const card = await this.petManager.addPostcard({
+            destination: dest.key,
+            icon: dest.icon,
+            text: (text && text.length > 10) ? text : PetManager.buildPostcardTemplate(intent.destination, intent.tripDay, intent.allDone),
+            date: yesterdayDate
+          });
+          await this.notificationManager.schedule({
+            title: `📮 ${state.name} 寄来一张明信片`,
+            message: `来自${dest.name}：${card.text.slice(0, 40)}…`,
+            delayMinutes: 0,
+            type: 'custom'
+          });
+        } catch (e) {
+          console.warn('[PetPostcard] 明信片落盘失败（不阻塞结算）:', e.message);
+        }
+      }
+      // 回家
+      if (petResult.returned && petResult.travelSummary) {
+        const t = petResult.travelSummary;
+        await this.notificationManager.schedule({
+          title: `🏠 ${state.name} 回家啦`,
+          message: `从${t.destinationName}回来了，带回 ${t.souvenirs.join('、')}${t.bonusExp > 0 ? `。你旅行期间坚持打卡，它玩得特别尽兴（+${t.bonusExp} 成长、+${t.bonusCoins} 币）` : ''}`,
+          delayMinutes: 0,
+          type: 'custom'
+        });
+      }
     } catch (_) { /* 通知失败不影响结算 */ }
+  }
+
+  // LLM 生成宠物明信片文案（旅行青蛙式）；返回 null 走模板降级
+  async _generatePetPostcard(yesterdayDate, intent) {
+    if (!this.llm || !this.llm.chat) return null;
+    const state = await this.petManager.getState();
+    if (!state) return null;
+    const dest = PetManager.getDestination(intent.destination);
+    const sys = `你是用户养的虚拟宠物「${state.name}」（${PetManager.speciesDef(state.species).label}），正在独自旅行，写一张寄给主人的明信片。
+规则：
+1. 第一人称，60-90 字，只输出明信片正文（不要标题、不要引号、不要 markdown）
+2. 融入目的地的场景细节：${dest.hint}
+3. 温暖可爱，结尾问候主人或提一句旅行收获；不催促、不说教
+${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此真诚地夸夸主人' : '4. 语气轻松，不要因为主人漏打卡而失望或指责'}`;
+    const user = `旅行第 ${intent.tripDay} 天（共 ${intent.tripDays} 天），目的地：${dest.name}。请写明信片正文：`;
+    const resp = await this.llm.chat(
+      [
+        { role: 'system', content: sys },
+        { role: 'user', content: user }
+      ],
+      null,
+      { task: 'pet_postcard' }
+    );
+    const text = ((resp && resp.content) || '').trim();
+    return text.length > 10 ? text : null; // 太短视为失败走模板
   }
 
   // 打开宠物面板（顶栏按钮 / 悬浮球共用）
@@ -5624,10 +5732,21 @@ updated: ${profile.startDate}
     const s = state.stats;
     summaryEl.textContent = `${def.icon} ${state.name} · Lv.${lv.level} ${lv.name} · 🪙 ${state.coins} 轻币`;
 
+    // 旅行状态（v3.24.0）
+    const travel = state.travel || { status: 'home', bag: {}, tripLog: [] };
+    const travelUnlocked = PetManager.isTravelUnlockedState(state);
+    const travelDest = travel.destination ? PetManager.getDestination(travel.destination) : null;
+    const travelBagCount = Object.values(travel.bag || {}).reduce((a, b) => a + (b || 0), 0);
+    const travelDay = (travel.status === 'traveling' && travel.departDate)
+      ? PetManager.daysBetween(travel.departDate, this.chatManager.getEffectiveToday())
+      : null;
+    const postcards = await this.petManager.getPostcards();
+
     // 形象与气泡（状态驱动）
     const emojiCls = state.sick ? 'sick' : s.clean < 30 ? 'dirty' : s.mood < 40 ? 'mood-low' : '';
     const emoji = state.ranAway ? '📮' : def.icon;
     const bubble = state.ranAway ? '留下一张字条……'
+      : travel.status === 'traveling' ? `去${travelDest.name}旅行啦，玩得很开心`
       : state.sick ? '🤒 没精神，好像生病了'
       : s.hunger < 30 ? '肚子咕咕叫…'
       : s.clean < 30 ? '身上黏黏的…'
@@ -5668,6 +5787,46 @@ updated: ${profile.startDate}
       ? `<div class="pet-log"><div class="pet-log-item">暂无动态</div></div>`
       : `<div class="pet-log">${logs.map(l => `<div class="pet-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="pet-log-more">仅显示最近 8 条</div>' : ''}`;
 
+    // 旅行区（v3.24.0 旅行青蛙式：Lv.5 解锁 → 打包食物 → 跨天出发 → 旅行中寄明信片 → 归期带特产回家）
+    let travelHtml = '';
+    if (!travelUnlocked) {
+      const need = PetManager.TRAVEL_UNLOCK_LEVEL - lv.level;
+      travelHtml = `<div class="pet-travel-banner">🔒 升到 Lv.${PetManager.TRAVEL_UNLOCK_LEVEL}（${PetManager.LEVEL_NAMES[PetManager.TRAVEL_UNLOCK_LEVEL - 1]}）解锁旅行，还差 ${need} 级 — 多打卡/多运动就快了</div>`;
+    } else if (travel.status === 'traveling') {
+      travelHtml = `<div class="pet-travel-banner">🎒 正在「${travelDest.icon} ${travelDest.name}」旅行（第 ${travelDay} 天/共 ${travel.days} 天）—— 旅行中不用喂食，等它寄明信片回家吧</div>`;
+    } else {
+      let packHtml = '';
+      if (this._petPackOpen) {
+        const foodInv = PetManager.SHOP.filter(i => i.kind === 'food' && !i.onlyTravel && (inv[i.key] || 0) > 0);
+        const bagGrid = travelBagCount > 0
+          ? `<div class="pet-inv-grid">${Object.entries(travel.bag || {}).map(([k, n]) => {
+              const it = PetManager.getItem(k);
+              return `<button class="pet-inv-item" data-unpack="${k}" type="button" title="取出行李"><div class="pet-item-icon">${it.icon}</div><div class="pet-item-name">${escapeHtml(it.name)}</div><div class="pet-item-count">×${n}</div></button>`;
+            }).join('')}</div>
+            <div class="pet-travel-banner">🧳 行李就绪（${travelBagCount} 件）— 下次跨天结算时出发；食物越多旅行越久（1 件约 1-2 天，2 件以上 2-3 天），旅行期间坚持打卡它玩得更尽兴</div>`
+          : '<div class="pet-inv-empty">从背包装入食物开始收拾行李</div>';
+        packHtml = `
+          <div class="pet-section-title">🥘 可装入行李的食物</div>
+          ${foodInv.length === 0 ? '<div class="pet-inv-empty">背包里没有食物 — 打卡掉落或商店购买后再装</div>' : `<div class="pet-inv-grid">${foodInv.map(i => `<button class="pet-inv-item" data-pack="${i.key}" type="button" title="装进行李"><div class="pet-item-icon">${i.icon}</div><div class="pet-item-name">${escapeHtml(i.name)}</div><div class="pet-item-count">×${inv[i.key]}</div></button>`).join('')}</div>`}
+          <div class="pet-section-title">🧳 行李包（点物品取出）</div>
+          ${bagGrid}`;
+      }
+      travelHtml = `
+        ${travel.status === 'ready' ? `<div class="pet-travel-banner">🧳 行李已就绪（${travelBagCount} 件），下次跨天结算时出发</div>` : ''}
+        ${packHtml}
+        <div class="pet-actions"><button class="btn" id="petTravelOpen" type="button">${this._petPackOpen ? '收起打包' : '🎒 收拾行李'}</button></div>`;
+    }
+
+    // 明信片区（最近 3 张，最新在前）
+    const postcardHtml = postcards.length === 0
+      ? '<div class="pet-inv-empty">还没有明信片 — 它去旅行时会寄回来哦</div>'
+      : postcards.slice(0, 3).map(c => `
+        <div class="pet-postcard">
+          <div class="pet-postcard-head">${c.icon} ${escapeHtml(PetManager.getDestination(c.destination)?.name || c.destination)} · ${escapeHtml(c.date)}</div>
+          <div class="pet-postcard-text">${escapeHtml(c.text)}</div>
+        </div>`).join('') + (postcards.length > 3 ? `<div class="pet-log-more">共 ${postcards.length} 张，仅显示最近 3 张</div>` : '');
+
+    const traveling = travel.status === 'traveling';
     contentEl.innerHTML = `
       <div class="pet-stage">
         <div class="pet-stage-emoji ${emojiCls}">${emoji}</div>
@@ -5681,14 +5840,17 @@ updated: ${profile.startDate}
         ${this._petStatRow('健康', s.health)}
       </div>
       ${sickBanner}
+      ${travelHtml}
       <div class="pet-actions">
-        <button class="btn" id="petFreePlayBtn" type="button">🫳 摸摸头（每日 3 次）</button>
+        <button class="btn" id="petFreePlayBtn" type="button" ${traveling ? 'disabled title="旅行中摸不到它"' : ''}>${traveling ? '🎒 旅行中…' : '🫳 摸摸头（每日 3 次）'}</button>
         <button class="btn" id="petHideFloatBtn" type="button">${state.hideFloat ? '显示悬浮球' : '隐藏悬浮球'}</button>
       </div>
       <div class="pet-section-title">🎒 背包（点物品使用）</div>
       ${invHtml}
       <div class="pet-section-title">🛒 轻币商店（余额 🪙 ${state.coins}）</div>
       <div class="pet-shop-grid">${this._petItemGrid(PetManager.SHOP, inv, 'shop')}</div>
+      <div class="pet-section-title">📮 明信片（${postcards.length}）</div>
+      ${postcardHtml}
       <div class="pet-section-title">📖 成长日志</div>
       ${logHtml}`;
   }
@@ -5733,6 +5895,24 @@ updated: ${profile.startDate}
     if (e.target.closest('#petComeBackBtn')) {
       const r = await this.petManager.comeBack();
       this.showToast(r.success ? '🏠 回家啦' : '它不在外面', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    // 旅行（v3.24.0）：展开/收起打包视图 + 装包/取出
+    if (e.target.closest('#petTravelOpen')) {
+      this._petPackOpen = !this._petPackOpen;
+      await this._renderPetPanel();
+      return;
+    }
+    const packBtn = e.target.closest('[data-pack]');
+    if (packBtn) {
+      const r = await this.petManager.packBag(packBtn.dataset.pack);
+      this.showToast(r.success ? '🧳 装好了' : '没装上', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    const unpackBtn = e.target.closest('[data-unpack]');
+    if (unpackBtn) {
+      const r = await this.petManager.unpackBag(unpackBtn.dataset.unpack);
+      this.showToast(r.success ? '取出了' : '没取出来', r.message, r.success ? 'success' : 'info');
       return;
     }
     const useBtn = e.target.closest('[data-inv]');

@@ -3451,3 +3451,33 @@ html.web-env .pwa-hint span { flex: 1; }
 }
 .pet-away-emoji { font-size: 40px; margin-bottom: 8px; }
 .pet-away-note { font-size: 12px; color: var(--muted); margin: 8px 0 14px; line-height: 1.8; text-align: left; }
+
+/* 旅行（v3.24.0）：状态横幅与明信片 */
+.pet-travel-banner {
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 10px 0;
+  line-height: 1.6;
+}
+.pet-postcard {
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.pet-postcard-head {
+  font-size: 11px;
+  color: var(--muted2, var(--muted));
+  margin-bottom: 4px;
+}
+.pet-postcard-text {
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.7;
+}

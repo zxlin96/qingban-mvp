@@ -419,3 +419,227 @@ describe('buildDayMd 与摘要', () => {
     assert.ok(PetManager.summaryLine({ ...state, ranAway: true }).includes('已离家出走'));
   });
 });
+
+// ===== 旅行系统（v3.24.0 旅行青蛙式）=====
+
+describe('旅行纯函数', () => {
+  test('rollTripDays：1件→1/2天，2件以上→2/3天（r 注入确定化）', () => {
+    assert.equal(PetManager.rollTripDays(1, 0.3), 1);
+    assert.equal(PetManager.rollTripDays(1, 0.8), 2);
+    assert.equal(PetManager.rollTripDays(2, 0.3), 2);
+    assert.equal(PetManager.rollTripDays(3, 0.8), 3);
+    assert.equal(PetManager.rollTripDays(0, 0.9), 2); // 无行李兜底 2 天
+  });
+
+  test('rollPostcard：r<0.6 寄卡，r>=0.6 不寄', () => {
+    assert.equal(PetManager.rollPostcard(0.3), true);
+    assert.equal(PetManager.rollPostcard(0.59), true);
+    assert.equal(PetManager.rollPostcard(0.6), false);
+    assert.equal(PetManager.rollPostcard(0.9), false);
+  });
+
+  test('pickDestination：r 注入确定性，越界兜底', () => {
+    assert.equal(PetManager.pickDestination(0).key, PetManager.DESTINATIONS[0].key);
+    assert.equal(PetManager.pickDestination(0.35).key, PetManager.DESTINATIONS[3].key);
+    assert.equal(PetManager.pickDestination(0.999).key, PetManager.DESTINATIONS[9].key);
+  });
+
+  test('buildPostcardTemplate：含地名，全达标有夸奖', () => {
+    const t = PetManager.buildPostcardTemplate('seaside', 2, true);
+    assert.ok(t.includes('海边'));
+    assert.ok(t.includes('全都做到'));
+    const t2 = PetManager.buildPostcardTemplate('park', 1, false);
+    assert.ok(t2.includes('公园'));
+  });
+});
+
+describe('装行李与出发', () => {
+  test('未到 Lv.5：packBag 拒绝 reason=locked', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { inventory: { riceball: 1 } }); // Lv.1
+    const r = await pm.packBag('riceball');
+    assert.equal(r.success, false);
+    assert.equal(r.reason, 'locked');
+  });
+
+  test('Lv.5 解锁：装包成功转 ready；非食物/无货拒绝', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 280, inventory: { riceball: 1, yarn: 1 } }); // 280 = Lv.5 轻盈
+    const r1 = await pm.packBag('yarn'); // 玩具
+    assert.equal(r1.reason, 'not_food');
+    const r2 = await pm.packBag('bento'); // 背包无货
+    assert.equal(r2.reason, 'no_item');
+    const r3 = await pm.packBag('riceball');
+    assert.equal(r3.success, true);
+    assert.equal(r3.bagCount, 1);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.travel.status, 'ready');
+    assert.equal(state.travel.bag.riceball, 1);
+    assert.equal(state.inventory.riceball, 0);
+  });
+
+  test('unpackBag：取出回背包，取空回 home', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 280, inventory: { apple: 1, cake: 1 } });
+    await pm.packBag('apple');
+    await pm.packBag('cake');
+    const r = await pm.unpackBag('apple');
+    assert.equal(r.success, true);
+    assert.equal(r.bagCount, 1);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.inventory.apple, 1);
+    assert.equal(state.travel.status, 'ready');
+    await pm.unpackBag('cake');
+    const state2 = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state2.travel.status, 'home');
+    const r2 = await pm.unpackBag('cake');
+    assert.equal(r2.reason, 'no_item');
+  });
+
+  test('ready + 跨天 → 出发：traveling、目的地合法、时长由行李件数定（随机注入 0.3）', async () => {
+    const { pm } = newPM();
+    const realRandom = Math.random;
+    try {
+      Math.random = () => 0.3;
+      await seedPet(pm, { exp: 280, inventory: { riceball: 2 } });
+      await pm.packBag('riceball');
+      const r = await pm.tickDaily(yesterday);
+      assert.equal(r.departed, true);
+      const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      assert.equal(state.travel.status, 'traveling');
+      assert.equal(state.travel.days, 1); // 1 件 + 0.3 → 1 天
+      assert.ok(PetManager.DESTINATIONS.some(d => d.key === state.travel.destination));
+    } finally {
+      Math.random = realRandom;
+    }
+  });
+
+  test('旅行中：不衰减不生病（饥饿0也不病）、到期回家+寄卡意图', async () => {
+    const { pm } = newPM();
+    const realRandom = Math.random;
+    try {
+      Math.random = () => 0.3; // rollPostcard: 0.3 < 0.6 → 寄卡
+      await seedPet(pm, { exp: 280, inventory: { riceball: 2 } });
+      await pm.packBag('riceball');
+      await pm.tickDaily(yesterday); // 出发
+      // 旅行中：饥饿/清洁清零也不会生病（衰减暂停、生病判定跳过）
+      const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      s.stats = { hunger: 0, clean: 0, mood: 50, health: 100 };
+      pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+      const r = await pm.tickDaily(shift(today, 1)); // tripDay = daysBetween(yesterday, today) = 1，days=1 → 回家
+      assert.equal(r.returned, true);
+      assert.ok(r.postcardIntent); // 0.3 < 0.6
+      assert.equal(r.postcardIntent.allDone, false); // behavior.date 是今天非昨天，不算达标
+      const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      assert.equal(state.travel.status, 'home'); // 已回家
+      assert.equal(state.stats.hunger, 0); // 未衰减
+      assert.equal(state.sick, false); // 未生病
+    } finally {
+      Math.random = realRandom;
+    }
+  });
+
+  test('旅行回家结算：特产入包、exp/coins 基础+达标加成、状态回 home', async () => {
+    const { pm } = newPM();
+    const realRandom = Math.random;
+    try {
+      Math.random = () => 0.3;
+      await seedPet(pm, { exp: 280, inventory: { riceball: 2 } });
+      await pm.packBag('riceball');
+      await pm.packBag('riceball');
+      await pm.tickDaily(yesterday); // 出发，2 件 → 2 天
+      // 旅行第 1 天：当次 tick 的"昨日"（today）全达标
+      const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      s.behavior = { date: today, checkins: {}, meals: 0, weights: 0, freePlays: 0, allDone: true, milestoneStreaks: {} };
+      pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+      await pm.tickDaily(today); // tripDay = 1 < 2 → 继续旅行
+      // 旅行第 2 天：昨日全达标 + 回家
+      const s2 = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      s2.behavior = { date: shift(today, 1), checkins: {}, meals: 0, weights: 0, freePlays: 0, allDone: true, milestoneStreaks: {} };
+      pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s2));
+      const r = await pm.tickDaily(shift(today, 1)); // tripDay = 2 >= 2 → 回家
+      assert.equal(r.returned, true);
+      assert.equal(r.travelSummary.allDoneDays, 2);
+      assert.equal(r.travelSummary.bonusExp, 30);
+      assert.equal(r.travelSummary.bonusCoins, 6);
+      assert.ok(r.travelSummary.souvenirs.length >= 1);
+      const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      assert.equal(state.travel.status, 'home');
+      assert.deepEqual(state.travel.bag, {});
+      assert.equal(state.travel.departDate, null);
+      assert.equal(state.exp, 280 + 30 + 30); // 基础 30 + 2 天全达标 30
+      assert.equal(state.coins, 10 + 10 + 6); // 初始 10 + 回家基础 10 + 2 天加成 6
+      const souvenirKeys = Object.keys(state.inventory).filter(k => PetManager.TRAVEL_SOUVENIRS.includes(k));
+      assert.ok(souvenirKeys.length >= 1);
+      assert.ok(state.log.some(l => l.type === 'travel' && l.text.includes('回来了')));
+    } finally {
+      Math.random = realRandom;
+    }
+  });
+
+  test('旅行中不寄卡分支（随机 0.9）', async () => {
+    const { pm } = newPM();
+    const realRandom = Math.random;
+    try {
+      await seedPet(pm, { exp: 280, inventory: { riceball: 2 } });
+      await pm.packBag('riceball');
+      await pm.packBag('riceball');
+      Math.random = () => 0.3;
+      await pm.tickDaily(yesterday); // 出发，2 件 → 2 天
+      Math.random = () => 0.9; // 0.9 >= 0.6 不寄卡
+      const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+      s.behavior = { date: yesterday, checkins: {}, meals: 0, weights: 0, freePlays: 0, allDone: true, milestoneStreaks: {} };
+      pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+      const r = await pm.tickDaily(today);
+      assert.equal(r.postcardIntent, null);
+      assert.equal(r.returned, false);
+    } finally {
+      Math.random = realRandom;
+    }
+  });
+
+  test('出走态不能装行李', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 280, ranAway: true });
+    const r = await pm.packBag('apple');
+    assert.equal(r.reason, 'ran_away');
+  });
+
+  test('明信片存取：插最前、滚动保留 30 张', async () => {
+    const { pm } = newPM();
+    for (let i = 0; i < 32; i++) {
+      await pm.addPostcard({ destination: 'seaside', icon: '🌊', text: `卡${i}`, date: today });
+    }
+    const list = await pm.getPostcards();
+    assert.equal(list.length, 30);
+    assert.equal(list[0].text, '卡31'); // 最新在前
+    assert.equal(list[29].text, '卡2');
+  });
+
+  test('getTravelStatus：各状态摘要与明信片数', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 280, inventory: { riceball: 1 } });
+    const s0 = await pm.getTravelStatus();
+    assert.equal(s0.unlocked, true);
+    assert.equal(s0.status, 'home');
+    await pm.packBag('riceball');
+    const s1 = await pm.getTravelStatus();
+    assert.equal(s1.status, 'ready');
+    assert.equal(s1.bagCount, 1);
+    await pm.addPostcard({ destination: 'park', icon: '🌳', text: 'hi', date: today });
+    const s2 = await pm.getTravelStatus();
+    assert.equal(s2.postcardCount, 1);
+  });
+
+  test('v3.23 老存档无 travel 字段：packBag 时自动补齐不报错', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 280, inventory: { riceball: 1 } });
+    const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    delete s.travel;
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+    const r = await pm.packBag('riceball');
+    assert.equal(r.success, true);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.travel.status, 'ready');
+  });
+});
