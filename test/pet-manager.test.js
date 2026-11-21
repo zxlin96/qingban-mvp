@@ -401,22 +401,31 @@ describe('buildDayMd 与摘要', () => {
     assert.ok(md.includes(`date: ${today}`));
   });
 
-  test('summaryLine：含名字/等级/状态/轻币/背包', () => {
-    const state = {
-      name: '球球', species: 'chick', level: 3, coins: 120,
-      stats: { hunger: 70, clean: 55, mood: 80, health: 100 },
-      sick: false, ranAway: false,
-      inventory: { apple: 2, soap: 1 }
-    };
-    const line = PetManager.summaryLine(state);
+  test('summaryLine：含名字/等级/状态/轻币/背包，动态物品名可解析', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { exp: 160, level: 3, coins: 120, inventory: { apple: 2, soap: 1 } }); // 160 = Lv.3
+    await pm.addCustomItem({ name: '老板牌浓缩咖啡', icon: '☕', kind: 'toy', mood: 15, price: 8, source: 'daily', buyable: true });
+    const items = await pm.getCustomItems();
+    const ck = items[0].key;
+    const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    s.inventory[ck] = 1;
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+    const line = await pm.summaryLine();
     assert.ok(line.includes('球球'));
     assert.ok(line.includes('Lv.3'));
     assert.ok(line.includes('状态正常'));
     assert.ok(line.includes('轻币120'));
     assert.ok(line.includes('苹果×2'));
+    assert.ok(line.includes('老板牌浓缩咖啡×1')); // 动态物品名解析
     // 生病/出走态文案
-    assert.ok(PetManager.summaryLine({ ...state, sick: true }).includes('生病中'));
-    assert.ok(PetManager.summaryLine({ ...state, ranAway: true }).includes('已离家出走'));
+    const s2 = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    s2.sick = true;
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s2));
+    assert.ok((await pm.summaryLine()).includes('生病中'));
+    s2.ranAway = true;
+    s2.sick = false;
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s2));
+    assert.ok((await pm.summaryLine()).includes('已离家出走'));
   });
 });
 
@@ -562,15 +571,17 @@ describe('装行李与出发', () => {
       assert.equal(r.travelSummary.allDoneDays, 2);
       assert.equal(r.travelSummary.bonusExp, 30);
       assert.equal(r.travelSummary.bonusCoins, 6);
-      assert.ok(r.travelSummary.souvenirs.length >= 1);
+      assert.ok(r.souvenirIntent); // v3.26.0 特产意图（app.js 调 LLM 现编，失败降级静态）
+      assert.equal(r.souvenirIntent.destination, r.travelSummary.destination);
       const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
       assert.equal(state.travel.status, 'home');
       assert.deepEqual(state.travel.bag, {});
       assert.equal(state.travel.departDate, null);
       assert.equal(state.exp, 280 + 30 + 30); // 基础 30 + 2 天全达标 30
       assert.equal(state.coins, 10 + 10 + 6); // 初始 10 + 回家基础 10 + 2 天加成 6
+      // 结算本身不再掉落静态特产（由 app.js souvenirIntent 处理后 grantItem 落包）
       const souvenirKeys = Object.keys(state.inventory).filter(k => PetManager.TRAVEL_SOUVENIRS.includes(k));
-      assert.ok(souvenirKeys.length >= 1);
+      assert.equal(souvenirKeys.length, 0);
       assert.ok(state.log.some(l => l.type === 'travel' && l.text.includes('回来了')));
     } finally {
       Math.random = realRandom;
@@ -641,5 +652,258 @@ describe('装行李与出发', () => {
     assert.equal(r.success, true);
     const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
     assert.equal(state.travel.status, 'ready');
+  });
+});
+
+// ===== LLM 深度集成（v3.25.0）：奖励聚合/心声解析/日记/周报段 =====
+
+describe('奖励播报数据（rewardsToday）', () => {
+  test('多次奖励聚合：coins/exp/drops 累计，drops 记 key 序列', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    await pm.onCheckin('h1');        // +2币 +8exp 苹果
+    await pm.onMeal();               // +2币 +5exp
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.rewardsToday.date, today);
+    assert.equal(state.rewardsToday.coins, 4);
+    assert.equal(state.rewardsToday.exp, 13);
+    assert.deepEqual(state.rewardsToday.drops, ['apple']);
+  });
+
+  test('跨日重置：rewardsToday.date 被改成昨天后，新奖励触发重置', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    await pm.onCheckin('h1');
+    const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    s.rewardsToday = { date: yesterday, coins: 50, exp: 100, drops: ['carrot'] };
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+    await pm.onExercise();
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.rewardsToday.date, today);
+    assert.equal(state.rewardsToday.coins, 5); // 昨天的 50 币不带入
+    assert.deepEqual(state.rewardsToday.drops, ['carrot']);
+  });
+});
+
+describe('parseVoiceReply 心声解析', () => {
+  test('正常 JSON：提取 diary 与 personalityMd', () => {
+    const r = PetManager.parseVoiceReply('{"diary":"今天吃到了主人给的苹果，超开心！","personalityMd":"# 宠物性格档案\\n## 近期观察\\n- 主人很勤快"}');
+    assert.equal(r.diary, '今天吃到了主人给的苹果，超开心！');
+    assert.ok(r.personalityMd.includes('主人很勤快'));
+  });
+
+  test('code fence 包裹与前后杂文容错', () => {
+    const r = PetManager.parseVoiceReply('好的，以下是我的输出：\n```json\n{"diary":"今天晒了太阳很舒服，心情不错哦。","personalityMd":"# 宠物性格档案\\n## 性格特质\\n- 活泼粘人，最近变得很关心主人"}\n```\n希望有帮助');
+    assert.ok(r.diary.includes('晒了太阳'));
+    assert.ok(r.personalityMd.includes('活泼粘人'));
+  });
+
+  test('无 JSON / 空串 / 缺字段 → null 或字段为 null', () => {
+    assert.equal(PetManager.parseVoiceReply('纯文本没有JSON'), null);
+    assert.equal(PetManager.parseVoiceReply(''), null);
+    assert.equal(PetManager.parseVoiceReply(null), null);
+    const r = PetManager.parseVoiceReply('{"diary":"短"}'); // diary 过短 → null
+    assert.equal(r.diary, null);
+    assert.equal(r.personalityMd, null);
+  });
+});
+
+describe('今日心声与日记落盘', () => {
+  test('saveDiary：更新 state.diary 并写入 pet/日期.md 的「今日心声」段', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    await pm.onCheckin('h1'); // 产生当日事件
+    assert.equal(await pm.saveDiary(today, '今天主人打卡了，我分到了苹果，心满意足地打了个盹。'), true);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.diary.date, today);
+    const md = pm.fm.files.get(`pet/${today}.md`);
+    assert.ok(md.includes('## 今日心声'));
+    assert.ok(md.includes('心满意足'));
+    assert.ok(md.indexOf('## 今日心声') < md.indexOf('## 宠物动态')); // 心声段在动态前
+  });
+
+  test('saveDiary 空文本拒绝；buildDayMd diary 参数直接输出心声段', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    assert.equal(await pm.saveDiary(today, '   '), false);
+    const md = PetManager.buildDayMd(today, [{ date: today, time: '08:00', type: 'care', text: 'x' }], { date: today, text: '心声内容' });
+    assert.ok(md.includes('## 今日心声'));
+    const mdNoDiary = PetManager.buildDayMd(today, [], null);
+    assert.ok(!mdNoDiary.includes('今日心声'));
+  });
+});
+
+describe('周报宠物段', () => {
+  test('getWeeklyDigest + buildWeeklyDigestText：统计出发/回家/明信片/升级', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    // 种本周 log
+    const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    s.log.push(
+      { date: today, time: '08:00', type: 'travel', text: '🎒 背上行囊出发去海边了（约 2 天）' },
+      { date: today, time: '09:00', type: 'levelup', text: '🎉 升到 Lv.2（蹒跚）' },
+      { date: yesterday, time: '10:00', type: 'travel', text: '🏠 从海边回来了！带回 🍵 高山茶' },
+      { date: shift(today, -3), time: '11:00', type: 'sick', text: '🤒 生病了' }
+    );
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+    await pm.addPostcard({ destination: 'seaside', icon: '🌊', text: 'hi', date: yesterday });
+    await pm.addPostcard({ destination: 'park', icon: '🌳', text: 'hi2', date: shift(today, -5) });
+    const digest = await pm.getWeeklyDigest(shift(today, -6), today);
+    assert.equal(digest.departures, 1);
+    assert.equal(digest.returns, 1);
+    assert.equal(digest.levelUps, 1);
+    assert.equal(digest.sickCount, 1);
+    assert.equal(digest.postcards, 2);
+    const text = PetManager.buildWeeklyDigestText(digest);
+    assert.ok(text.includes('出行 1 次'));
+    assert.ok(text.includes('明信片 2 张'));
+    assert.ok(text.includes('升级 1 次'));
+    assert.ok(text.includes('生病 1 次'));
+  });
+
+  test('无动态周：安静待在家文案', () => {
+    const text = PetManager.buildWeeklyDigestText({ name: '小冰', level: 3, departures: 0, returns: 0, sickCount: 0, levelUps: 0, postcards: 0 });
+    assert.ok(text.includes('安静地待在家里'));
+    assert.ok(text.includes('Lv.3'));
+    assert.equal(PetManager.buildWeeklyDigestText(null), '（本周宠物无动态）');
+  });
+});
+
+// ===== 动态物品池与 LLM 生成（v3.26.0）=====
+
+describe('sanitizeCustomItem 生成收敛', () => {
+  test('food：hunger clamp 50、mood clamp 10、name/icon/desc/price 限长限幅', () => {
+    const r = PetManager.sanitizeCustomItem({ name: '老板牌浓缩咖啡', icon: '☕☕☕☕☕', kind: 'food', hunger: 999, mood: 99, price: 999, desc: 'x'.repeat(99) });
+    assert.equal(r.hunger, 50);
+    assert.equal(r.mood, 10);
+    assert.equal(r.price, 20);
+    assert.equal(r.icon.length, 4);
+    assert.equal(r.desc.length, 40);
+    assert.equal(r.name, '老板牌浓缩咖啡');
+  });
+
+  test('food hunger 缺省 15；toy mood 缺省 12；care clean 缺省 25（主效果必有）', () => {
+    assert.equal(PetManager.sanitizeCustomItem({ name: 'a', icon: '🍎', kind: 'food' }).hunger, 15);
+    assert.equal(PetManager.sanitizeCustomItem({ name: 'b', icon: '🧶', kind: 'toy' }).mood, 12);
+    assert.equal(PetManager.sanitizeCustomItem({ name: 'c', icon: '🧼', kind: 'care' }).clean, 25);
+  });
+
+  test('无效拒绝：空名/非法 kind/非对象；price 下限 3', () => {
+    assert.equal(PetManager.sanitizeCustomItem({ name: '', icon: '🍎', kind: 'food' }), null);
+    assert.equal(PetManager.sanitizeCustomItem({ name: 'x', icon: '💊', kind: 'heal' }), null); // heal 不开放
+    assert.equal(PetManager.sanitizeCustomItem(null), null);
+    assert.equal(PetManager.sanitizeCustomItem({ name: 'x', icon: '🍎', kind: 'food', price: 1 }).price, 3);
+  });
+});
+
+describe('craftItem AI 现场制作', () => {
+  test('成功：扣 5 材料费、入包、behavior.crafts 计数、动态池可解析', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { coins: 30 });
+    const r = await pm.craftItem({ name: '元气小饭团', icon: '🍙', kind: 'food', hunger: 30, mood: 5, price: 8, desc: '主人的心意' });
+    assert.equal(r.success, true);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.coins, 25);
+    assert.equal(state.behavior.crafts, 1);
+    const genKey = Object.keys(state.inventory).find(k => k.startsWith('gen-'));
+    assert.ok(genKey);
+    assert.equal(state.inventory[genKey], 1);
+    const item = await pm.resolveItem(genKey);
+    assert.equal(item.name, '元气小饭团');
+    assert.equal(item.buyable, false); // craft 物品不可购买
+    assert.ok(state.log.some(l => l.type === 'craft' && l.text.includes('元气小饭团')));
+  });
+
+  test('每日 2 次限：第 3 次 limit_reached', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { coins: 100 });
+    assert.ok((await pm.craftItem({ name: '甲', icon: '🎁', kind: 'toy', mood: 10 })).success);
+    assert.ok((await pm.craftItem({ name: '乙', icon: '🎁', kind: 'toy', mood: 10 })).success);
+    const r3 = await pm.craftItem({ name: '丙', icon: '🎁', kind: 'toy', mood: 10 });
+    assert.equal(r3.reason, 'limit_reached');
+  });
+
+  test('材料费不足 insufficient_coins；旅行中拒绝 traveling', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { coins: 3 });
+    assert.equal((await pm.craftItem({ name: '甲', icon: '🎁', kind: 'toy', mood: 10 })).reason, 'insufficient_coins');
+    await seedPet(pm, { coins: 30, travel: { status: 'traveling', bag: {}, departDate: today, days: 2, destination: 'seaside', tripLog: [] } });
+    assert.equal((await pm.craftItem({ name: '乙', icon: '🎁', kind: 'toy', mood: 10 })).reason, 'traveling');
+  });
+
+  test('无效参数 invalid_item（空名/非法 kind）', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { coins: 30 });
+    assert.equal((await pm.craftItem({ name: '', icon: '🎁', kind: 'toy' })).reason, 'invalid_item');
+    assert.equal((await pm.craftItem({ name: '甲', icon: '💊', kind: 'heal' })).reason, 'invalid_item');
+  });
+});
+
+describe('动态物品的购买与使用', () => {
+  test('buy：daily 物品可买（按 price 扣币）；craft/travel 物品不可买；过期下架', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { coins: 50 });
+    const daily = await pm.addCustomItem({ name: '老板牌浓缩咖啡', icon: '☕', kind: 'toy', mood: 15, price: 8, source: 'daily', buyable: true, date: today });
+    assert.equal((await pm.buy(daily.key)).success, true);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.coins, 42);
+    assert.equal(state.inventory[daily.key], 1);
+    // craft 物品不可买
+    const crafted = await pm.addCustomItem({ name: '手作饼干', icon: '🍪', kind: 'food', hunger: 20, price: 6, source: 'craft', buyable: false, date: today });
+    assert.equal((await pm.buy(crafted.key)).reason, 'not_for_sale');
+    // 过期下架（4 天前上架）
+    const stale = await pm.addCustomItem({ name: '昨日特供', icon: '🥐', kind: 'food', hunger: 20, price: 6, source: 'daily', buyable: true, date: shift(today, -4) });
+    assert.equal((await pm.buy(stale.key)).reason, 'off_shelf');
+  });
+
+  test('useItem/packBag 对动态物品透明生效', async () => {
+    const { pm } = newPM();
+    await seedPet(pm, { inventory: {} });
+    const toy = await pm.addCustomItem({ name: '纸糊皮球', icon: '⚽', kind: 'toy', mood: 20, price: 5, source: 'craft', buyable: false, date: today });
+    await pm.grantItem(toy.key, 1);
+    const r = await pm.useItem(toy.key);
+    assert.equal(r.success, true);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.stats.mood, 100); // 80 + 20
+    // 动态食物可进行李
+    await seedPet(pm, { exp: 280 });
+    const food = await pm.addCustomItem({ name: '加班回血便当', icon: '🍱', kind: 'food', hunger: 40, price: 10, source: 'daily', buyable: true, date: today });
+    const s = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    s.inventory[food.key] = 1;
+    pm.fm.files.set('.meta/pet-state.json', JSON.stringify(s));
+    const r2 = await pm.packBag(food.key);
+    assert.equal(r2.success, true);
+  });
+
+  test('grantItem：落包 + 日志记录', async () => {
+    const { pm } = newPM();
+    await seedPet(pm);
+    const it = await pm.addCustomItem({ name: '海边贝壳', icon: '🐚', kind: 'toy', mood: 10, price: 5, source: 'travel', buyable: false, date: today });
+    await pm.grantItem(it.key, 2);
+    const state = JSON.parse(pm.fm.files.get('.meta/pet-state.json'));
+    assert.equal(state.inventory[it.key], 2);
+    assert.ok(state.log.some(l => l.text.includes('旅行的特产') && l.text.includes('贝壳')));
+  });
+});
+
+describe('parseItemsReply 特供解析', () => {
+  test('正常解析 + sanitize + 截断至 2 个', () => {
+    const r = PetManager.parseItemsReply('{"specials":[{"name":"老板牌浓缩咖啡","icon":"☕","kind":"food","hunger":10,"mood":8,"price":8,"desc":"加班后的救赎"},{"name":"山径杖","icon":"🥾","kind":"care","clean":50,"price":9,"desc":"周末爬山的收尾"},{"name":"第三个","icon":"🎁","kind":"toy","mood":5}]}');
+    assert.equal(r.length, 2);
+    assert.equal(r[0].name, '老板牌浓缩咖啡');
+    assert.equal(r[1].kind, 'care');
+  });
+
+  test('容错：无 specials/全无效 → 空数组', () => {
+    assert.deepEqual(PetManager.parseItemsReply('{"msg":"没有specials"}'), []);
+    assert.deepEqual(PetManager.parseItemsReply('{"specials":[{"name":"","icon":"🎁","kind":"food"}]}'), []);
+    assert.deepEqual(PetManager.parseItemsReply('纯文本'), []);
+    assert.deepEqual(PetManager.parseItemsReply(null), []);
+  });
+
+  test('fence 包裹正常解析', () => {
+    const r = PetManager.parseItemsReply('```json\n{"specials":[{"name":"山野饭团","icon":"🍙","kind":"food","hunger":30,"price":7,"desc":"溪水边捏的饭团"}]}\n```');
+    assert.equal(r.length, 1);
+    assert.equal(r[0].name, '山野饭团');
   });
 });

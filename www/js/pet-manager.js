@@ -15,6 +15,7 @@ export class PetManager {
     this.fm = fileManager;
     this.statePath = PET_STATE_PATH;
     this.postcardsPath = '.meta/pet-postcards.json'; // 明信片（滚动保留）
+    this.itemsPath = '.meta/pet-items.json'; // 动态物品池（v3.26.0：LLM 生成的每日特供/AI 制作/旅行特产）
     this.onChangeCallback = null; // 数据变化时通知 UI 刷新
   }
 
@@ -235,6 +236,7 @@ export class PetManager {
       inventory: {},
       behavior: this._freshBehavior(today),
       travel: this._freshTravel(),
+      diary: null, // 今日心声 { date, text }（v3.25.0 LLM 生成，宁缺毋滥）
       hideFloat: false,
       log: []
     };
@@ -250,7 +252,7 @@ export class PetManager {
   // ===== 行为奖励（app.js 挂接入口；当日去重）=====
 
   _freshBehavior(today) {
-    return { date: today, checkins: {}, meals: 0, weights: 0, freePlays: 0, allDone: false, milestoneStreaks: {} };
+    return { date: today, checkins: {}, meals: 0, weights: 0, freePlays: 0, crafts: 0, allDone: false, milestoneStreaks: {} };
   }
 
   _ensureBehaviorDay(state, today) {
@@ -349,6 +351,14 @@ export class PetManager {
       const item = PetManager.getItem(r.drop);
       this._addLog(state, 'reward', `掉落 ${item.icon} ${item.name}×1`);
     }
+    // 当日奖励聚合（v3.25.0）：AI 经 pet_status 读取后可自然播报；跨日自动重置
+    const today = this._getToday();
+    if (!state.rewardsToday || state.rewardsToday.date !== today) {
+      state.rewardsToday = { date: today, coins: 0, exp: 0, drops: [] };
+    }
+    state.rewardsToday.coins += (r.coins || 0) + (extraCoins || 0);
+    state.rewardsToday.exp += r.exp || 0;
+    if (r.drop) state.rewardsToday.drops.push(r.drop);
     const texts = {
       checkin: `打卡奖励：+${r.coins} 轻币、心情 +${r.mood}`,
       meal: `好好吃饭奖励：+${r.coins} 轻币、饱食 +${r.hunger}`,
@@ -375,7 +385,7 @@ export class PetManager {
     if (!state) return { success: false, reason: 'no_pet', message: '还没有宠物' };
     if (state.ranAway) return { success: false, reason: 'ran_away', message: `${state.name} 出走了，先接它回家吧` };
     if (state.travel && state.travel.status === 'traveling') return { success: false, reason: 'traveling', message: `${state.name} 正在旅行中，等它回家吧` };
-    const item = PetManager.getItem(itemKey);
+    const item = await this.resolveItem(itemKey); // 静态表优先，未命中查动态物品池（v3.26.0）
     if (!item) return { success: false, reason: 'unknown_item', message: '未知物品' };
     if ((state.inventory[itemKey] || 0) <= 0) {
       return { success: false, reason: 'no_item', message: `背包里没有${item.name}了，去商店看看？` };
@@ -444,9 +454,13 @@ export class PetManager {
     const state = await this._loadState();
     if (!state) return { success: false, reason: 'no_pet', message: '还没有宠物' };
     if (state.ranAway) return { success: false, reason: 'ran_away', message: `${state.name} 出走了，先接它回家吧` };
-    const item = PetManager.getItem(itemKey);
+    const item = await this.resolveItem(itemKey); // 静态表优先，未命中查动态物品池（v3.26.0）
     if (!item) return { success: false, reason: 'unknown_item', message: '未知商品' };
     if (item.onlyTravel) return { success: false, reason: 'not_for_sale', message: `${item.name}是旅行限定特产，商店不卖哦` };
+    if (item.buyable === false) return { success: false, reason: 'not_for_sale', message: `${item.name}不可购买` };
+    if (item.source === 'daily' && item.date && PetManager.daysBetween(item.date, this._getToday()) > 2) {
+      return { success: false, reason: 'off_shelf', message: `${item.name} 已下架（特供只上架 3 天）` };
+    }
     if ((state.coins || 0) < item.price) {
       return { success: false, reason: 'insufficient_coins', message: `轻币不够（需要 ${item.price}，现有 ${state.coins}）` };
     }
@@ -485,7 +499,7 @@ export class PetManager {
     }
     const travel = this._travelOf(state);
     if (travel.status === 'traveling') return { success: false, reason: 'traveling', message: `${state.name} 正在旅行中，回来再收拾吧` };
-    const item = PetManager.getItem(itemKey);
+    const item = await this.resolveItem(itemKey); // 静态表优先，未命中查动态物品池（v3.26.0）
     if (!item) return { success: false, reason: 'unknown_item', message: '未知物品' };
     if (item.kind !== 'food') return { success: false, reason: 'not_food', message: '行李只能装食物（便当才走得远）' };
     if ((state.inventory[itemKey] || 0) <= 0) return { success: false, reason: 'no_item', message: `背包里没有${item.name}了` };
@@ -662,21 +676,11 @@ export class PetManager {
     return { changed: true, ...events };
   }
 
-  // 回家结算：特产（随机 1-2 件旅行限定）+ 行为达标加成（全达标天数 ×15 exp/×3 币）
+  // 回家结算：成长加成（全达标天数 ×15 exp/×3 币）+ 特产意图（v3.26.0 起特产由 app.js 调 LLM 按目的地现编，失败降级静态随机）
   async _settleReturn(state, yesterdayDate, events) {
     const travel = this._travelOf(state);
     const dest = PetManager.getDestination(travel.destination);
     const allDoneDays = travel.tripLog.filter(t => t.allDone).length;
-
-    // 特产掉落（1-2 件）
-    const n = Math.random() < 0.5 ? 1 : 2;
-    const souvenirs = [];
-    for (let i = 0; i < n; i++) {
-      const key = PetManager.TRAVEL_SOUVENIRS[Math.floor(Math.random() * PetManager.TRAVEL_SOUVENIRS.length)];
-      state.inventory[key] = (state.inventory[key] || 0) + 1;
-      const item = PetManager.getItem(key);
-      souvenirs.push(`${item.icon} ${item.name}`);
-    }
 
     // 成长结算：基础 +30 exp/+10 币，全达标每天额外 +15 exp/+3 币
     const before = PetManager.levelOf(state.exp).level;
@@ -692,9 +696,9 @@ export class PetManager {
     const tripCount = Math.max(travel.tripLog.length, 1);
     const tripDays = travel.days;
     const bonusNote = allDoneDays > 0
-      ? `，你旅行期间 ${allDoneDays}/${tripCount} 天全达标，它玩得特别尽兴（+${bonusExp} 成长、+${bonusCoins} 币）`
+      ? `（旅行期间 ${allDoneDays}/${tripCount} 天全达标：+${bonusExp} 成长、+${bonusCoins} 币）`
       : '';
-    this._addLog(state, 'travel', `🏠 从${dest.name}回来了！带回 ${souvenirs.join('、')}${bonusNote}`, yesterdayDate);
+    this._addLog(state, 'travel', `🏠 从${dest.name}回来了！${bonusNote}`, yesterdayDate);
 
     // 重置旅行字段
     travel.status = 'home';
@@ -705,9 +709,21 @@ export class PetManager {
     travel.tripLog = [];
 
     events.returned = true;
-    events.travelSummary = { destination: dest.key, destinationName: dest.name, tripDays, allDoneDays, tripCount, bonusExp, bonusCoins, souvenirs };
+    events.souvenirIntent = { destination: dest.key }; // 特产由 app.js LLM 现编后 grantItem 落包
+    events.travelSummary = { destination: dest.key, destinationName: dest.name, tripDays, allDoneDays, tripCount, bonusExp, bonusCoins };
     await this._commit(state, yesterdayDate);
     return { changed: true, ...events };
+  }
+
+  // 特产落包（v3.26.0）：LLM 生成的动态物品或静态降级物品统一由此入包 + 日志
+  async grantItem(key, count = 1) {
+    const state = await this._loadState();
+    if (!state) return false;
+    state.inventory[key] = (state.inventory[key] || 0) + count;
+    const item = await this.resolveItem(key);
+    this._addLog(state, 'travel', `🧧 旅行的特产：${item ? `${item.icon} ${item.name}×${count}` : key}`);
+    await this._commit(state, this._getToday());
+    return true;
   }
 
   // 接出走宠物回家：状态恢复到 COMEBACK_STATS，生病清零
@@ -735,9 +751,12 @@ export class PetManager {
     if (state.log.length > 60) state.log.splice(0, state.log.length - 60); // 只留最近 60 条
   }
 
-  // 生成单日 MD（纯函数，可单测）。logs: 当日事件数组（时间正序）
-  static buildDayMd(date, logs) {
+  // 生成单日 MD（纯函数，可单测）。logs: 当日事件数组（时间正序）；diary: 今日心声（v3.25.0 LLM 生成）
+  static buildDayMd(date, logs, diary = null) {
     const lines = [`---`, `date: ${date}`, `---`, ``];
+    if (diary && diary.text) {
+      lines.push(`## 今日心声`, ``, diary.text, ``);
+    }
     if (!logs || logs.length === 0) {
       lines.push(`（今日暂无宠物动态）`, ``);
       return lines.join('\n');
@@ -750,27 +769,198 @@ export class PetManager {
     return lines.join('\n');
   }
 
-  // 单日 MD 重建：当日无事件删文件（与 exercise-manager._writeDayMd 同模式）
+  // 单日 MD 重建：当日无事件且无心声删文件（与 exercise-manager._writeDayMd 同模式）
   async _writeDayMd(date) {
     const path = `pet/${date}.md`;
     const state = await this._loadState();
     const logs = state ? state.log.filter(l => l.date === date) : [];
-    if (logs.length === 0) {
+    const diary = (state && state.diary && state.diary.date === date) ? state.diary : null;
+    if (logs.length === 0 && !diary) {
       await this.fm.deleteFile(path).catch(() => {});
       return;
     }
-    await this.fm.writeFile(path, PetManager.buildDayMd(date, logs));
+    await this.fm.writeFile(path, PetManager.buildDayMd(date, logs, diary));
+  }
+
+  // 保存今日心声（v3.25.0 LLM 生成）+ 重建当日 MD（心声段在动态前，AI 与面板共同消费）
+  async saveDiary(date, text) {
+    const state = await this._loadState();
+    if (!state) return false;
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+    state.diary = { date, text: trimmed };
+    await this._saveState(state);
+    try {
+      await this._writeDayMd(date);
+    } catch (e) {
+      console.warn('[PetManager] 写心声日志失败:', e.message);
+    }
+    this._notifyChange();
+    return true;
+  }
+
+  // ===== 动态物品池（v3.26.0：LLM 生成的每日特供/AI 制作/旅行特产）=====
+
+  async _loadItems() {
+    const raw = await this.fm.readFile(this.itemsPath);
+    if (!raw) return [];
+    try {
+      const d = JSON.parse(raw);
+      return Array.isArray(d) ? d : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getCustomItems() {
+    return this._loadItems();
+  }
+
+  async getCustomItem(key) {
+    const items = await this._loadItems();
+    return items.find(i => i.key === key) || null;
+  }
+
+  // 落入动态池（sanitize 后；不自动入背包，调用方自行 inventory++）；失效返回 null
+  async addCustomItem(item) {
+    const clean = PetManager.sanitizeCustomItem(item);
+    if (!clean) return null;
+    const items = await this._loadItems();
+    const full = {
+      ...clean,
+      key: clean.key || `gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      source: item.source || 'craft',
+      buyable: item.buyable !== false,
+      date: item.date || this._getToday()
+    };
+    items.unshift(full);
+    if (items.length > 60) items.splice(60); // 池上限，最旧的先淘汰
+    await this.fm.writeFile(this.itemsPath, JSON.stringify(items));
+    this._notifyChange();
+    return full;
+  }
+
+  // 统一物品解析：静态 SHOP 优先，未命中查动态池（LLM 生成物品）
+  async resolveItem(key) {
+    const staticItem = PetManager.getItem(key);
+    if (staticItem) return staticItem;
+    return this.getCustomItem(key);
+  }
+
+  // 今日特供摘要（商店限时货架 + pet_status 可见）：近 3 天上架的 daily 物品
+  async getSpecials() {
+    const today = this._getToday();
+    const items = await this._loadItems();
+    return items
+      .filter(i => i.source === 'daily' && i.buyable && PetManager.daysBetween(i.date, today) <= 2)
+      .map(i => ({ key: i.key, name: i.name, icon: i.icon, price: i.price, desc: i.desc || '' }));
+  }
+
+  // LLM 生成物品校验/收敛（纯函数，可单测）：kind 白名单（heal 不开放）、效果按 kind clamp、
+  // 价格 clamp 3-20、文本限长；无效返回 null。每个 kind 保证主效果存在（useItem 依赖字段判断）
+  static sanitizeCustomItem(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const name = String(raw.name || '').trim().slice(0, 12);
+    if (!name) return null;
+    const kind = ['food', 'toy', 'care'].includes(raw.kind) ? raw.kind : null;
+    if (!kind) return null;
+    const num = (v, max) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
+    const item = { name, kind, icon: String(raw.icon || '🎁').trim().slice(0, 4) || '🎁' };
+    if (kind === 'food') {
+      item.hunger = num(raw.hunger, 50) || 15;
+      if (num(raw.mood, 10)) item.mood = num(raw.mood, 10);
+    } else if (kind === 'toy') {
+      item.mood = num(raw.mood, 25) || 12;
+    } else {
+      item.clean = num(raw.clean, 60) || 25;
+      if (num(raw.mood, 5)) item.mood = num(raw.mood, 5);
+    }
+    item.price = Math.max(3, Math.min(20, Math.round(Number(raw.price) || 6)));
+    if (raw.desc) item.desc = String(raw.desc).trim().slice(0, 40);
+    return item;
+  }
+
+  // 提取 LLM 回复中的 JSON 对象（纯函数，可单测）：容错 code fence 与前后杂文
+  static extractJson(text) {
+    if (!text) return null;
+    let t = String(text).trim();
+    const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence) t = fence[1].trim();
+    const start = t.indexOf('{');
+    const end = t.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      const obj = JSON.parse(t.slice(start, end + 1));
+      return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 解析心声/性格 LLM 返回（纯函数，可单测）：字段过短视为缺失
+  static parseVoiceReply(text) {
+    const obj = PetManager.extractJson(text);
+    if (!obj) return null;
+    return {
+      diary: (typeof obj.diary === 'string' && obj.diary.trim().length >= 10) ? obj.diary.trim() : null,
+      personalityMd: (typeof obj.personalityMd === 'string' && obj.personalityMd.trim().length >= 20) ? obj.personalityMd.trim() : null
+    };
+  }
+
+  // 解析每日特供 LLM 返回（纯函数，可单测）：提取 specials 数组逐个 sanitize，至多 2 个
+  static parseItemsReply(text) {
+    const obj = PetManager.extractJson(text);
+    if (!obj || !Array.isArray(obj.specials)) return [];
+    return obj.specials.map(r => PetManager.sanitizeCustomItem(r)).filter(Boolean).slice(0, 2);
+  }
+
+  // AI 现场制作（v3.26.0）：LLM 参数即作品。每日 2 次限 + 5 轻币材料费；成品直接进背包
+  static CRAFT_DAILY_LIMIT = 2;
+  static CRAFT_COST = 5;
+
+  async craftItem(raw) {
+    const state = await this._loadState();
+    if (!state) return { success: false, reason: 'no_pet', message: '还没有宠物' };
+    if (state.ranAway) return { success: false, reason: 'ran_away', message: `${state.name} 出走了，先接它回家吧` };
+    if (state.travel && state.travel.status === 'traveling') return { success: false, reason: 'traveling', message: `${state.name} 正在旅行中，回来再做吧` };
+    const today = this._getToday();
+    this._ensureBehaviorDay(state, today);
+    if ((state.behavior.crafts || 0) >= PetManager.CRAFT_DAILY_LIMIT) {
+      return { success: false, reason: 'limit_reached', message: `今天已经做了 ${PetManager.CRAFT_DAILY_LIMIT} 件啦，材料也要休息，明天再来` };
+    }
+    if ((state.coins || 0) < PetManager.CRAFT_COST) {
+      return { success: false, reason: 'insufficient_coins', message: `轻币不够（材料费 ${PetManager.CRAFT_COST}，现有 ${state.coins}）` };
+    }
+    const item = PetManager.sanitizeCustomItem(raw);
+    if (!item) return { success: false, reason: 'invalid_item', message: '这个做法不太对，描述一下名字/类型/效果再试试' };
+    state.coins -= PetManager.CRAFT_COST;
+    state.behavior.crafts = (state.behavior.crafts || 0) + 1;
+    const full = await this.addCustomItem({ ...item, source: 'craft', buyable: false, date: today });
+    if (!full) return { success: false, reason: 'invalid_item', message: '制作失败了，换个描述再试试' };
+    state.inventory[full.key] = (state.inventory[full.key] || 0) + 1;
+    this._addLog(state, 'craft', `🔨 亲手做了 ${full.icon} ${full.name}×1`);
+    await this._commit(state, today);
+    return { success: true, message: `做好了${full.icon} ${full.name}×1，已放进背包`, item: full, state };
   }
 
   // ===== 给 AI / 悬浮球的摘要 =====
 
-  // 一行摘要（buildSystemPrompt 动态注入用）：球球（🐤小鸡 Lv.3）饱食70 清洁55 心情80 健康100 | 轻币120 | 背包: 苹果×2（旅行状态非 home 时追加旅行段）
-  static summaryLine(state) {
+  // 一行摘要（实例版，背包里的动态物品名可解析）：球球（🐤小鸡 Lv.3）饱食70 清洁55 心情80 健康100 | 轻币120 | 背包: 苹果×2（旅行状态非 home 时追加旅行段）
+  async summaryLine() {
+    const state = await this._loadState();
+    if (!state) return null;
+    const customItems = await this._loadItems();
+    const nameOf = (key) => {
+      const st = PetManager.getItem(key);
+      if (st) return st.name;
+      const c = customItems.find(i => i.key === key);
+      return c ? c.name : null;
+    };
     const def = PetManager.speciesDef(state.species);
     const s = state.stats;
     const status = state.ranAway ? '已离家出走' : state.sick ? '生病中' : '状态正常';
     const inv = Object.entries(state.inventory || {}).filter(([, n]) => n > 0)
-      .map(([k, n]) => `${PetManager.getItem(k)?.name || k}×${n}`).join('、');
+      .map(([k, n]) => `${nameOf(k) || k}×${n}`).join('、');
     let line = `${state.name}（${def.icon}${def.label} Lv.${state.level}）${status} ｜ 饱食${s.hunger} 清洁${s.clean} 心情${s.mood} 健康${s.health} ｜ 轻币${state.coins}${inv ? ` ｜ 背包: ${inv}` : ' ｜ 背包空'}`;
     const t = state.travel;
     if (t && t.status === 'traveling') {
@@ -781,6 +971,40 @@ export class PetManager {
       line += ` ｜ 行李已收拾好（${bagCount} 件食物），明天出发去旅行`;
     }
     return line;
+  }
+
+  // ===== 周报宠物段（v3.25.0）=====
+
+  // 本周宠物动态统计（从 log + postcards 汇总）
+  async getWeeklyDigest(startDate, endDate) {
+    const state = await this._loadState();
+    if (!state) return null;
+    const logs = (state.log || []).filter(l => l.date >= startDate && l.date <= endDate);
+    const inRange = (type, kw) => logs.filter(l => l.type === type && (!kw || l.text.includes(kw))).length;
+    const postcards = (await this._loadPostcards()).filter(c => c.date >= startDate && c.date <= endDate);
+    return {
+      name: state.name,
+      level: state.level,
+      departures: inRange('travel', '出发'),
+      returns: inRange('travel', '回来了'),
+      sickCount: inRange('sick'),
+      levelUps: inRange('levelup'),
+      postcards: postcards.length
+    };
+  }
+
+  // 周报文本段（纯函数，可单测）
+  static buildWeeklyDigestText(digest) {
+    if (!digest) return '（本周宠物无动态）';
+    if (digest.departures === 0 && digest.postcards === 0 && digest.levelUps === 0 && digest.sickCount === 0) {
+      return `（本周${digest.name}安静地待在家里，当前 Lv.${digest.level}）`;
+    }
+    const parts = [];
+    if (digest.departures > 0) parts.push(`出行 ${digest.departures} 次`);
+    if (digest.postcards > 0) parts.push(`寄回明信片 ${digest.postcards} 张`);
+    if (digest.levelUps > 0) parts.push(`升级 ${digest.levelUps} 次`);
+    if (digest.sickCount > 0) parts.push(`生病 ${digest.sickCount} 次`);
+    return `- ${digest.name}：${parts.join('、')}（当前 Lv.${digest.level}）`;
   }
 
   // ===== 工具方法 =====

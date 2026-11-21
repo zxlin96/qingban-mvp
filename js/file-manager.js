@@ -121,6 +121,7 @@ export class FileManager {
       'rules/food-types.md': this._getFoodTypesMd(),
       'rules/exercise.md': this._getExerciseMd(),
       'rules/learned-habits.md': this._getLearnedHabitsMd(),
+      'rules/pet-personality.md': this._getPetPersonalityMd(), // v3.25.0 宠物性格档案（老用户启动时补写模板）
     };
 
     for (const [path, content] of Object.entries(userTemplateFiles)) {
@@ -147,13 +148,14 @@ export class FileManager {
       'rules/food-types.md': this._getFoodTypesMd(),
       'rules/exercise.md': this._getExerciseMd(),
       'rules/learned-habits.md': this._getLearnedHabitsMd(),
+      'rules/pet-personality.md': this._getPetPersonalityMd(),
       'INDEX.md': this._getIndexMd(),
     };
   }
 
   _getClaudeMd() {
     return `---
-version: 20
+version: 22
 ---
 
 # 轻伴 AI 角色指令
@@ -276,6 +278,13 @@ rules/learned-habits.md 里记录了用户的日常习惯。对话中请自然�
 - 旅行期间坚持打卡会让它玩得更尽兴（回家时更多特产与成长值）——可以借它的旅行鼓励用户坚持行为（"你坚持打卡，它在那边玩得更开心哦"），依然不说教
 - 宠物旅行中/寄回明信片时可以自然聊起它的见闻与想念，分享回家喜悦；克制频率，不要每轮都提
 
+## 宠物互动与播报（v3.25.0）
+- **跟宠物说话**：用户想跟宠物聊天/互动（"我想跟球球说说话""跟它聊两句"）→ 用**宠物第一人称**简短回应（2-3 句），语气参考性格档案（rules/pet-personality.md，已自动注入），可以提起共同经历（旅行见闻/明信片/今日心声）；宠物**不回答健康专业问题**，健康咨询仍由你以助手身份回答
+- **奖励播报**：pet_status 返回的 rewardsToday（今日已获奖励）非空时，记录完饮食/运动可顺带一句播报（如"球球刚获得 2 轻币和 1 个苹果哦"）——克制，不要每次都报，一天至多 1-2 次
+- **现场制作道具**：用户想给宠物做/准备东西（"帮小冰做个便当""给它做个玩具""用今天买的草莓给它做点吃的"）→ 调 pet_craft，你的参数就是作品本身：名字结合对话上下文创作（4-8 字可爱具体）、效果合理（food 恢复饱食 10-50 / toy 恢复心情 10-25 / care 恢复清洁 10-60）、desc 点出材料或来历；每次消耗 5 轻币材料费、每日 2 次，超出或轻币不足时如实告知
+- **今日特供**：pet_status 返回的 specials 是商店当日限定道具（每日结算结合主人生活自动上架，3 天后下架），聊到相关话题时可顺带推荐（"商店今天上架了 xx，跟你说过的 xx 好配"），不说教不硬推
+- 每日结算会自动生成"今日心声"并更新性格档案（你无需操作）；心声在宠物状态注入段可参考
+
 ## 健康生活小建议（重要）
 结合当前语境自然带出 1-2 条，简短不说教、不生硬插入；同类建议换着说法重复，用户表现出抗拒就减少频率：
 - 饮水：每日目标 = 体重kg × 30ml，饮食话题时顺带提醒
@@ -303,6 +312,26 @@ rules/learned-habits.md 里记录了用户的日常习惯。对话中请自然�
 
 ## 语言
 始终使用中文回复。`;
+  }
+
+  // 宠物性格档案（v3.25.0 用户数据模板——只在不存在时写入；跨天结算由 LLM 全量重写更新）
+  _getPetPersonalityMd() {
+    return `# 宠物性格档案
+
+> 这份档案记录宠物对主人的观察和它自己的性格变化，供对话互动与"今日心声"生成引用。
+> 由轻伴 AI 在每日结算时合并旧观察更新（保持分段结构，新观察带日期标注）。
+
+## 性格特质
+（待观察：相处久了会慢慢显现，如活泼/粘人/佛系/好奇/傲娇）
+
+## 喜好
+（待观察：主人做过让它开心的事，如某类食物、某类互动）
+
+## 在意的事
+（待观察：主人近期的状态，如压力大/作息变化/坚持打卡/饮食规律）
+
+## 近期观察
+（待观察：带日期标注的观察记录，最多保留近 10 条）`;
   }
 
   _getProfileMd() {

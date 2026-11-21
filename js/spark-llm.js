@@ -22,7 +22,10 @@ export class SparkLLM {
     const apiFormat = s.apiFormat || (cfg && cfg.apiFormat) || 'openai';
     this.apkMode = !!(apiKey && apiKey !== 'your-coding-plan-api-key');
     this.apiKey = apiKey;
-    this.baseURL = baseURL;
+    // 直连（apkMode）才有 baseURL 的意义；无用户 Key 时一律走本地代理（v3.25.0 修复：
+    // 此前用户只填 apiBaseURL 不填 Key，非流式调用会直接打到该地址并因无鉴权 401，
+    // 而普通聊天走流式本地代理正常，问题被掩盖）
+    this.baseURL = this.apkMode ? baseURL : '';
     this.model = (cfg && cfg.model) || 'k3';
     this.apiFormat = apiFormat;
   }
@@ -34,6 +37,21 @@ export class SparkLLM {
     try { return JSON.parse(s.customHeaders); } catch (_) { return {}; }
   }
 
+  // OpenAI chat completions 目标地址（v3.25.0）
+  // - baseURL 为空 → 开发模式走本地代理端点 this.endpoint（/api/chat），修复此前拼成 "/chat/completions"
+  //   打到静态文件处理器必 404 的问题（该路径下习惯学习/宠物心声/明信片等非流式调用全部失败）
+  // - baseURL 仅域名（无路径）→ 补 OpenAI 约定的 /v1 前缀（如 https://api.moonshot.cn → /v1/chat/completions）
+  // - baseURL 已带路径（如 https://api.kimi.com/coding）→ 维持拼接（/coding/chat/completions）
+  _openaiChatUrl() {
+    const base = (this.baseURL || '').replace(/\/$/, '');
+    if (!base) return this.endpoint; // 本地代理
+    try {
+      const pathname = new URL(base).pathname;
+      if (!pathname || pathname === '/') return `${base}/v1/chat/completions`;
+    } catch (_) { /* 非法 URL 按原拼接让请求层报错 */ }
+    return `${base}/chat/completions`;
+  }
+
   // 统一的 HTTP 请求 — 带重试机制与整体超时保护
   async _request_openai(payload, retries, timeoutMs) {
     const s = (typeof window !== 'undefined' && window.QINGBAN_SETTINGS) || {};
@@ -42,10 +60,14 @@ export class SparkLLM {
     let lastError = null;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    // 目标地址（v3.25.0 修复）：baseURL 为空 → 本地代理端点（开发模式，模型由服务端指定）；
+    // 仅域名（无路径）→ 按 OpenAI 约定补 /v1/chat/completions（用户常直接粘贴 https://api.moonshot.cn 这类根地址）；
+    // 已带路径（如 /coding、/v1）→ 维持原拼接行为
+    const targetUrl = this._openaiChatUrl();
     try {
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-          const resp = await fetch(`${this.baseURL}/chat/completions`, {
+          const resp = await fetch(targetUrl, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${this.apiKey}`,

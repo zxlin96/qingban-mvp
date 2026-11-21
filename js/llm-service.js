@@ -15,6 +15,8 @@ export class LLMService {
     this.onPetCare = null;
     // 宠物旅行工具回调（v3.24.0）— 由 App 层注入
     this.onPetTravel = null;
+    // 宠物道具制作工具回调（v3.26.0）— 由 App 层注入
+    this.onPetCraft = null;
 
     // ===== KV Cache 优化：三层缓存 =====
     // 第一层：System Prompt 固定前缀缓存
@@ -23,7 +25,8 @@ export class LLMService {
     // 的 KV 缓存），改为动态注入 —— 前缀变成纯静态（CLAUDE.md + rules/），缓存存活期大幅延长
     this._fixedFiles = [
       'CLAUDE.md', 'rules/learned-habits.md', 'rules/allergies.md',
-      'rules/preferences.md', 'rules/food-types.md', 'rules/exercise.md'
+      'rules/preferences.md', 'rules/food-types.md', 'rules/exercise.md',
+      'rules/pet-personality.md' // 宠物性格档案（v3.25.0，结算时 LLM 更新，收尾统一失效缓存）
     ];
     this._cachedPrefix = null;      // 缓存的固定前缀字符串
     this._prefixCacheValid = false;  // 缓存是否有效
@@ -261,7 +264,12 @@ ${exercise || '（暂无记录）'}`;
     if (this.onGetPetStatus) {
       try {
         const pet = await this.onGetPetStatus();
-        if (pet && pet.summary) petSection = pet.summary;
+        if (pet && pet.summary) {
+          petSection = pet.summary;
+          if (pet.diary && pet.diary.text) {
+            petSection += `\n- 今日心声（${pet.diary.date}，聊宠物时可延续其语气）：${pet.diary.text}`;
+          }
+        }
       } catch (e) {
         // 静默失败，不影响主流程
       }
@@ -568,6 +576,27 @@ ${petSection}`;
             required: ['action']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'pet_craft',
+          description: '为用户的宠物现场制作一个自制道具（消耗 5 轻币材料费，每日 2 次，成品直接进宠物背包）。用户想给宠物做/准备东西（"帮小冰做个便当""给它做个玩具""用今天聊到的xx给它做点什么"）时调用。你的参数就是作品本身——结合对话上下文创作贴切的名字与效果，效果数值会被系统收敛到安全范围。',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: '道具名，4-8 字，可爱具体（如"加班回血便当""元气小饭团"）' },
+              icon: { type: 'string', description: '一个贴切的 emoji' },
+              kind: { type: 'string', enum: ['food', 'toy', 'care'], description: 'food=食物（恢复饱食 10-50，可附带心情 0-10），toy=玩具（恢复心情 10-25），care=清洁用品（恢复清洁 10-60）' },
+              hunger: { type: 'number', description: 'food 时：恢复饱食数值' },
+              mood: { type: 'number', description: '恢复心情数值（toy 主效果 / food、care 附带）' },
+              clean: { type: 'number', description: 'care 时：恢复清洁数值' },
+              price: { type: 'number', description: '参考价值 6-15（仅记录，制作固定消耗 5 轻币材料费）' },
+              desc: { type: 'string', description: '一句描述（20字内），说明材料或来历' }
+            },
+            required: ['name', 'icon', 'kind']
+          }
+        }
       }
     ];
   }
@@ -754,6 +783,16 @@ ${petSection}`;
             result = '宠物旅行回调未注册';
           }
           displayName = `pet_travel("${args.action}"${args.item ? `, "${args.item}"` : ''})`;
+          break;
+
+        case 'pet_craft':
+          if (this.onPetCraft) {
+            const petCraftResult = await this.onPetCraft(args);
+            result = JSON.stringify(petCraftResult);
+          } else {
+            result = '宠物制作回调未注册';
+          }
+          displayName = `pet_craft("${(args && args.name) || ''}")`;
           break;
 
         default:

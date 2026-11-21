@@ -490,7 +490,7 @@ export class StatsManager {
 
   // 周报的数据摘要段（供提示词嵌入）。macroNotes 可选：近 7 天 diet 文件中的「营养观察」行汇总
   // exerciseText 可选（v3.22.0）：ExerciseManager.buildWeeklySummaryText 生成的近 7 天运动明细
-  static buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes = '', exerciseText = '') {
+  static buildWeeklyDataSection(weights, calories, habitSummary, endDate, macroNotes = '', exerciseText = '', petText = '') {
     const start = this._shiftDate(endDate, -6);
     const cal = calories.filter((c) => c.date >= start && c.date <= endDate);
     const wt = weights.filter((w) => w.date >= start && w.date <= endDate);
@@ -520,7 +520,10 @@ ${exerciseText || '（本周无运动记录）'}
 ${wtStr}
 
 ## 近 7 天习惯打卡
-${habitSummary || '（无记录）'}`;
+${habitSummary || '（无记录）'}
+
+## 宠物本周（用户虚拟宠物的动态，可自然带过）
+${petText || '（本周宠物无动态）'}`;
   }
 
   // 日期平移（纯函数）

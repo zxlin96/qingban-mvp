@@ -45,7 +45,9 @@ const DEFAULT_SETTINGS = {
     rebuildIndex: true,           // 重建记忆索引
     refreshReminders: true,       // 刷新每日定点提醒（静默）
     autoDream: true,              // Auto Dream 自动触发（静默）
-    petTick: true                 // 宠物状态结算（衰减/生病判定，v3.23.0）
+    petTick: true,                // 宠物状态结算（衰减/生病判定，v3.23.0）
+    petVoice: true,               // 宠物心声与性格更新（LLM，v3.25.0）
+    petSpecials: true             // 宠物每日特供道具生成（LLM，v3.26.0）
   }
 };
 
