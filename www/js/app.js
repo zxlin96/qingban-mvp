@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.27.0';
+const APP_VERSION = '3.27.1';
 const APP_VERSION_DATE = '2026-11-23';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.27.1', date: '2026-11-23',
+    items: [
+      '修复：修仙坊市丹药点不动 — 物品网格渲染 data-cult-shop，事件委托却监听 [data-cult-buy]，选择器不匹配导致点击无响应；委托改为 [data-cult-shop]（储物袋 data-cult-inv 不受影响），全量 386 测试过'
+    ]
+  },
   {
     ver: '3.27.0', date: '2026-11-23',
     items: [
@@ -6715,9 +6721,9 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
       this.showToast(r.success ? '✅ 服用了' : '没用上', r.message, r.success ? 'success' : 'info');
       return;
     }
-    const buyBtn = e.target.closest('[data-cult-buy]');
+    const buyBtn = e.target.closest('[data-cult-shop]');
     if (buyBtn) {
-      const r = await this.cultManager.buy(buyBtn.dataset.cultBuy);
+      const r = await this.cultManager.buy(buyBtn.dataset.cultShop);
       this.showToast(r.success ? '🏪 购得' : '没买成', r.message, r.success ? 'success' : 'info');
       return;
     }
