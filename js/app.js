@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.26.0';
-const APP_VERSION_DATE = '2026-11-21';
+const APP_VERSION = '3.27.0';
+const APP_VERSION_DATE = '2026-11-23';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,18 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.27.0', date: '2026-11-23',
+    items: [
+      '新增：修仙系统（与宠物系统并行解耦，宠物即灵宠）— 用户本人修真：打卡=吐纳、运动=打坐炼体、三餐=服灵膳、称重=内视探脉，自动发放修为；选灵根（金/木/水/火/土，亲和行为修为+25%）+取道号开局，资质加权随机（凡/灵/地/天品）',
+      '新增：境界与渡劫 — 十境界（炼气→金仙），修为不自动突破：需服对应突破丹渡劫（坊市 20→330 灵石，成功率随境界 85%→35% 递减，天品+5%/伤势-15%/道心低迷-10%），失败重伤 3 天+修为跌落；机缘/洞府小概率顿悟灌顶直接突破',
+      '新增：身死道消与转世重修 — 渡劫失败中 15% 身死：转世继承灵根资质、灵石留 10%、每世悟性+5%，LLM 生成家世背景+小 perk（灵石/速度/洞府/机缘四选一白名单）',
+      '新增：道心/心魔与习惯联动 — 打卡+道心、全达标+5/-8；破戒+5、连续 2 天未达标+10/天、断签道心-5；道心≥80 速度+10%、<30 速度-20%+渡劫-10%；心魔≥100 爆发（修为-10%、收益减半），土灵根心魔滋生-20%',
+      '新增：机缘与洞府（LLM 天道裁定）— 打卡后 25% 触发机缘（日限 2 次）、面板/AI 探索洞府（日限 3 次）：prompt 注入道心/心魔+近 2 天习惯遵守摘要裁定吉凶，结构化 JSON 经 sanitize 收敛（防数值爆炸），失败均降级模板',
+      '新增：修仙面板（顶栏☯入口）+ cultivation_status/cultivation_explore 工具 + 系统提示「修行状态」注入段 + 人设 v23（道友相称/天道裁定/不催促渡劫）；结算新增步骤 3.10「修仙状态结算」与机缘开关；坊市 12 件（突破丹/养气/清心/疗伤丹）',
+      '测试：新增 cultivation-manager 71 项单测（境界/速度公式/道心/心魔/渡劫概率/转世/坊市/机缘洞府收敛/日志摘要），全量 386 过'
+    ]
+  },
   {
     ver: '3.26.0', date: '2026-11-21',
     items: [
@@ -615,6 +627,7 @@ import { ExerciseManager } from './exercise-manager.js';
 import { ExerciseTracker } from './exercise-tracker.js';
 import { ScaleManager, recordBodyMeasurement, parseProfileMd, AfuB1, scaleLog, getScaleLog } from './scale-manager.js';
 import { PetManager } from './pet-manager.js';
+import { CultivationManager } from './cultivation-manager.js';
 
 class App {
   constructor() {
@@ -636,8 +649,10 @@ class App {
     this.exerciseTracker = new ExerciseTracker(this.fm);
     this.scaleManager = new ScaleManager(this.fm);
     this.petManager = new PetManager(this.fm);
+    this.cultManager = new CultivationManager(this.fm); // 修仙系统（v3.27.0，与宠物解耦并行）
     this._petSetupSpecies = null; // 首次引导：当前选中的物种
     this._petPackOpen = false; // 旅行行李打包视图展开态
+    this._cultSetupRoot = null; // 踏入仙途引导：当前选中的灵根
     this.isProcessing = false;
     this.pendingPhotos = []; // 支持多张照片
     this._askUserResolve = null; // ask_user 工具的 Promise resolve
@@ -780,6 +795,7 @@ class App {
     this._registerHabitCallbacks(); // 注册习惯打卡工具回调
     this._registerExerciseCallbacks(); // 注册运动记录工具回调（v3.22.0）
     this._registerPetCallbacks(); // 注册宠物状态/照料工具回调（v3.23.0）
+    this._registerCultivationCallbacks(); // 注册修仙状态/洞府工具回调（v3.27.0）
     window.__qbStage = 'notificationManager.init';
     await this._withTimeout(this.notificationManager.init(), 4000, 'notificationManager.init');
     this._refreshPetFloat().catch(() => {}); // 悬浮球随启动恢复（v3.23.0）
@@ -1460,6 +1476,41 @@ class App {
       }
     }
 
+    // 步骤 3.10: 修仙结算（v3.27.0）— 伤势倒计时/断签 reconciliation/道心/心魔（纯 JS 无 LLM）+ 心魔爆发通知
+    if (setlOn('cultTick')) {
+      if (this._dtAddStep) this._dtAddStep('修仙状态结算');
+      const stepCult = this._dtStepIndex - 1;
+      if (stepDone(stepCult)) {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepCult, 'done');
+      } else {
+        try {
+          // 昨日习惯遵守情况（道心/心魔结算依据）
+          let habitInfo = { hasHabits: false, checkinCount: 0, allDone: false };
+          try {
+            const habits = await this.habitManager.getHabits();
+            if (habits.length > 0) {
+              const checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
+              const done = new Set(checkins.filter(c => c.date === yesterdayDate).map(c => c.habitId));
+              habitInfo = { hasHabits: true, checkinCount: done.size, allDone: done.size >= habits.length };
+            }
+          } catch (_) { /* 习惯数据缺失则不奖不罚 */ }
+          const cultResult = await this._stepTimeout(this.cultManager.tickDaily(yesterdayDate, habitInfo), 10000, '修仙结算');
+          if (cultResult.demonBursted) {
+            await this.notificationManager.schedule({
+              title: '🔥 心魔爆发',
+              message: '道心失守，心魔吞噬修为…坚持两天全达标或服清心丹化解。',
+              delayMinutes: 0,
+              type: 'custom'
+            });
+          }
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCult, 'done');
+        } catch (e) {
+          console.error('[DayRollover] 修仙结算失败:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCult, 'error', e.message);
+        }
+      }
+    }
+
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
     if (needWeekly && setlOn('weeklyHabitSummary')) {
@@ -1715,7 +1766,9 @@ class App {
       ['autoDream', 'setlAutoDream'],
       ['petTick', 'setlPetTick'],
       ['petVoice', 'setlPetVoice'],
-      ['petSpecials', 'setlPetSpecials']
+      ['petSpecials', 'setlPetSpecials'],
+      ['cultTick', 'setlCultTick'],
+      ['cultFortune', 'setlCultFortune']
     ];
   }
 
@@ -2687,6 +2740,18 @@ ${habits}
       }
     });
     document.getElementById('petContent').addEventListener('click', (e) => this._onPetContentClick(e));
+
+    // 修仙面板（v3.27.0）：顶栏按钮 → 打开；面板内容动态重绘 → 事件委托
+    document.getElementById('cultBtn').addEventListener('click', () => this.showCultPanel());
+    document.getElementById('closeCult').addEventListener('click', () => {
+      document.getElementById('cultOverlay').style.display = 'none';
+    });
+    document.getElementById('cultOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'cultOverlay') {
+        document.getElementById('cultOverlay').style.display = 'none';
+      }
+    });
+    document.getElementById('cultContent').addEventListener('click', (e) => this._onCultContentClick(e));
 
     // 关闭文件查看器
     document.getElementById('closeViewer').addEventListener('click', () => {
@@ -4672,6 +4737,13 @@ updated: ${profile.startDate}
           if (typeof args.weight === 'number' && args.weight > 0) await this.petManager.onWeight();
         }
       } catch (_) { /* 宠物奖励失败不影响记录 */ }
+      // 修仙奖励（v3.27.0）：服灵膳/内视并行挂接，与宠物解耦
+      try {
+        if (result && result.success && args) {
+          if (Array.isArray(args.meals) && args.meals.length > 0) await this.cultManager.onMeal();
+          if (typeof args.weight === 'number' && args.weight > 0) await this.cultManager.onWeight();
+        }
+      } catch (_) { /* 修仙奖励失败不影响记录 */ }
       return result;
     };
   }
@@ -4778,6 +4850,13 @@ updated: ${profile.startDate}
         this.showToast('🎉 宠物升级', `${pet ? pet.name : '宠物'} 升到 Lv.${reward.levelUp}（${PetManager.LEVEL_NAMES[reward.levelUp - 1]}），继续加油`, 'success');
       }
     } catch (_) { /* 宠物奖励失败不影响打卡 */ }
+    // 修仙奖励（v3.27.0）：吐纳 + 机缘判定（25%、日限 2 次；LLM 天道裁定，失败静默）
+    try {
+      const overview2 = await this.habitManager.getHabitOverview();
+      const allDone2 = overview2.totalCount > 0 && overview2.doneCount >= overview2.totalCount;
+      await this.cultManager.onCheckin(habitId, { allDone: allDone2 });
+      this._maybeTriggerFortune().catch(() => {});
+    } catch (_) { /* 修仙奖励失败不影响打卡 */ }
     this._syncDailyReminders().catch(() => {});
   }
 
@@ -5165,6 +5244,7 @@ updated: ${profile.startDate}
     const syncText = habitSync ? `\n已联动「${habitSync.name}」打卡` : '';
     this.showToast(`${r.icon} ${r.name} 已记录`, `${r.durationMin}分钟${distText} · 消耗约${r.kcal}kcal（MET ${r.met}·${r.metSource === 'speed' ? '按配速' : '按强度'}）${syncText}`, 'success');
     this.petManager.onExercise().catch(() => {}); // 宠物运动奖励（v3.23.0）：产币/心情，清洁 -10
+    this.cultManager.onExercise().catch(() => {}); // 修仙打坐炼体奖励（v3.27.0）：修为
     const week = await this.exerciseManager.getWeekSummary(7);
     return {
       success: true,
@@ -6188,6 +6268,457 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     if (buyBtn) {
       const r = await this.petManager.buy(buyBtn.dataset.shop);
       this.showToast(r.success ? '🛒 买到啦' : '没买成', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+  }
+
+  // ===== 修仙系统（v3.27.0，与宠物系统解耦并行）=====
+
+  _registerCultivationCallbacks() {
+    // cultivation_status — AI 查询修行状态（摘要行同时用于 buildSystemPrompt 动态注入）
+    this.llmService.onGetCultivationStatus = async () => {
+      const state = await this.cultManager.getState();
+      if (!state) return null;
+      const realm = CultivationManager.realmOfState(state);
+      const speed = CultivationManager.speedMultiplier(state);
+      return {
+        daoName: state.daoName,
+        root: state.root,
+        aptitude: state.aptitude,
+        realm: realm.name,
+        level: realm.level,
+        exp: state.exp,
+        nextExp: realm.nextExp,
+        stones: state.stones,
+        mind: state.mind,
+        demon: state.demon,
+        injured: state.injured,
+        dead: state.dead,
+        streak: state.streak,
+        reincarnations: state.reincarnations,
+        background: state.background || null,
+        inventory: state.inventory,
+        summary: await this.cultManager.summaryLine()
+      };
+    };
+
+    // cultivation_explore — AI 代用户探索洞府（消耗每日次数，天道裁定吉凶）
+    this.llmService.onCultivationExplore = async () => this._doCultivateExplore(true);
+
+    // 数据变化 → 刷新修仙面板
+    this.cultManager.onChangeCallback = () => this._refreshCultPanelIfOpen();
+  }
+
+  // 打卡后机缘判定（v3.27.0）：25% 概率、日限 2 次；命中则 LLM 天道裁定（失败降级模板），开关 cultFortune 控制
+  async _maybeTriggerFortune() {
+    const cfg = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.settlement) || {};
+    if (cfg.cultFortune === false) return;
+    try {
+      const gate = await this.cultManager.rollFortuneGate();
+      if (!gate.triggered) return;
+      const parsed = await this._generateFortune();
+      const applied = await this.cultManager.applyFortune(parsed);
+      if (applied && applied.breakthroughReady) {
+        const realm = await this.cultManager.breakthroughByFortune((applied.narrative || '一朝顿悟').slice(0, 20));
+        if (realm) this.showToast('🌟 顿悟突破', `机缘所致，直入${realm.name}境！`, 'success');
+      }
+    } catch (e) {
+      console.warn('[Cultivation] 机缘判定失败（静默）:', e.message);
+    }
+  }
+
+  // 近 2 天习惯遵守摘要（机缘/洞府裁定 prompt 素材：好习惯多则吉档自然多）
+  async _cultHabitDigest() {
+    try {
+      const habits = await this.habitManager.getHabits();
+      if (habits.length === 0) return '（用户未设置习惯）';
+      const checkins = JSON.parse((await this.fm.readFile('.meta/habit-checkins.json')) || '[]');
+      const today = this.chatManager.getEffectiveToday();
+      const parts = [];
+      for (const d of [today, StatsManager._shiftDate(today, -1)]) {
+        const done = new Set(checkins.filter(c => c.date === d).map(c => c.habitId));
+        parts.push(`${d}：完成 ${done.size}/${habits.length}`);
+      }
+      return parts.join('；');
+    } catch (_) {
+      return '（习惯数据缺失）';
+    }
+  }
+
+  // LLM 天道裁定机缘：结合修行状态与近 2 天习惯遵守裁定吉凶；失败返回模板（plain）
+  async _generateFortune() {
+    const state = await this.cultManager.getState();
+    if (!state || !this.llm || !this.llm.chat) return { tier: 'plain', narrative: '云游半日，无惊无险。' };
+    const root = CultivationManager.rootDef(state.root);
+    const apt = CultivationManager.aptitudeDef(state.aptitude);
+    const habitDigest = await this._cultHabitDigest();
+    const sys = `你是修真世界的"天道"，根据修行者的状态与近期行为裁定其打卡后偶遇的机缘。输出 JSON（不要 code fence、不要解释）：
+{"tier": "great 大吉 / good 吉 / plain 平 / bad 凶 / none 无",
+ "stones": "灵石变化 -30~60（整数，凶可为负）",
+ "exp": "修为变化 -20~40（整数）",
+ "narrative": "一两句话描述机缘经过（40字内，具体生动：捡到宝物/遇前辈指点/路遇凶兽/无事发生等）",
+ "breakthrough": "仅在修行者修为圆满且确有顿悟/灌顶级大机缘时为 true，否则 false",
+ "item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"} }
+裁定指引：近期习惯全达标、道心高 → 偏向吉档；破戒多、心魔高 → 偏向凶档；大机缘（突破=true）要克制，只在确实圆满时出现。`;
+    const user = `修行者：${state.daoName}（${root.label}·${apt.label}），第${state.level}境，修为 ${state.exp}，灵石 ${state.stones}，道心 ${state.mind}，心魔 ${state.demon}。
+近 2 天习惯遵守：${habitDigest}
+请裁定今日机缘（输出 JSON）：`;
+    try {
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_fortune' }
+      );
+      const obj = CultivationManager.extractJson(resp && resp.content);
+      return obj || { tier: 'plain', narrative: '云游半日，无惊无险。' };
+    } catch (_) {
+      return { tier: 'plain', narrative: '云游半日，无惊无险。' };
+    }
+  }
+
+  // LLM 天道裁定洞府探索：可产出灵石/修为/丹药/伤势/突破丹/顿悟；失败返回模板（荒废空府）
+  async _generateExploreResult() {
+    const state = await this.cultManager.getState();
+    if (!state || !this.llm || !this.llm.chat) return { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+    const habitDigest = await this._cultHabitDigest();
+    const sys = `你是修真世界的"天道"，裁定修行者探索一座未知洞府的际遇。输出 JSON（不要 code fence、不要解释）：
+{"tier": "great 大吉 / good 吉 / plain 平 / bad 凶",
+ "stones": "灵石收获 -20~50",
+ "exp": "修为变化 -10~30",
+ "injuryDays": "伤势天数 0-3（凶档常见：瘴气/机关/妖兽）",
+ "narrative": "一两句话描述洞府见闻（40字内：古修遗府/灵药园/前人遗蜕/空府/凶府等）",
+ "pillKey": "偶得突破丹时给 key（zhuji筑基丹/ningjin凝金丹/huaying化婴丹/huashen化神丹/hedao合道丹/dacheng大乘丹/dujie渡劫丹/dengxian登仙丹/jinxian金仙丹），一般不出现",
+ "breakthrough": "仅在修为圆满且得灌顶级传承时为 true",
+ "item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"} }
+裁定指引：近期守律好、道心高 → 偏向吉档；破戒多、心魔高 → 偏向凶档；突破丹与 breakthrough 要克制。`;
+    const user = `修行者：第${state.level}境，修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}，${state.injured > 0 ? `重伤中（${state.injured} 天），` : ''}灵石 ${state.stones}。
+近 2 天习惯遵守：${habitDigest}
+请裁定此次洞府探索（输出 JSON）：`;
+    try {
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_explore' }
+      );
+      const obj = CultivationManager.extractJson(resp && resp.content);
+      return obj || { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+    } catch (_) {
+      return { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+    }
+  }
+
+  // LLM 生成渡劫成功天地异象（纯文案）；失败返回 null 走默认
+  async _generateTribulationOmen(realmName) {
+    if (!this.llm || !this.llm.chat) return null;
+    try {
+      const sys = `你是修真世界的史官，为一场渡劫成功写一句天地异象（20字内，恢弘凝练，只输出这一句，不要引号/解释）。`;
+      const user = `修行者渡劫成功，晋级${realmName}境。请写异象：`;
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_omen' }
+      );
+      const text = ((resp && resp.content) || '').trim().slice(0, 40);
+      return text.length >= 4 ? text : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // LLM 生成转世家世背景（text + perk 白名单）；失败返回 null 走模板
+  async _generateBackground(reincarnations) {
+    if (!this.llm || !this.llm.chat) return null;
+    try {
+      const sys = `你是轮回司的执笔，为身死道消后转世重修的修行者安排这一世的家世背景。输出 JSON（不要 code fence）：
+{"text": "这一世，你转世为……（40-80字，家世具体生动：富商之子/将门之后/落魄书生/山野猎户等）",
+ "perk": "家世带来的一个小助益，四选一：stones20 开局灵石+20 / speed3 修行速度+3% / explore1 洞府探索每日+1次 / fortune1 机缘每日+1次"}`;
+      const user = `这是修行者第 ${reincarnations + 1} 世重修。请安排家世（输出 JSON）：`;
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_background' }
+      );
+      const obj = CultivationManager.extractJson(resp && resp.content);
+      return obj ? CultivationManager.sanitizeBackground(obj) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 洞府探索主流程：消耗次数 → 天道裁定（LLM 失败降级模板）→ 套用结果 → 顿悟突破联动
+  async _doCultivateExplore(fromAI = false) {
+    const gate = await this.cultManager.consumeExplore();
+    if (!gate.success) {
+      return fromAI ? gate : this.showToast('🏺 探索失败', gate.message, 'info');
+    }
+    const parsed = await this._generateExploreResult();
+    const applied = await this.cultManager.applyExploreResult(parsed);
+    if (applied && applied.breakthroughReady) {
+      const realm = await this.cultManager.breakthroughByFortune((applied.narrative || '得前辈传承').slice(0, 20));
+      if (realm) this.showToast('🌟 顿悟突破', `洞府机缘，直入${realm.name}境！`, 'success');
+    }
+    if (!fromAI) await this._renderCultPanel();
+    return { success: true, applied };
+  }
+
+  // 打开修仙面板（顶栏按钮）
+  async showCultPanel() {
+    document.getElementById('cultOverlay').style.display = 'flex';
+    await this._renderCultPanel();
+  }
+
+  async _refreshCultPanelIfOpen() {
+    const overlay = document.getElementById('cultOverlay');
+    if (overlay && overlay.style.display === 'flex') await this._renderCultPanel();
+  }
+
+  _cultStatRow(label, val, invert = false) {
+    // invert=true 时数值越高越危险（心魔）：<30 绿、<60 黄、否则红
+    const cls = invert
+      ? (val >= 80 ? 'bad' : val >= 50 ? 'warn' : '')
+      : (val < 30 ? 'bad' : val < 60 ? 'warn' : '');
+    return `<div class="cult-stat"><span class="cult-stat-label">${label}</span><div class="cult-stat-bar"><div class="cult-stat-fill ${cls}" style="width:${val}%"></div></div><span class="cult-stat-val">${val}</span></div>`;
+  }
+
+  // 物品网格（mode: shop 购买 / inv 使用）
+  _cultItemGrid(items, bag, mode) {
+    return items.map(i => {
+      const count = bag[i.key] || 0;
+      const effect = i.breakthrough ? `突破${CultivationManager.REALMS[i.breakthrough - 1]}`
+        : i.effect === 'heal' ? '疗伤'
+        : i.effect === 'demon' ? `心魔${i.effectValue}`
+        : `修为+${i.effectValue}`;
+      const label = mode === 'shop'
+        ? `<div class="cult-item-price">💎 ${i.price}</div>`
+        : `<div class="cult-item-count">×${count}</div>`;
+      return `<button class="${mode === 'shop' ? 'cult-shop-item' : 'cult-inv-item'}" data-cult-${mode}="${i.key}" type="button" title="${escapeHtml(i.name)}（${effect}）${i.desc ? ' ' + escapeHtml(i.desc) : ''}">
+        <div class="cult-item-icon">${i.icon}</div>
+        <div class="cult-item-name">${escapeHtml(i.name)}</div>
+        <div class="cult-item-effect">${effect}</div>
+        ${label}
+      </button>`;
+    }).join('');
+  }
+
+  async _renderCultPanel() {
+    const summaryEl = document.getElementById('cultSummary');
+    const contentEl = document.getElementById('cultContent');
+    let state;
+    try {
+      state = await this.cultManager.getState();
+    } catch (e) {
+      summaryEl.textContent = '修行数据读取失败';
+      contentEl.innerHTML = `<div class="cult-setup"><div class="cult-setup-note">读取失败：${escapeHtml(e.message)}<br>请重启应用重试。</div></div>`;
+      return;
+    }
+
+    // ===== 首次引导：选灵根 + 取道号 =====
+    if (!state) {
+      summaryEl.textContent = '还未踏上仙途';
+      const active = this._cultSetupRoot || CultivationManager.ROOTS[0].key;
+      const prevInput = document.getElementById('cultNameInput');
+      const prevName = prevInput ? prevInput.value : '';
+      contentEl.innerHTML = `
+        <div class="cult-setup">
+          <div class="cult-setup-title">踏入仙途</div>
+          <div class="cult-setup-note">你的减肥日常就是修行：打卡=吐纳、运动=打坐炼体、三餐=服用灵膳、称重=内视探脉，皆有修为。<br>连续打卡提升修行速度；破戒会滋生心魔，心魔爆发修为倒退。修为圆满后服突破丹渡劫，越到高境越难——身死道消亦可转世重修，灵根资质世世相随。</div>
+          <div class="cult-section-title">选择灵根（亲和行为修为 +25%）</div>
+          <div class="cult-root-picker">
+            ${CultivationManager.ROOTS.map(r => `<button class="cult-root-option ${r.key === active ? 'active' : ''}" data-cult-root="${r.key}" type="button"><span class="cult-root-emoji">${r.icon}</span><span class="cult-root-label">${r.label}</span><span class="cult-root-affinity">${r.affinityLabel}</span></button>`).join('')}
+          </div>
+          <div class="settings-row cult-setup-input">
+            <input type="text" class="settings-input" id="cultNameInput" placeholder="取个道号（最多 8 字）" maxlength="8" value="${escapeHtml(prevName)}">
+          </div>
+          <button class="btn accent" id="cultSetupConfirm" type="button">踏入仙途</button>
+        </div>`;
+      return;
+    }
+
+    const root = CultivationManager.rootDef(state.root);
+    const apt = CultivationManager.aptitudeDef(state.aptitude);
+    const realm = CultivationManager.realmOfState(state);
+    const speed = CultivationManager.speedMultiplier(state);
+    const speedPct = `${speed >= 1 ? '+' : ''}${Math.round((speed - 1) * 100)}%`;
+    summaryEl.textContent = `☯ ${state.daoName} · 第${realm.level}境 ${realm.name} · 💎 ${state.stones} 灵石`;
+
+    // ===== 身死 → 转世卡 =====
+    if (state.dead) {
+      contentEl.innerHTML = `
+        <div class="cult-death-card">
+          <div class="cult-death-emoji">☠️</div>
+          <div class="cult-setup-title">${escapeHtml(state.daoName)} 身死道消</div>
+          <div class="cult-death-note">天雷灭体，真灵不灭，遁入轮回。<br>${root.icon}${root.label}·${apt.label}资质将随真灵转世继承（第 ${(state.reincarnations || 0) + 1} 世，悟性 +${(state.reincarnations || 0) * 5}% → +${((state.reincarnations || 0) + 1) * 5}%）。</div>
+          <button class="btn accent" id="cultReincarnateBtn" type="button">♻️ 转世重修</button>
+        </div>`;
+      return;
+    }
+
+    // ===== 主面板 =====
+    const burst = state.demon >= CultivationManager.DEMON_BURST;
+    const emojiCls = burst ? 'sick' : state.injured > 0 ? 'dirty' : state.mind < 30 ? 'mood-low' : '';
+    const bubble = burst ? '心魔噬体，道心失守！'
+      : state.injured > 0 ? `重伤调息中（${state.injured} 天），收益减半…`
+      : realm.nextExp !== null && state.exp >= realm.nextExp ? '修为圆满，可渡劫突破！'
+      : state.mind < 30 ? '道心浮动，需静心守律…'
+      : (state.streak || 0) >= 3 ? '灵气运转，渐入佳境。'
+      : '修行如常，日拱一卒。';
+    const levelBar = realm.nextExp === null
+      ? `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.name}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:100%"></div></div><span class="cult-level-next">金仙圆满</span></div>`
+      : `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.name}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:${Math.round(realm.progress * 100)}%"></div></div><span class="cult-level-next">修为 ${state.exp}/${realm.nextExp}</span></div>`;
+
+    // 突破区
+    const bt = await this.cultManager.getBreakthroughInfo();
+    let btHtml = '';
+    if (bt && !bt.maxed) {
+      if (bt.full) {
+        btHtml = bt.pill && bt.pill.have
+          ? `<div class="cult-bt-card"><div class="cult-bt-info">⚡ 修为圆满，${bt.pill.icon}${bt.pill.name}已在手，可引动天劫冲击${CultivationManager.REALMS[bt.level]}境（成功率随境界递减，失败重伤、极罕见身死道消）</div><button class="btn accent" id="cultBreakthroughBtn" type="button">⚡ 渡劫突破</button></div>`
+          : `<div class="cult-bt-card"><div class="cult-bt-info">⚡ 修为圆满！渡劫需服用${bt.pill ? `${bt.pill.icon}${bt.pill.name}（坊市 ${bt.pill.price} 灵石）` : '突破丹'}——机缘/洞府也可能直接顿悟突破</div></div>`;
+      } else {
+        btHtml = `<div class="cult-bt-card"><div class="cult-bt-info">🧘 修为 ${state.exp}/${bt.nextExp}，圆满后服丹渡劫方可突破${CultivationManager.REALMS[bt.level]}境</div></div>`;
+      }
+    } else if (bt && bt.maxed) {
+      btHtml = `<div class="cult-bt-card"><div class="cult-bt-info">🌟 已证金仙，大道圆满</div></div>`;
+    }
+
+    // 洞府探索
+    const exploreLimit = CultivationManager.EXPLORE_DAILY_LIMIT + (state.background && state.background.perk === 'explore1' ? 1 : 0);
+    const exploreUsed = (state.behavior && state.behavior.date === this.chatManager.getEffectiveToday()) ? state.behavior.explore : 0;
+    const exploreLeft = Math.max(0, exploreLimit - exploreUsed);
+    const exploreHtml = `<div class="cult-explore-row"><button class="btn" id="cultExploreBtn" type="button" ${exploreLeft <= 0 ? 'disabled' : ''}>🏺 探索洞府（剩 ${exploreLeft} 次）</button><span class="cult-explore-hint">吉凶由天道裁定，有好有坏</span></div>`;
+
+    // 机缘/洞府见闻流（近 5 条）
+    const fortuneLogs = (state.log || []).filter(l => ['fortune', 'explore', 'breakthrough', 'tribulation'].includes(l.type)).slice(-5).reverse();
+    const fortuneHtml = fortuneLogs.length === 0
+      ? '<div class="cult-inv-empty">尚无机缘 — 打卡有概率触发机缘，境界越高越精彩</div>'
+      : `<div class="cult-fortune-list">${fortuneLogs.map(l => `<div class="cult-fortune-item">${escapeHtml(l.text)}</div>`).join('')}</div>`;
+
+    // 储物袋与坊市
+    const inv = state.inventory || {};
+    const invCount = Object.values(inv).reduce((a, b) => a + (b || 0), 0);
+    const customItems = await this.cultManager.getCustomItems();
+    const allItems = CultivationManager.SHOP.concat(customItems);
+    const invItems = allItems.filter(i => (inv[i.key] || 0) > 0);
+    const invHtml = invCount === 0
+      ? '<div class="cult-inv-empty">储物袋空空如也 — 机缘/洞府可得丹药，坊市可用灵石购买</div>'
+      : `<div class="cult-inv-grid">${this._cultItemGrid(invItems, inv, 'inv')}</div>`;
+
+    // 修行日志（近 8 条）
+    const logs = (state.log || []).slice(-8).reverse();
+    const logHtml = logs.length === 0
+      ? '<div class="cult-log"><div class="cult-log-item">暂无动态</div></div>'
+      : `<div class="cult-log">${logs.map(l => `<div class="cult-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="cult-log-more">仅显示最近 8 条</div>' : ''}`;
+
+    contentEl.innerHTML = `
+      <div class="cult-stage">
+        <div class="cult-stage-emoji ${emojiCls}">🧘</div>
+        <div class="cult-stage-bubble">${bubble}</div>
+        ${levelBar}
+      </div>
+      <div class="cult-idcard">
+        <span class="cult-idcard-item">${root.icon} ${root.label}·${apt.label}</span>
+        <span class="cult-idcard-item">🚀 修行速度 ${speedPct}</span>
+        <span class="cult-idcard-item">🔥 连续活跃 ${state.streak || 0} 天</span>
+        ${(state.reincarnations || 0) > 0 ? `<span class="cult-idcard-item">♻️ 第 ${state.reincarnations + 1} 世</span>` : ''}
+      </div>
+      <div class="cult-stats">
+        ${this._cultStatRow('道心', state.mind)}
+        ${this._cultStatRow('心魔', state.demon, true)}
+      </div>
+      ${state.background && state.background.perk ? `<div class="cult-bg-note">家世：${escapeHtml(state.background.text)}（${CultivationManager.BACKGROUND_PERK_LABELS[state.background.perk]}）</div>` : ''}
+      ${btHtml}
+      ${burst ? '<div class="cult-burst-banner">🔥 <b>心魔爆发中</b> — 修行收益减半！连续 2 天全达标或服🪷清心丹（坊市有售）化解</div>' : ''}
+      ${exploreHtml}
+      <div class="cult-section-title">🌈 机缘与洞府见闻</div>
+      ${fortuneHtml}
+      <div class="cult-section-title">🎒 储物袋（点丹药使用）</div>
+      ${invHtml}
+      <div class="cult-section-title">🏪 坊市（余额 💎 ${state.stones}）</div>
+      <div class="cult-shop-grid">${this._cultItemGrid(CultivationManager.SHOP, inv, 'shop')}</div>
+      <div class="cult-section-title">📖 修行日志</div>
+      ${logHtml}`;
+  }
+
+  // 修仙面板事件委托（内容区动态重绘，按钮统一在此分发）
+  async _onCultContentClick(e) {
+    const rootBtn = e.target.closest('[data-cult-root]');
+    if (rootBtn) {
+      this._cultSetupRoot = rootBtn.dataset.cultRoot;
+      await this._renderCultPanel();
+      return;
+    }
+    if (e.target.closest('#cultSetupConfirm')) {
+      const nameInput = document.getElementById('cultNameInput');
+      try {
+        const { state, created } = await this.cultManager.startJourney(this._cultSetupRoot || 'water', nameInput ? nameInput.value : '');
+        if (created) {
+          this.showToast('☯ 仙途开启', `${state.daoName} 得${CultivationManager.rootDef(state.root).label}，资质${CultivationManager.aptitudeDef(state.aptitude).label}`, 'success');
+          await this._renderCultPanel();
+        }
+      } catch (err) {
+        this.showToast('踏入仙途失败', err.message, 'error');
+      }
+      return;
+    }
+    if (e.target.closest('#cultExploreBtn')) {
+      await this._doCultivateExplore(false);
+      return;
+    }
+    if (e.target.closest('#cultBreakthroughBtn')) {
+      const r = await this.cultManager.attemptBreakthrough();
+      if (r.success) {
+        const omen = await this._generateTribulationOmen(r.realm.name);
+        this.showToast('🌩️ 渡劫成功', `晋级${r.realm.name}境！${omen || '天地异象，紫气东来'}`, 'success');
+        this.notificationManager.schedule({
+          title: `🌩️ 渡劫成功·${r.realm.name}境`,
+          message: omen || `天劫淬体，功成境跃，晋级${r.realm.name}境。`,
+          delayMinutes: 0,
+          type: 'custom'
+        }).catch(() => {});
+      } else if (r.died) {
+        this.showToast('☠️ 身死道消', '天雷灭体…一缕真灵遁入轮回', 'error');
+        this.notificationManager.schedule({
+          title: '☠️ 身死道消',
+          message: '渡劫失败，天雷灭体。打开修仙面板转世重修——灵根资质将世世继承。',
+          delayMinutes: 0,
+          type: 'custom'
+        }).catch(() => {});
+      } else if (r.reason) {
+        this.showToast('⚡ 未能渡劫', r.message, 'info');
+        if (r.reason !== 'not_full' && r.reason !== 'no_pill') {
+          this.notificationManager.schedule({
+            title: '💥 渡劫失败',
+            message: r.message || '重伤三日，收益减半，修为跌落。养好伤再冲击。',
+            delayMinutes: 0,
+            type: 'custom'
+          }).catch(() => {});
+        }
+      }
+      await this._renderCultPanel();
+      return;
+    }
+    if (e.target.closest('#cultReincarnateBtn')) {
+      const st = await this.cultManager.getState();
+      const bg = await this._generateBackground(st ? st.reincarnations : 0);
+      const r = await this.cultManager.reincarnate(bg);
+      if (r.success) {
+        this.showToast('♻️ 转世重修', `第 ${r.state.reincarnations} 世开启：${r.state.background.text.slice(0, 30)}…`, 'success');
+        await this._renderCultPanel();
+      } else {
+        this.showToast('无法转世', r.message, 'info');
+      }
+      return;
+    }
+    const useBtn = e.target.closest('[data-cult-inv]');
+    if (useBtn) {
+      const r = await this.cultManager.useItem(useBtn.dataset.cultInv);
+      this.showToast(r.success ? '✅ 服用了' : '没用上', r.message, r.success ? 'success' : 'info');
+      return;
+    }
+    const buyBtn = e.target.closest('[data-cult-buy]');
+    if (buyBtn) {
+      const r = await this.cultManager.buy(buyBtn.dataset.cultBuy);
+      this.showToast(r.success ? '🏪 购得' : '没买成', r.message, r.success ? 'success' : 'info');
       return;
     }
   }

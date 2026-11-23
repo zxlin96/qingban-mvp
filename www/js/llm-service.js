@@ -17,6 +17,9 @@ export class LLMService {
     this.onPetTravel = null;
     // 宠物道具制作工具回调（v3.26.0）— 由 App 层注入
     this.onPetCraft = null;
+    // 修仙工具回调（v3.27.0）— 由 App 层注入
+    this.onGetCultivationStatus = null;
+    this.onCultivationExplore = null;
 
     // ===== KV Cache 优化：三层缓存 =====
     // 第一层：System Prompt 固定前缀缓存
@@ -275,6 +278,19 @@ ${exercise || '（暂无记录）'}`;
       }
     }
 
+    // 读取修仙状态（v3.27.0）— 一行摘要注入动态段尾部
+    let cultSection = '（用户还未踏上仙途，可在修仙面板开启）';
+    if (this.onGetCultivationStatus) {
+      try {
+        const cult = await this.onGetCultivationStatus();
+        if (cult && cult.summary) {
+          cultSection = cult.summary;
+        }
+      } catch (e) {
+        // 静默失败，不影响主流程
+      }
+    }
+
     // ===== 组装最终提示词：固定前缀 → 用户档案/身体指标(动态) → 对话摘要 → 动态时间 → 饮食记录 → 打卡状态 → 宠物状态 =====
     // 固定前缀在最前面且为纯静态（CLAUDE.md + rules/），服务端 KV Cache 可以长期复用这部分
     // 动态内容放在后面，变化不会影响前缀的缓存
@@ -310,7 +326,11 @@ ${habitSection}
 
 ---
 # 宠物状态（动态注入，系统已对打卡/记录/运动/称重自动发放宠物奖励）
-${petSection}`;
+${petSection}
+
+---
+# 修行状态（动态注入，用户是修真者：打卡=吐纳、运动=打坐、三餐=灵膳、称重=内视，系统已自动发放修为）
+${cultSection}`;
   }
 
   // 定义可用工具
@@ -597,6 +617,30 @@ ${petSection}`;
             required: ['name', 'icon', 'kind']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'cultivation_status',
+          description: '查询用户的修仙状态：道号/灵根/资质/境界/修为/灵石/道心/心魔/伤势/转世次数/储物袋，以及是否心魔爆发或身死待转世。用户问自己修仙情况/境界/修为/灵石/道心（"我现在什么境界""修为多少了"）时调用。用户打卡/运动/三餐/称重时系统已自动发放修为，无需你代发。',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'cultivation_explore',
+          description: '代用户探索一座未知洞府（每日 3 次，吉凶由天道裁定：可能得灵石/修为/丹药/突破丹，也可能受伤）。用户说"去探索洞府""找个洞府碰碰运气""替我探探洞府"时调用。突破丹用于修为圆满后渡劫；若用户修为已圆满且机缘所致，可能直接顿悟突破。',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
       }
     ];
   }
@@ -793,6 +837,26 @@ ${petSection}`;
             result = '宠物制作回调未注册';
           }
           displayName = `pet_craft("${(args && args.name) || ''}")`;
+          break;
+
+        case 'cultivation_status':
+          if (this.onGetCultivationStatus) {
+            const cultStatusResult = await this.onGetCultivationStatus();
+            result = cultStatusResult ? JSON.stringify(cultStatusResult) : '用户还未踏上仙途（可在修仙面板开启）';
+          } else {
+            result = '修仙状态回调未注册';
+          }
+          displayName = `cultivation_status()`;
+          break;
+
+        case 'cultivation_explore':
+          if (this.onCultivationExplore) {
+            const cultExploreResult = await this.onCultivationExplore();
+            result = JSON.stringify(cultExploreResult);
+          } else {
+            result = '修仙洞府探索回调未注册';
+          }
+          displayName = `cultivation_explore()`;
           break;
 
         default:

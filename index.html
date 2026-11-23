@@ -169,6 +169,10 @@
       <circle cx="18.5" cy="9" r="2"/>
       <path d="M12 10.5c3.6 0 6 2.4 6 5.2 0 2.5-2.2 4.3-6 4.3s-6-1.8-6-4.3c0-2.8 2.4-5.2 6-5.2z"/>
     </symbol>
+    <symbol id="icon-cult" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2.5l7 4v11l-7 4-7-4v-11z"/>
+      <circle cx="12" cy="12" r="3.2"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -212,6 +216,7 @@
       <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
       <button class="btn icon-btn" id="exerciseBtn" title="运动 — 计时/测距/消耗记录"><svg class="ico"><use href="#icon-runner"/></svg></button>
       <button class="btn icon-btn" id="petBtn" title="宠物 — 喂养互动/轻币商店/成长"><svg class="ico"><use href="#icon-pet"/></svg></button>
+      <button class="btn icon-btn" id="cultBtn" title="修仙 — 境界/洞府/坊市/渡劫"><svg class="ico"><use href="#icon-cult"/></svg></button>
     </div>
   </header>
 
@@ -627,6 +632,12 @@
         <div class="settings-row">
           <label><input type="checkbox" id="setlPetSpecials" class="settings-check"> 宠物每日特供道具 <span class="settings-hint">(LLM)</span></label>
         </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlCultTick" class="settings-check"> 修仙状态结算（伤势/道心/心魔）</label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="setlCultFortune" class="settings-check"> 修仙机缘裁定 <span class="settings-hint">(LLM)</span></label>
+        </div>
       </div>
 
       <div class="settings-actions">
@@ -813,6 +824,22 @@
       <div class="habit-summary" id="petSummary">加载中...</div>
     </div>
     <div class="pet-body" id="petContent"></div>
+  </div>
+</div>
+
+<!-- 修仙面板 — 境界/灵根资质/道心/心魔/渡劫/洞府/坊市/修行日志（v3.27.0） -->
+<div class="habit-overlay" id="cultOverlay" style="display:none;">
+  <div class="habit-panel cult-panel">
+    <div class="habit-header">
+      <span class="habit-title">☯ 修仙</span>
+      <div class="habit-header-actions">
+        <button class="btn icon-btn" id="closeCult" title="关闭"><svg class="ico"><use href="#icon-close"/></svg></button>
+      </div>
+    </div>
+    <div class="habit-overview">
+      <div class="habit-summary" id="cultSummary">加载中...</div>
+    </div>
+    <div class="cult-body" id="cultContent"></div>
   </div>
 </div>
 
