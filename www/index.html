@@ -214,9 +214,6 @@
       <button class="btn icon-btn" id="memoryBtn" title="记忆 — 查看轻伴记住了什么"><svg class="ico"><use href="#icon-folder"/></svg></button>
       <button class="btn icon-btn" id="trendBtn" title="趋势 — 体重/热量/打卡可视化"><svg class="ico"><use href="#icon-chart"/></svg></button>
       <button class="btn icon-btn" id="habitBtn" title="打卡 — 习惯追踪"><svg class="ico"><use href="#icon-check"/></svg></button>
-      <button class="btn icon-btn" id="exerciseBtn" title="运动 — 计时/测距/消耗记录"><svg class="ico"><use href="#icon-runner"/></svg></button>
-      <button class="btn icon-btn" id="petBtn" title="宠物 — 喂养互动/轻币商店/成长"><svg class="ico"><use href="#icon-pet"/></svg></button>
-      <button class="btn icon-btn" id="cultBtn" title="修仙 — 境界/洞府/坊市/渡劫"><svg class="ico"><use href="#icon-cult"/></svg></button>
     </div>
   </header>
 
@@ -248,11 +245,19 @@
     </div>
     <div class="chat-messages" id="chatMessages">
     </div>
-    <!-- 输入框上方快捷入口：一点即连秤称重（自动开始搜索，免二次点击） -->
-    <div id="chatQuickBar" style="display:flex;gap:8px;padding:0 14px 6px;">
-      <button class="btn" id="quickScaleBtn" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;font-size:12.5px;border-radius:999px;">
-        <svg class="ico" style="width:14px;height:14px;"><use href="#icon-scale"/></svg>
-        蓝牙称重
+    <!-- 输入框上方快捷入口：运动/宠物/修仙（v3.29.1 自顶栏下移，原蓝牙称重入口移除，称重在菜单「蓝牙体脂秤」） -->
+    <div id="chatQuickBar" style="display:flex;gap:8px;flex-wrap:wrap;padding:0 14px 6px;">
+      <button class="btn" id="quickExerciseBtn" title="运动 — 计时/测距/消耗记录" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;font-size:12.5px;border-radius:999px;">
+        <svg class="ico" style="width:14px;height:14px;"><use href="#icon-runner"/></svg>
+        运动
+      </button>
+      <button class="btn" id="quickPetBtn" title="宠物 — 喂养互动/轻币商店/成长" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;font-size:12.5px;border-radius:999px;">
+        <svg class="ico" style="width:14px;height:14px;"><use href="#icon-pet"/></svg>
+        宠物
+      </button>
+      <button class="btn" id="quickCultBtn" title="修仙 — 境界/洞府/坊市/渡劫" style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;font-size:12.5px;border-radius:999px;">
+        <svg class="ico" style="width:14px;height:14px;"><use href="#icon-cult"/></svg>
+        修仙
       </button>
     </div>
     <div class="chat-input-wrapper">

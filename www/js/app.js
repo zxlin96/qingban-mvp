@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.29.0';
+const APP_VERSION = '3.29.1';
 const APP_VERSION_DATE = '2026-11-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.29.1', date: '2026-11-24',
+    items: [
+      '调整：顶栏只留记忆/趋势/打卡，运动/宠物/修仙移到输入框上方快捷栏（与原蓝牙称重同行）；蓝牙称重快捷按钮移除（称重在功能菜单「蓝牙体脂秤」进）；浏览器环境不再整栏隐藏快捷栏，全量 399 测试过'
+    ]
+  },
   {
     ver: '3.29.0', date: '2026-11-24',
     items: [
@@ -733,11 +739,10 @@ class App {
     if (this._isNativeEnv()) return;
     document.documentElement.classList.add('web-env');
 
-    // 蓝牙体脂秤：浏览器（尤其 iOS Safari，无 Web Bluetooth）必然不可用，隐藏全部入口
+    // 蓝牙体脂秤：浏览器（尤其 iOS Safari，无 Web Bluetooth）必然不可用，隐藏菜单入口
+    // v3.29.1：输入框上方快捷栏已改为运动/宠物/修仙入口，不再整栏隐藏
     const menuScale = document.getElementById('menuScale');
-    const quickScaleBar = document.getElementById('chatQuickBar');
     if (menuScale) menuScale.style.display = 'none';
-    if (quickScaleBar) quickScaleBar.style.display = 'none';
 
     // 申请持久化存储：iOS「添加到主屏幕」的 Web App 本就豁免 7 天清除，此处再防系统存储压力逐出
     try {
@@ -2526,11 +2531,7 @@ ${habits}
       this.scaleManager.stopSession('stopped').catch(() => {});
     });
     document.getElementById('scaleCopyLogBtn').addEventListener('click', () => this._copyScaleLog());
-    // 输入框上方快捷按钮：点开即自动开始搜秤（进入搜索阶段）
-    document.getElementById('quickScaleBtn').addEventListener('click', () => {
-      scaleLog('I', 'UI：快捷按钮「蓝牙称重」点击');
-      this.openScalePanel(true);
-    });
+    // v3.29.1：输入框上方快捷栏改为运动/宠物/修仙，原「蓝牙称重」快捷按钮已移除（称走入菜单「蓝牙体脂秤」）
 
     // 菜单项 — 每日结算设置
     document.getElementById('menuSettlement').addEventListener('click', () => {
@@ -2742,7 +2743,7 @@ ${habits}
     document.getElementById('habitCustomConfirm').addEventListener('click', () => this._confirmCustomCheckin());
 
     // 运动面板（v3.22.0）
-    document.getElementById('exerciseBtn').addEventListener('click', () => this.showExercisePanel());
+    document.getElementById('quickExerciseBtn').addEventListener('click', () => this.showExercisePanel());
     document.getElementById('closeExercise').addEventListener('click', () => {
       document.getElementById('exerciseOverlay').style.display = 'none';
     });
@@ -2769,7 +2770,7 @@ ${habits}
     });
 
     // 宠物面板（v3.23.0）：顶栏按钮 / 悬浮球 → 打开；面板内容动态重绘 → 事件委托
-    document.getElementById('petBtn').addEventListener('click', () => this.showPetPanel());
+    document.getElementById('quickPetBtn').addEventListener('click', () => this.showPetPanel());
     document.getElementById('petFloatBall').addEventListener('click', () => this.showPetPanel());
     document.getElementById('closePet').addEventListener('click', () => {
       document.getElementById('petOverlay').style.display = 'none';
@@ -2782,7 +2783,7 @@ ${habits}
     document.getElementById('petContent').addEventListener('click', (e) => this._onPetContentClick(e));
 
     // 修仙面板（v3.27.0）：顶栏按钮 → 打开；面板内容动态重绘 → 事件委托
-    document.getElementById('cultBtn').addEventListener('click', () => this.showCultPanel());
+    document.getElementById('quickCultBtn').addEventListener('click', () => this.showCultPanel());
     document.getElementById('closeCult').addEventListener('click', () => {
       document.getElementById('cultOverlay').style.display = 'none';
     });
