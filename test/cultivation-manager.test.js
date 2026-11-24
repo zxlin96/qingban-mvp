@@ -22,6 +22,9 @@ const shift = (dateStr, days) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const yesterday = shift(today, -1);
+// 境界门槛（v3.28.0 节奏重调，测试全部动态引用）
+const T1 = CultivationManager.LEVELS[1]; // 炼气→筑基 240
+const T9 = CultivationManager.LEVELS[9]; // →金仙 26000
 
 // 直接注入状态（绕过创建流程，字段同 startJourney）
 async function seedCultivation(cm, overrides = {}) {
@@ -114,12 +117,12 @@ describe('踏入仙途', () => {
 // ===== 境界计算 =====
 
 describe('realmOf 境界计算', () => {
-  test('exp 阈值边界：0→炼气，29→炼气，30→筑基，2200→金仙满级', () => {
+  test('exp 阈值边界：LEVELS[i]-1 仍在第 i 境，达到即下一境；满级钳制', () => {
     assert.equal(CultivationManager.realmOf(0).name, '炼气');
-    assert.equal(CultivationManager.realmOf(29).level, 1);
-    assert.equal(CultivationManager.realmOf(30).name, '筑基');
-    assert.equal(CultivationManager.realmOf(2200).level, 10);
-    assert.equal(CultivationManager.realmOf(9999).level, 10);
+    assert.equal(CultivationManager.realmOf(T1 - 1).level, 1);
+    assert.equal(CultivationManager.realmOf(T1).name, '筑基');
+    assert.equal(CultivationManager.realmOf(T9).level, 10);
+    assert.equal(CultivationManager.realmOf(T9 * 10).level, 10);
   });
 
   test('REALMS 十境界命名', () => {
@@ -390,7 +393,7 @@ describe('渡劫成功率', () => {
 describe('渡劫流程', () => {
   test('未圆满拒绝（reason:not_full）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 10, inventory: { zhuji: 1 } });
+    await seedCultivation(cm, { exp: T1 - 10, inventory: { zhuji: 1 } });
     const r = await cm.attemptBreakthrough();
     assert.equal(r.success, false);
     assert.equal(r.reason, 'not_full');
@@ -398,14 +401,14 @@ describe('渡劫流程', () => {
 
   test('无丹拒绝（reason:no_pill）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30 });
+    await seedCultivation(cm, { exp: T1 });
     const r = await cm.attemptBreakthrough();
     assert.equal(r.reason, 'no_pill');
   });
 
   test('成功路径：丹耗、境界突破（rand=0.5 < 0.85）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30, inventory: { zhuji: 1 } });
+    await seedCultivation(cm, { exp: T1, inventory: { zhuji: 1 } });
     seedRand(cm, [0.5]);
     const r = await cm.attemptBreakthrough();
     assert.equal(r.success, true);
@@ -413,24 +416,25 @@ describe('渡劫流程', () => {
     assert.equal(r.realm.name, '筑基');
     const s = readState(cm);
     assert.equal(s.level, 2);
+    assert.equal(s.realm, 2);
     assert.equal(s.inventory.zhuji, 0);
   });
 
-  test('失败路径：修为退回门槛 90%（30→27）、重伤 3 天（rand=0.99）', async () => {
+  test('失败路径：修为退回门槛 90%、重伤 3 天（rand=0.99）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30, inventory: { zhuji: 1 } });
+    await seedCultivation(cm, { exp: T1, inventory: { zhuji: 1 } });
     seedRand(cm, [0.99, 0.99]);
     const r = await cm.attemptBreakthrough();
     assert.equal(r.success, false);
     assert.equal(r.died, false);
     const s = readState(cm);
-    assert.equal(s.exp, 27);
+    assert.equal(s.exp, Math.floor(T1 * 0.9));
     assert.equal(s.injured, 3);
   });
 
   test('失败中 15% 身死（rand=0.99 → 失败，0.01 → 身死）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30, inventory: { zhuji: 1 } });
+    await seedCultivation(cm, { exp: T1, inventory: { zhuji: 1 } });
     seedRand(cm, [0.99, 0.01]);
     const r = await cm.attemptBreakthrough();
     assert.equal(r.died, true);
@@ -439,10 +443,10 @@ describe('渡劫流程', () => {
 
   test('机缘突破：修为圆满时直接成功免渡劫（突破ByFortune）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30 });
+    await seedCultivation(cm, { exp: T1 });
     const realm = await cm.breakthroughByFortune('前辈灌顶');
     assert.equal(realm.name, '筑基');
-    assert.equal(readState(cm).level, 2);
+    assert.equal(readState(cm).realm, 2);
   });
 
   test('机缘突破：未圆满返回 null', async () => {
@@ -453,7 +457,7 @@ describe('渡劫流程', () => {
 
   test('身死后 attemptBreakthrough 拒绝（reason:dead）', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { dead: true, exp: 30, inventory: { zhuji: 1 } });
+    await seedCultivation(cm, { dead: true, exp: T1, inventory: { zhuji: 1 } });
     const r = await cm.attemptBreakthrough();
     assert.equal(r.reason, 'dead');
   });
@@ -524,7 +528,8 @@ describe('坊市', () => {
 
   test('正常购买：扣灵石、入背包、日志', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { stones: 20 });
+    const price = CultivationManager.getShopItem('zhuji').price;
+    await seedCultivation(cm, { stones: price });
     const r = await cm.buy('zhuji');
     assert.equal(r.success, true);
     const s = readState(cm);
@@ -538,11 +543,11 @@ describe('坊市', () => {
     assert.equal((await cm.useItem('zhuji')).reason, 'breakthrough_pill');
   });
 
-  test('养气丹修为+15；疗伤丹清伤势；清心丹心魔-40', async () => {
+  test('养气丹修为+80；疗伤丹清伤势；清心丹心魔-40', async () => {
     const { cm } = newCM();
     await seedCultivation(cm, { inventory: { yangqi: 1 } });
     assert.equal((await cm.useItem('yangqi')).success, true);
-    assert.equal(readState(cm).exp, 15);
+    assert.equal(readState(cm).exp, 80);
 
     const { cm: cm2 } = newCM();
     await seedCultivation(cm2, { injured: 3, inventory: { liaoshang: 1 } });
@@ -590,19 +595,38 @@ describe('机缘', () => {
     assert.equal(r.remaining, 2);
   });
 
-  test('sanitizeFortune：数值钳制（灵石-30~60/修为-20~40）、tier 白名单、道具收敛', () => {
+  test('rollFortuneGate：命中时返回掷签档位 tier', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm);
+    seedRand(cm, [0.01, 0.10]); // 触发(0.01<0.25) → tier great(0.10<0.15)
+    const r = await cm.rollFortuneGate();
+    assert.equal(r.triggered, true);
+    assert.equal(r.tier, 'great');
+  });
+
+  test('sanitizeFortune：按档钳制（great 修为 -50 → 20；bad 灵石 -999 → -25）', () => {
     const r = CultivationManager.sanitizeFortune({ tier: 'great', stones: 999, exp: -50 });
     assert.equal(r.stones, 60);
-    assert.equal(r.exp, -20);
-    const r2 = CultivationManager.sanitizeFortune({ tier: 'xx' });
-    assert.equal(r2.tier, 'plain');
+    assert.equal(r.exp, 20);
+    const r2 = CultivationManager.sanitizeFortune({ tier: 'bad', stones: -999, exp: 999 });
+    assert.equal(r2.stones, -25);
+    assert.equal(r2.exp, 0);
     const r3 = CultivationManager.sanitizeFortune({ tier: 'good', item: { name: '聚灵丹', kind: 'pill', effect: 'exp', effectValue: 999 } });
     assert.equal(r3.item.effectValue, 30);
   });
 
+  test('sanitizeFortune：tierHint 优先；道具仅大吉/吉档；顿悟仅大吉档', () => {
+    const r = CultivationManager.sanitizeFortune({ stones: 999 }, 'bad');
+    assert.equal(r.tier, 'bad');
+    assert.equal(r.stones, 0); // bad 档钳到 ≤0
+    const r2 = CultivationManager.sanitizeFortune({ tier: 'plain', item: { name: 'x', kind: 'pill', effect: 'exp', effectValue: 10 }, breakthrough: true }, 'plain');
+    assert.equal(r2.item, undefined);
+    assert.equal(r2.breakthrough, undefined);
+  });
+
   test('applyFortune：套用灵石/修为；顿悟突破需修为圆满', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { exp: 30 });
+    await seedCultivation(cm, { exp: T1 });
     const r = await cm.applyFortune({ tier: 'great', stones: 50, exp: 10, breakthrough: true, narrative: '路过山洞得前辈灌顶' });
     assert.equal(r.breakthroughReady, true);
     const realm = await cm.breakthroughByFortune('前辈灌顶');
@@ -619,7 +643,7 @@ describe('机缘', () => {
   test('applyFortune：tier=none 记无机缘日志', async () => {
     const { cm } = newCM();
     await seedCultivation(cm);
-    await cm.applyFortune({ tier: 'none' });
+    await cm.applyFortune({ tier: 'none' }, 'none');
     const logs = readState(cm).log;
     assert.ok(logs.some(l => l.type === 'fortune' && l.text.includes('无甚机缘')));
   });
@@ -646,14 +670,31 @@ describe('洞府探索', () => {
     assert.equal((await cm.consumeExplore()).reason, 'limit_reached');
   });
 
-  test('sanitizeExploreResult：伤势钳 0-3、突破丹 key 白名单、无效 tier 归 plain', () => {
-    const r = CultivationManager.sanitizeExploreResult({ tier: 'bad', injuryDays: 9, pillKey: 'zhuji' });
-    assert.equal(r.injuryDays, 3);
-    assert.equal(r.pillKey, 'zhuji');
-    const r2 = CultivationManager.sanitizeExploreResult({ tier: 'weird', stones: 1 });
-    assert.equal(r2.tier, 'plain');
-    const r3 = CultivationManager.sanitizeExploreResult({ tier: 'good', pillKey: 'fake-pill' });
-    assert.equal(r3.pillKey, undefined);
+  test('sanitizeExploreResult：按档钳制（great 灵石 999→45；plain 灵石 22→10；bad 伤势 9→3）', () => {
+    const r = CultivationManager.sanitizeExploreResult({ tier: 'great', stones: 999, exp: 999 });
+    assert.equal(r.stones, 45);
+    assert.equal(r.exp, 30);
+    const r2 = CultivationManager.sanitizeExploreResult({ tier: 'plain', stones: 22, exp: 1 });
+    assert.equal(r2.stones, 10);
+    assert.equal(r2.exp, 3); // plain 档下限 3
+    const r3 = CultivationManager.sanitizeExploreResult({ tier: 'bad', injuryDays: 9 });
+    assert.equal(r3.injuryDays, 3);
+    const r4 = CultivationManager.sanitizeExploreResult({ tier: 'bad', stones: -50 });
+    assert.equal(r4.stones, -15); // bad 档下限 -15
+  });
+
+  test('sanitizeExploreResult：突破丹/道具/顿悟仅对应档位；tierHint 优先', () => {
+    const r = CultivationManager.sanitizeExploreResult({ tier: 'good', pillKey: 'zhuji', breakthrough: true }, 'good');
+    assert.equal(r.pillKey, undefined); // 突破丹仅大吉
+    assert.equal(r.breakthrough, undefined);
+    const r2 = CultivationManager.sanitizeExploreResult({ pillKey: 'zhuji', item: { name: 'x', kind: 'pill', effect: 'exp', effectValue: 10 }, breakthrough: true }, 'great');
+    assert.equal(r2.pillKey, 'zhuji');
+    assert.equal(r2.breakthrough, true);
+    assert.ok(r2.item);
+    const r3 = CultivationManager.sanitizeExploreResult({ tier: 'weird', stones: 1 }, 'weird');
+    assert.equal(r3.tier, 'plain');
+    const r4 = CultivationManager.sanitizeExploreResult({ pillKey: 'fake-pill' }, 'great');
+    assert.equal(r4.pillKey, undefined);
   });
 
   test('applyExploreResult：套用灵石/修为/伤势/道具入包', async () => {
@@ -674,6 +715,80 @@ describe('洞府探索', () => {
     await seedCultivation(cm);
     await cm.applyExploreResult({ tier: 'great', pillKey: 'zhuji' });
     assert.equal(readState(cm).inventory.zhuji, 1);
+  });
+});
+
+// ===== 天道掷签（v3.28.0）=====
+
+describe('天道掷签', () => {
+  test('rollExploreTier 按权重分布：great/good/plain/bad', () => {
+    assert.equal(CultivationManager.rollExploreTier(0.10), 'great'); // <0.20
+    assert.equal(CultivationManager.rollExploreTier(0.40), 'good');  // <0.50
+    assert.equal(CultivationManager.rollExploreTier(0.60), 'plain'); // <0.75
+    assert.equal(CultivationManager.rollExploreTier(0.90), 'bad');   // 其余
+  });
+
+  test('rollFortuneTier 按权重分布：great/good/plain/bad/none', () => {
+    assert.equal(CultivationManager.rollFortuneTier(0.10), 'great'); // <0.15
+    assert.equal(CultivationManager.rollFortuneTier(0.30), 'good');  // <0.45
+    assert.equal(CultivationManager.rollFortuneTier(0.60), 'plain'); // <0.70
+    assert.equal(CultivationManager.rollFortuneTier(0.80), 'bad');   // <0.85
+    assert.equal(CultivationManager.rollFortuneTier(0.95), 'none');  // 其余
+  });
+});
+
+// ===== 生平档案（v3.28.0：每一世一个文档）=====
+
+describe('生平档案', () => {
+  test('startJourney 创建第 1 世生平文档（道号/灵根/分段骨架）', async () => {
+    const { cm, fm } = newCM();
+    const { state } = await cm.startJourney('fire', '丹阳');
+    const path = CultivationManager.lifeDocPath(state);
+    assert.equal(path, 'cultivation/life-1.md');
+    const text = fm.files.get(path);
+    assert.ok(text.includes('第1世 · 丹阳 修仙传'));
+    assert.ok(text.includes('火灵根'));
+    assert.ok(text.includes('## 修行纪事'));
+  });
+
+  test('身死落笔：渡劫身死后当世文档末尾记卒于', async () => {
+    const { cm, fm } = newCM();
+    const { state } = await cm.startJourney('water', '青崖');
+    const raw = JSON.parse(fm.files.get('.meta/cultivation-state.json'));
+    raw.exp = T1;
+    raw.inventory = { zhuji: 1 };
+    fm.files.set('.meta/cultivation-state.json', JSON.stringify(raw));
+    seedRand(cm, [0.99, 0.01]);
+    const r = await cm.attemptBreakthrough();
+    assert.equal(r.died, true);
+    const text = fm.files.get(CultivationManager.lifeDocPath(state));
+    assert.ok(text.includes('卒于'));
+    assert.ok(text.includes('天雷灭体'));
+  });
+
+  test('转世创建下一世文档（含前世行），getLifeDoc 读取', async () => {
+    const { cm, fm } = newCM();
+    const { state } = await cm.startJourney('metal', '金锋');
+    const raw = JSON.parse(fm.files.get('.meta/cultivation-state.json'));
+    raw.dead = true;
+    fm.files.set('.meta/cultivation-state.json', JSON.stringify(raw));
+    const r = await cm.reincarnate({ text: '这一世，你转世为青州富商之子，家中藏书万卷。', perk: 'stones20' });
+    assert.equal(r.success, true);
+    const path = CultivationManager.lifeDocPath(r.state);
+    assert.equal(path, 'cultivation/life-2.md');
+    const text = fm.files.get(path);
+    assert.ok(text.includes('第2世'));
+    assert.ok(text.includes('前世'));
+    const doc = await cm.getLifeDoc();
+    assert.equal(doc.path, path);
+    assert.ok(doc.text.includes('青州富商之子'));
+  });
+
+  test('saveLifeDoc 落盘当前世文档', async () => {
+    const { cm, fm } = newCM();
+    const { state } = await cm.startJourney('wood', '青木');
+    assert.equal(await cm.saveLifeDoc('# 续写测试\n\n新内容'), true);
+    assert.ok(fm.files.get(CultivationManager.lifeDocPath(state)).includes('续写测试'));
   });
 });
 
@@ -699,12 +814,12 @@ describe('日志与摘要', () => {
 
   test('summaryLine：含道号/灵根资质/境界/灵石/道心/心魔', async () => {
     const { cm } = newCM();
-    await seedCultivation(cm, { streak: 3, reincarnations: 1, exp: 30 }); // 炼气圆满未突破
+    await seedCultivation(cm, { streak: 3, reincarnations: 1, exp: T1 }); // 炼气圆满未突破
     const line = await cm.summaryLine();
     assert.ok(line.includes('青崖'));
     assert.ok(line.includes('水灵根'));
     assert.ok(line.includes('炼气'));
-    assert.ok(line.includes('修为30/30'));
+    assert.ok(line.includes(`修为${T1}/${T1}`));
     assert.ok(line.includes('灵石20'));
     assert.ok(line.includes('道心60'));
     assert.ok(line.includes('心魔0'));

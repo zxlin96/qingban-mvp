@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.27.1';
-const APP_VERSION_DATE = '2026-11-23';
+const APP_VERSION = '3.28.0';
+const APP_VERSION_DATE = '2026-11-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,16 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.28.0', date: '2026-11-24',
+    items: [
+      '重调进阶节奏：境界门槛 30→240 起跳（炼气→筑基约 2-3 天，一路到金仙约一年以上），坊市同步重调（养气丹 30/筑基丹 60 → 金仙丹 5000 灵石），不再一日金丹',
+      '洞府/机缘改「天道掷签」：吉凶档由本地随机定（大吉 20%/吉 30%/平 25%/凶 25%，机缘另含 15% 无波澜），LLM 在档内编剧情与具体数值（prompt 要求小说片段感：人物/地点/转折），sanitize 按档钳制——不再全是「平」',
+      '新增本世生平档案：每一世一份 cultivation/life-N.md（家世/修行纪事/人物因果/心境感悟），每日结算 LLM 续写完善（步骤 3.11 可开关）；身死时落笔「卒于」，转世时 AI 读前世概要安排今生家世（因果相续）；面板展示生平卡，AI 对话注入生平片段可引用剧情',
+      '人设升级 v24：AI 可自然引用生平中的人物与因果互动（"道友前世与那散修的因果…"），让每一世的故事在对话中活着',
+      '测试：cultivation-manager 达 80 项（掷签分布/档内钳制/生平文档创建与卒于落笔），全量 395 过'
+    ]
+  },
   {
     ver: '3.27.1', date: '2026-11-23',
     items: [
@@ -1517,6 +1527,23 @@ class App {
       }
     }
 
+    // 步骤 3.11: 本世生平续写（v3.28.0）— LLM 结合昨日修行日志合并更新 cultivation/life-N.md（失败静默跳过）
+    if (setlOn('cultLife')) {
+      if (this._dtAddStep) this._dtAddStep('本世生平续写');
+      const stepCultLife = this._dtStepIndex - 1;
+      if (stepDone(stepCultLife)) {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepCultLife, 'done');
+      } else {
+        try {
+          const lifeOk = await this._stepTimeout(this._generateCultLife(yesterdayDate), 120000, '生平续写');
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCultLife, 'done', null, lifeOk ? undefined : 'LLM 未返回有效内容，已跳过');
+        } catch (e) {
+          console.error('[DayRollover] 生平续写失败（跳过）:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCultLife, 'error', e.message);
+        }
+      }
+    }
+
     // 步骤 4 (条件): 周度习惯总结 — 每 7 天触发一次
     const needWeekly = await this._shouldRunWeeklySummary();
     if (needWeekly && setlOn('weeklyHabitSummary')) {
@@ -1774,7 +1801,8 @@ class App {
       ['petVoice', 'setlPetVoice'],
       ['petSpecials', 'setlPetSpecials'],
       ['cultTick', 'setlCultTick'],
-      ['cultFortune', 'setlCultFortune']
+      ['cultFortune', 'setlCultFortune'],
+      ['cultLife', 'setlCultLife']
     ];
   }
 
@@ -6304,6 +6332,7 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         reincarnations: state.reincarnations,
         background: state.background || null,
         inventory: state.inventory,
+        lifeDoc: await this.cultManager.getLifeDoc(), // 本世生平（v3.28.0，AI 可引用剧情）
         summary: await this.cultManager.summaryLine()
       };
     };
@@ -6315,15 +6344,15 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     this.cultManager.onChangeCallback = () => this._refreshCultPanelIfOpen();
   }
 
-  // 打卡后机缘判定（v3.27.0）：25% 概率、日限 2 次；命中则 LLM 天道裁定（失败降级模板），开关 cultFortune 控制
+  // 打卡后机缘判定（v3.27.0；v3.28.0 改本地掷签定档 + LLM 档内编剧情）：25% 概率、日限 2 次
   async _maybeTriggerFortune() {
     const cfg = (window.QINGBAN_SETTINGS && window.QINGBAN_SETTINGS.settlement) || {};
     if (cfg.cultFortune === false) return;
     try {
       const gate = await this.cultManager.rollFortuneGate();
       if (!gate.triggered) return;
-      const parsed = await this._generateFortune();
-      const applied = await this.cultManager.applyFortune(parsed);
+      const parsed = await this._generateFortune(gate.tier);
+      const applied = await this.cultManager.applyFortune(parsed, gate.tier);
       if (applied && applied.breakthroughReady) {
         const realm = await this.cultManager.breakthroughByFortune((applied.narrative || '一朝顿悟').slice(0, 20));
         if (realm) this.showToast('🌟 顿悟突破', `机缘所致，直入${realm.name}境！`, 'success');
@@ -6351,24 +6380,27 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
   }
 
-  // LLM 天道裁定机缘：结合修行状态与近 2 天习惯遵守裁定吉凶；失败返回模板（plain）
-  async _generateFortune() {
+  // LLM 天道裁定机缘（v3.28.0：档位已由掷签决定，LLM 在档内编剧情与具体数值）；失败返回档内兜底
+  async _generateFortune(tier = 'plain') {
     const state = await this.cultManager.getState();
-    if (!state || !this.llm || !this.llm.chat) return { tier: 'plain', narrative: '云游半日，无惊无险。' };
+    if (!state || !this.llm || !this.llm.chat) return { tier, narrative: CultivationManager.fortuneFallbackText(tier) };
     const root = CultivationManager.rootDef(state.root);
     const apt = CultivationManager.aptitudeDef(state.aptitude);
     const habitDigest = await this._cultHabitDigest();
-    const sys = `你是修真世界的"天道"，根据修行者的状态与近期行为裁定其打卡后偶遇的机缘。输出 JSON（不要 code fence、不要解释）：
-{"tier": "great 大吉 / good 吉 / plain 平 / bad 凶 / none 无",
- "stones": "灵石变化 -30~60（整数，凶可为负）",
- "exp": "修为变化 -20~40（整数）",
- "narrative": "一两句话描述机缘经过（40字内，具体生动：捡到宝物/遇前辈指点/路遇凶兽/无事发生等）",
- "breakthrough": "仅在修行者修为圆满且确有顿悟/灌顶级大机缘时为 true，否则 false",
- "item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"} }
-裁定指引：近期习惯全达标、道心高 → 偏向吉档；破戒多、心魔高 → 偏向凶档；大机缘（突破=true）要克制，只在确实圆满时出现。`;
+    const range = CultivationManager.FORTUNE_TIER_RANGES[tier] || CultivationManager.FORTUNE_TIER_RANGES.plain;
+    const tierNames = { great: '大吉', good: '吉', plain: '平', bad: '凶', none: '无波澜' };
+    const extraFields = tier === 'great'
+      ? `,"breakthrough": "仅在修为圆满且剧情确为灌顶/顿悟级大机缘时为 true"\n,"item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"}`
+      : (tier === 'good' ? `,"item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"}` : '');
+    const sys = `你是修真世界的"天道"。此次机缘的吉凶档位已由天道掷签定为「${tierNames[tier] || tier}」，你负责在这一档内编写具体的机缘剧情。
+输出 JSON（不要 code fence、不要解释）：
+{"stones": "灵石变化 ${range.stones[0]}~${range.stones[1]}（档内整数）",
+ "exp": "修为变化 ${range.exp[0]}~${range.exp[1]}（档内整数）",
+ "narrative": "60-100 字的剧情：具体人物/地点/经过（如路过茶棚听散修论道、悬崖下拾得残剑、被仇家尾随讹诈等），有画面感，贴合本档吉凶"${extraFields}}
+要求：剧情要具体生动像小说片段，不要泛泛而谈；数值必须落在本档范围内。`;
     const user = `修行者：${state.daoName}（${root.label}·${apt.label}），第${state.level}境，修为 ${state.exp}，灵石 ${state.stones}，道心 ${state.mind}，心魔 ${state.demon}。
 近 2 天习惯遵守：${habitDigest}
-请裁定今日机缘（输出 JSON）：`;
+档位：${tierNames[tier] || tier}。请编写此次机缘剧情（输出 JSON）：`;
     try {
       const resp = await this.llm.chat(
         [{ role: 'system', content: sys }, { role: 'user', content: user }],
@@ -6376,30 +6408,32 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         { task: 'cult_fortune' }
       );
       const obj = CultivationManager.extractJson(resp && resp.content);
-      return obj || { tier: 'plain', narrative: '云游半日，无惊无险。' };
+      return obj ? { tier, ...obj } : { tier, narrative: CultivationManager.fortuneFallbackText(tier) };
     } catch (_) {
-      return { tier: 'plain', narrative: '云游半日，无惊无险。' };
+      return { tier, narrative: CultivationManager.fortuneFallbackText(tier) };
     }
   }
 
-  // LLM 天道裁定洞府探索：可产出灵石/修为/丹药/伤势/突破丹/顿悟；失败返回模板（荒废空府）
-  async _generateExploreResult() {
+  // LLM 天道裁定洞府探索（v3.28.0：档位已由掷签决定，LLM 在档内编剧情与具体数值）；失败返回档内兜底
+  async _generateExploreResult(tier = 'plain') {
     const state = await this.cultManager.getState();
-    if (!state || !this.llm || !this.llm.chat) return { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+    if (!state || !this.llm || !this.llm.chat) return { tier, stones: 0, exp: 0, injuryDays: tier === 'bad' ? 1 : 0, narrative: CultivationManager.exploreFallbackText(tier) };
     const habitDigest = await this._cultHabitDigest();
-    const sys = `你是修真世界的"天道"，裁定修行者探索一座未知洞府的际遇。输出 JSON（不要 code fence、不要解释）：
-{"tier": "great 大吉 / good 吉 / plain 平 / bad 凶",
- "stones": "灵石收获 -20~50",
- "exp": "修为变化 -10~30",
- "injuryDays": "伤势天数 0-3（凶档常见：瘴气/机关/妖兽）",
- "narrative": "一两句话描述洞府见闻（40字内：古修遗府/灵药园/前人遗蜕/空府/凶府等）",
- "pillKey": "偶得突破丹时给 key（zhuji筑基丹/ningjin凝金丹/huaying化婴丹/huashen化神丹/hedao合道丹/dacheng大乘丹/dujie渡劫丹/dengxian登仙丹/jinxian金仙丹），一般不出现",
- "breakthrough": "仅在修为圆满且得灌顶级传承时为 true",
- "item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"} }
-裁定指引：近期守律好、道心高 → 偏向吉档；破戒多、心魔高 → 偏向凶档；突破丹与 breakthrough 要克制。`;
+    const range = CultivationManager.EXPLORE_TIER_RANGES[tier] || CultivationManager.EXPLORE_TIER_RANGES.plain;
+    const tierNames = { great: '大吉', good: '吉', plain: '平', bad: '凶' };
+    const extraFields = tier === 'great'
+      ? `,"pillKey": "偶得突破丹时给 key（zhuji筑基丹/ningjin凝金丹/huaying化婴丹/huashen化神丹/hedao合道丹/dacheng大乘丹/dujie渡劫丹/dengxian登仙丹/jinxian金仙丹），一般不给"\n,"breakthrough": "仅在修为圆满且剧情为得灌顶级传承时为 true"\n,"item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"}`
+      : (tier === 'good' ? `,"item": {"name":"4-8字丹药名","icon":"一个emoji","kind":"pill","effect":"exp","effectValue":"5-30","desc":"一句来历（20字内）"}` : '');
+    const sys = `你是修真世界的"天道"。此次洞府探索的吉凶档位已由天道掷签定为「${tierNames[tier] || tier}」，你负责在这一档内编写洞府见闻剧情。
+输出 JSON（不要 code fence、不要解释）：
+{"stones": "灵石收获 ${range.stones[0]}~${range.stones[1]}（档内整数）",
+ "exp": "修为变化 ${range.exp[0]}~${range.exp[1]}（档内整数）",
+ "injuryDays": "伤势天数 ${range.injury[0]}~${range.injury[1]}（档内整数）",
+ "narrative": "80-120 字的洞府剧情：洞府来历/禁制/所遇所见的画面感（如大雾深处的无名洞府、坐化的古修遗蜕、灵药园、残阵反噬等），贴合本档吉凶"${extraFields}}
+要求：剧情要具体生动像小说片段，有探索的悬念与转折，不要泛泛而谈；数值必须落在本档范围内。`;
     const user = `修行者：第${state.level}境，修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}，${state.injured > 0 ? `重伤中（${state.injured} 天），` : ''}灵石 ${state.stones}。
 近 2 天习惯遵守：${habitDigest}
-请裁定此次洞府探索（输出 JSON）：`;
+档位：${tierNames[tier] || tier}。请编写此次洞府探索剧情（输出 JSON）：`;
     try {
       const resp = await this.llm.chat(
         [{ role: 'system', content: sys }, { role: 'user', content: user }],
@@ -6407,9 +6441,9 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         { task: 'cult_explore' }
       );
       const obj = CultivationManager.extractJson(resp && resp.content);
-      return obj || { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+      return obj ? { tier, ...obj } : { tier, stones: 0, exp: 0, injuryDays: tier === 'bad' ? 1 : 0, narrative: CultivationManager.exploreFallbackText(tier) };
     } catch (_) {
-      return { tier: 'plain', stones: 0, exp: 0, narrative: '一座荒废空府，积灰满面，无甚所得。' };
+      return { tier, stones: 0, exp: 0, injuryDays: tier === 'bad' ? 1 : 0, narrative: CultivationManager.exploreFallbackText(tier) };
     }
   }
 
@@ -6431,14 +6465,14 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
   }
 
-  // LLM 生成转世家世背景（text + perk 白名单）；失败返回 null 走模板
-  async _generateBackground(reincarnations) {
+  // LLM 生成转世家世背景（text + perk 白名单，v3.28.0 携前世概要续因果）；失败返回 null 走模板
+  async _generateBackground(reincarnations, prevSummary = '') {
     if (!this.llm || !this.llm.chat) return null;
     try {
       const sys = `你是轮回司的执笔，为身死道消后转世重修的修行者安排这一世的家世背景。输出 JSON（不要 code fence）：
-{"text": "这一世，你转世为……（40-80字，家世具体生动：富商之子/将门之后/落魄书生/山野猎户等）",
+{"text": "这一世，你转世为……（40-80字，家世具体生动：富商之子/将门之后/落魄书生/山野猎户等），最好与前世的因果隐约呼应",
  "perk": "家世带来的一个小助益，四选一：stones20 开局灵石+20 / speed3 修行速度+3% / explore1 洞府探索每日+1次 / fortune1 机缘每日+1次"}`;
-      const user = `这是修行者第 ${reincarnations + 1} 世重修。请安排家世（输出 JSON）：`;
+      const user = `这是修行者第 ${reincarnations + 1} 世重修。${prevSummary ? `前世概要：${prevSummary}\n` : ''}请安排家世（输出 JSON）：`;
       const resp = await this.llm.chat(
         [{ role: 'system', content: sys }, { role: 'user', content: user }],
         null,
@@ -6451,14 +6485,54 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
   }
 
-  // 洞府探索主流程：消耗次数 → 天道裁定（LLM 失败降级模板）→ 套用结果 → 顿悟突破联动
+  // LLM 每日续写本世生平档案（v3.28.0）：结合昨日修行日志与当前档案合并更新（保持分段结构）
+  // 返回 true 表示已更新；失败返回 false（静默跳过，宁缺毋滥）
+  async _generateCultLife(yesterdayDate) {
+    if (!this.llm || !this.llm.chat) return false;
+    const state = await this.cultManager.getState();
+    if (!state) return false;
+    const lifeDoc = await this.cultManager.getLifeDoc();
+    const dayLog = (await this.fm.readFile(`cultivation/${yesterdayDate}.md`)) || '（昨日无修行动态）';
+    const sys = `你是修真世界的史官，为一位修行者续写其"本世生平档案"（Markdown）。基于旧档案与昨日发生的修行事件，输出合并更新后的完整档案（不要 code fence、不要解释）：
+要求：
+1. 保持原有分段结构（家世信息行 + ## 修行纪事 / ## 人物与因果 / ## 心境感悟）
+2. 「修行纪事」按日期追加条目（日期前缀，一条一行，最多保留近 15 条）；渡劫/身死/顿悟等大事件要单独成条且笔法郑重
+3. 「人物与因果」记录遇到的人物与结下的因果（最多 6 条）；「心境感悟」写一两句当下心境（可化用修仙意象）
+4. 全文不超过 800 字，语言凝练有古风，像真正的传记`;
+    const user = `## 当前档案（第 ${state.reincarnations + 1} 世）
+${lifeDoc ? lifeDoc.text.slice(0, 2500) : '（暂无）'}
+
+## 昨日修行动态（${yesterdayDate}）
+${dayLog.slice(0, 1200)}
+
+## 当前状态
+第${state.level}境，修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}。
+
+请输出合并更新后的完整档案 Markdown：`;
+    try {
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_life' }
+      );
+      const text = ((resp && resp.content) || '').trim();
+      if (text.length < 50) return false;
+      return await this.cultManager.saveLifeDoc(text.replace(/^```(?:markdown)?\s*|\s*```$/g, ''));
+    } catch (e) {
+      console.warn('[CultLife] 生平续写失败:', e.message);
+      return false;
+    }
+  }
+
+  // 洞府探索主流程（v3.28.0：本地掷签定档 → LLM 档内编剧情）：消耗次数 → 套用结果 → 顿悟突破联动
   async _doCultivateExplore(fromAI = false) {
     const gate = await this.cultManager.consumeExplore();
     if (!gate.success) {
       return fromAI ? gate : this.showToast('🏺 探索失败', gate.message, 'info');
     }
-    const parsed = await this._generateExploreResult();
-    const applied = await this.cultManager.applyExploreResult(parsed);
+    const tier = CultivationManager.rollExploreTier();
+    const parsed = await this._generateExploreResult(tier);
+    const applied = await this.cultManager.applyExploreResult(parsed, tier);
     if (applied && applied.breakthroughReady) {
       const realm = await this.cultManager.breakthroughByFortune((applied.narrative || '得前辈传承').slice(0, 20));
       if (realm) this.showToast('🌟 顿悟突破', `洞府机缘，直入${realm.name}境！`, 'success');
@@ -6615,6 +6689,12 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
       ? '<div class="cult-log"><div class="cult-log-item">暂无动态</div></div>'
       : `<div class="cult-log">${logs.map(l => `<div class="cult-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="cult-log-more">仅显示最近 8 条</div>' : ''}`;
 
+    // 本世生平档案（v3.28.0：每一世一个文档，每日结算由 LLM 续写）
+    const lifeDoc = await this.cultManager.getLifeDoc();
+    const lifeHtml = (lifeDoc && lifeDoc.text)
+      ? `<div class="cult-life-card"><div class="cult-life-title">📜 第 ${(state.reincarnations || 0) + 1} 世生平 <span class="cult-life-path">${escapeHtml(lifeDoc.path)}</span></div><div class="cult-life-text">${escapeHtml(lifeDoc.text.slice(0, 500))}${lifeDoc.text.length > 500 ? '…' : ''}</div></div>`
+      : '';
+
     contentEl.innerHTML = `
       <div class="cult-stage">
         <div class="cult-stage-emoji ${emojiCls}">🧘</div>
@@ -6632,6 +6712,7 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         ${this._cultStatRow('心魔', state.demon, true)}
       </div>
       ${state.background && state.background.perk ? `<div class="cult-bg-note">家世：${escapeHtml(state.background.text)}（${CultivationManager.BACKGROUND_PERK_LABELS[state.background.perk]}）</div>` : ''}
+      ${lifeHtml}
       ${btHtml}
       ${burst ? '<div class="cult-burst-banner">🔥 <b>心魔爆发中</b> — 修行收益减半！连续 2 天全达标或服🪷清心丹（坊市有售）化解</div>' : ''}
       ${exploreHtml}
@@ -6705,7 +6786,13 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
     if (e.target.closest('#cultReincarnateBtn')) {
       const st = await this.cultManager.getState();
-      const bg = await this._generateBackground(st ? st.reincarnations : 0);
+      // 携前世概要安排今生家世（因果相续）
+      let prevSummary = '';
+      try {
+        const prevDoc = await this.cultManager.getLifeDoc();
+        if (prevDoc && prevDoc.text) prevSummary = prevDoc.text.replace(/\s+/g, ' ').slice(-260);
+      } catch (_) { /* 前世文档缺失不阻塞 */ }
+      const bg = await this._generateBackground(st ? st.reincarnations : 0, prevSummary);
       const r = await this.cultManager.reincarnate(bg);
       if (r.success) {
         this.showToast('♻️ 转世重修', `第 ${r.state.reincarnations} 世开启：${r.state.background.text.slice(0, 30)}…`, 'success');

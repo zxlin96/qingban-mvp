@@ -278,13 +278,16 @@ ${exercise || '（暂无记录）'}`;
       }
     }
 
-    // 读取修仙状态（v3.27.0）— 一行摘要注入动态段尾部
+    // 读取修仙状态（v3.27.0）— 一行摘要注入动态段尾部；v3.28.0 追加本世生平片段（AI 可引用剧情与前世因果）
     let cultSection = '（用户还未踏上仙途，可在修仙面板开启）';
     if (this.onGetCultivationStatus) {
       try {
         const cult = await this.onGetCultivationStatus();
         if (cult && cult.summary) {
           cultSection = cult.summary;
+          if (cult.lifeDoc && cult.lifeDoc.text) {
+            cultSection += `\n- 本世生平（${cult.lifeDoc.path}，可引用其中剧情/人物/因果与其互动）：${cult.lifeDoc.text.replace(/\s+/g, ' ').slice(0, 400)}`;
+          }
         }
       } catch (e) {
         // 静默失败，不影响主流程

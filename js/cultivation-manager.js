@@ -55,7 +55,8 @@ export class CultivationManager {
   }
 
   // 境界表：LEVELS[i] 为突破到第(i+1)境所需修为；REALMS 为十境界名
-  static LEVELS = [0, 30, 80, 160, 280, 450, 700, 1050, 1550, 2200];
+  // v3.28.0 节奏重调：日活约 60-150 修为/天，炼气→筑基约 2-3 天，一路到金仙约一年以上
+  static LEVELS = [0, 240, 700, 1500, 2800, 4800, 7800, 12000, 18000, 26000];
   static REALMS = ['炼气', '筑基', '金丹', '元婴', '化神', '合体', '大乘', '渡劫', '真仙', '金仙'];
 
   // 由 exp 反推境界阈值（纯函数，仅测试/工具用）：运行时的境界以 state.realm 为准（突破才提升）
@@ -109,21 +110,22 @@ export class CultivationManager {
   static DEMON_TWO_DAY_CLEAR = -30; // 连续 2 天全达标额外 -30/天
   static EARTH_DEMON_DISCOUNT = 0.8; // 土灵根：心魔滋生 -20%
 
-  // 坊市：3 件常售丹 + 9 颗突破丹（key 含目标境界 level，price 递增）
+  // 坊市：3 件常售丹 + 9 颗突破丹（key 含目标境界 level，price 随境界递增）
+  // v3.28.0 价格随进阶曲线重调（日入约 10-40 灵石，首丹约 2-4 天攒够）
   // effect: exp=修为 / heal=清伤势 / demon=心魔增量（负为消减）；breakthrough=目标境界（仅突破丹）
   static SHOP = [
-    { key: 'yangqi', kind: 'pill', icon: '🧪', name: '养气丹', price: 8, effect: 'exp', effectValue: 15, desc: '修为 +15' },
-    { key: 'qingxin', kind: 'pill', icon: '🪷', name: '清心丹', price: 12, effect: 'demon', effectValue: -40, desc: '心魔 -40' },
-    { key: 'liaoshang', kind: 'pill', icon: '💊', name: '疗伤丹', price: 15, effect: 'heal', desc: '清除伤势' },
-    { key: 'zhuji', kind: 'pill', icon: '⚡', name: '筑基丹', price: 20, breakthrough: 2, desc: '炼气圆满后渡劫筑基' },
-    { key: 'ningjin', kind: 'pill', icon: '⚡', name: '凝金丹', price: 35, breakthrough: 3, desc: '筑基圆满后渡劫结丹' },
-    { key: 'huaying', kind: 'pill', icon: '⚡', name: '化婴丹', price: 55, breakthrough: 4, desc: '金丹圆满后渡劫化婴' },
-    { key: 'huashen', kind: 'pill', icon: '⚡', name: '化神丹', price: 80, breakthrough: 5, desc: '元婴圆满后渡劫化神' },
-    { key: 'hedao', kind: 'pill', icon: '⚡', name: '合道丹', price: 110, breakthrough: 6, desc: '化神圆满后渡劫合体' },
-    { key: 'dacheng', kind: 'pill', icon: '⚡', name: '大乘丹', price: 150, breakthrough: 7, desc: '合体圆满后渡劫大乘' },
-    { key: 'dujie', kind: 'pill', icon: '⚡', name: '渡劫丹', price: 200, breakthrough: 8, desc: '大乘圆满后渡劫境' },
-    { key: 'dengxian', kind: 'pill', icon: '⚡', name: '登仙丹', price: 260, breakthrough: 9, desc: '渡劫圆满后证真仙' },
-    { key: 'jinxian', kind: 'pill', icon: '⚡', name: '金仙丹', price: 330, breakthrough: 10, desc: '真仙圆满后证金仙' }
+    { key: 'yangqi', kind: 'pill', icon: '🧪', name: '养气丹', price: 30, effect: 'exp', effectValue: 80, desc: '修为 +80' },
+    { key: 'qingxin', kind: 'pill', icon: '🪷', name: '清心丹', price: 40, effect: 'demon', effectValue: -40, desc: '心魔 -40' },
+    { key: 'liaoshang', kind: 'pill', icon: '💊', name: '疗伤丹', price: 50, effect: 'heal', desc: '清除伤势' },
+    { key: 'zhuji', kind: 'pill', icon: '⚡', name: '筑基丹', price: 60, breakthrough: 2, desc: '炼气圆满后渡劫筑基' },
+    { key: 'ningjin', kind: 'pill', icon: '⚡', name: '凝金丹', price: 150, breakthrough: 3, desc: '筑基圆满后渡劫结丹' },
+    { key: 'huaying', kind: 'pill', icon: '⚡', name: '化婴丹', price: 320, breakthrough: 4, desc: '金丹圆满后渡劫化婴' },
+    { key: 'huashen', kind: 'pill', icon: '⚡', name: '化神丹', price: 600, breakthrough: 5, desc: '元婴圆满后渡劫化神' },
+    { key: 'hedao', kind: 'pill', icon: '⚡', name: '合道丹', price: 1000, breakthrough: 6, desc: '化神圆满后渡劫合体' },
+    { key: 'dacheng', kind: 'pill', icon: '⚡', name: '大乘丹', price: 1600, breakthrough: 7, desc: '合体圆满后渡劫大乘' },
+    { key: 'dujie', kind: 'pill', icon: '⚡', name: '渡劫丹', price: 2400, breakthrough: 8, desc: '大乘圆满后渡劫境' },
+    { key: 'dengxian', kind: 'pill', icon: '⚡', name: '登仙丹', price: 3500, breakthrough: 9, desc: '渡劫圆满后证真仙' },
+    { key: 'jinxian', kind: 'pill', icon: '⚡', name: '金仙丹', price: 5000, breakthrough: 10, desc: '真仙圆满后证金仙' }
   ];
 
   static getShopItem(key) {
@@ -147,6 +149,49 @@ export class CultivationManager {
   static FORTUNE_CHANCE = 0.25;
   static FORTUNE_DAILY_LIMIT = 2;
   static EXPLORE_DAILY_LIMIT = 3;
+
+  // ===== 天道掷签（v3.28.0）：档位由本地随机数定（保证吉凶分布），LLM 在档内编剧情与具体数值 =====
+  // 洞府档分布与档内数值范围
+  static EXPLORE_TIER_WEIGHTS = { great: 0.20, good: 0.30, plain: 0.25, bad: 0.25 };
+  static EXPLORE_TIER_RANGES = {
+    great: { stones: [25, 45], exp: [15, 30], injury: [0, 0] },
+    good: { stones: [10, 25], exp: [8, 15], injury: [0, 0] },
+    plain: { stones: [0, 10], exp: [3, 8], injury: [0, 0] },
+    bad: { stones: [-15, 0], exp: [-8, 0], injury: [1, 3] }
+  };
+  // 机缘档分布与档内数值范围（none=无波澜）
+  static FORTUNE_TIER_WEIGHTS = { great: 0.15, good: 0.30, plain: 0.25, bad: 0.15, none: 0.15 };
+  static FORTUNE_TIER_RANGES = {
+    great: { stones: [30, 60], exp: [20, 40] },
+    good: { stones: [10, 30], exp: [8, 20] },
+    plain: { stones: [0, 10], exp: [0, 8] },
+    bad: { stones: [-25, 0], exp: [-15, 0] },
+    none: { stones: [0, 0], exp: [0, 0] }
+  };
+
+  // 掷签（纯函数，r 可注入）：按权重表返回档位 key
+  static rollTier(weights, r) {
+    const rr = (r === undefined || r === null) ? Math.random() : r;
+    let acc = 0;
+    for (const [key, w] of Object.entries(weights)) {
+      acc += w;
+      if (rr < acc) return key;
+    }
+    return Object.keys(weights).pop();
+  }
+
+  static rollExploreTier(r) {
+    return CultivationManager.rollTier(CultivationManager.EXPLORE_TIER_WEIGHTS, r);
+  }
+
+  static rollFortuneTier(r) {
+    return CultivationManager.rollTier(CultivationManager.FORTUNE_TIER_WEIGHTS, r);
+  }
+
+  static _clampRange(v, range) {
+    const n = Math.round(Number(v) || 0);
+    return Math.max(range[0], Math.min(range[1], n));
+  }
 
   // 家世 perk 白名单（转世时 LLM 四选一，sanitize 收敛）
   static BACKGROUND_PERKS = ['stones20', 'speed3', 'explore1', 'fortune1'];
@@ -239,6 +284,7 @@ export class CultivationManager {
     const apt = CultivationManager.aptitudeDef(state.aptitude);
     this._addLog(state, 'start', `☯ ${state.daoName} 得 ${def.icon}${def.label}（${apt.label}），踏入仙途（开局 ${state.stones} 灵石）`);
     await this._commit(state, today);
+    await this.fm.writeFile(CultivationManager.lifeDocPath(state), CultivationManager.buildInitialLifeDoc(state, today));
     return { state, created: true };
   }
 
@@ -386,19 +432,19 @@ export class CultivationManager {
   }
 
   // 机缘触发闸：打卡后由 app.js 调用；25% 概率、每日上限（家世 perk +1）
-  // 返回 { triggered, remaining }
+  // 命中时本地掷签定档（tier）并返回；app.js 携档调 LLM 编剧情
   async rollFortuneGate() {
     const state = await this._loadState();
-    if (!state || state.dead) return { triggered: false, remaining: 0 };
+    if (!state || state.dead) return { triggered: false, remaining: 0, tier: null };
     const today = this._getToday();
     this._ensureBehaviorDay(state, today);
     const limit = CultivationManager.FORTUNE_DAILY_LIMIT + (state.background && state.background.perk === 'fortune1' ? 1 : 0);
     const remaining = limit - state.behavior.fortune;
-    if (remaining <= 0) return { triggered: false, remaining: 0 };
-    if (this._rand() >= CultivationManager.FORTUNE_CHANCE) return { triggered: false, remaining };
+    if (remaining <= 0) return { triggered: false, remaining: 0, tier: null };
+    if (this._rand() >= CultivationManager.FORTUNE_CHANCE) return { triggered: false, remaining, tier: null };
     state.behavior.fortune++;
     await this._commit(state, today);
-    return { triggered: true, remaining: remaining - 1 };
+    return { triggered: true, remaining: remaining - 1, tier: CultivationManager.rollFortuneTier(this._rand()) };
   }
 
   // ===== 突破与渡劫 =====
@@ -463,6 +509,7 @@ export class CultivationManager {
     if (this._rand() < CultivationManager.DEATH_ON_FAIL) {
       state.dead = true;
       this._addLog(state, 'death', `☠️ 天雷灭体，${state.daoName} 身死道消，一缕真灵遁入轮回…`);
+      await this._finalizeLifeDoc(state, CultivationManager.REALMS[realm.level], today);
       await this._commit(state, today);
       return { success: false, died: true };
     }
@@ -521,6 +568,7 @@ export class CultivationManager {
     const apt = CultivationManager.aptitudeDef(state.aptitude);
     this._addLog(state, 'reincarnate', `♻️ 第 ${state.reincarnations} 世·转世重修：${bg.text}（${apt.label}资质随真灵继承）`);
     await this._commit(state, today);
+    await this.fm.writeFile(CultivationManager.lifeDocPath(state), CultivationManager.buildInitialLifeDoc(state, today));
     return { success: true, state };
   }
 
@@ -552,37 +600,38 @@ export class CultivationManager {
     return { success: true, remaining: remaining - 1 };
   }
 
-  // 洞府结果收敛（纯函数，可单测）：tier 白名单、数值钳制、可带道具/伤势/突破丹/顿悟
-  static sanitizeExploreResult(raw) {
+  // 洞府结果收敛（纯函数，可单测）：tier 由掷签/白名单决定，数值按档内范围钳制
+  // 突破丹仅大吉档可出现；道具仅大吉/吉档；顿悟仅大吉档
+  static sanitizeExploreResult(raw, tierHint) {
     if (!raw || typeof raw !== 'object') return null;
-    const tier = ['great', 'good', 'plain', 'bad'].includes(raw.tier) ? raw.tier : 'plain';
-    const num = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
+    const tier = (tierHint && CultivationManager.EXPLORE_TIER_RANGES[tierHint])
+      ? tierHint
+      : (CultivationManager.EXPLORE_TIER_RANGES[raw.tier] ? raw.tier : 'plain');
+    const range = CultivationManager.EXPLORE_TIER_RANGES[tier];
     const out = { tier };
-    out.stones = num(raw.stones, -20, 50);
-    out.exp = num(raw.exp, -10, 30);
-    out.injuryDays = num(raw.injuryDays, 0, 3);
+    out.stones = CultivationManager._clampRange(raw.stones, range.stones);
+    out.exp = CultivationManager._clampRange(raw.exp, range.exp);
+    out.injuryDays = CultivationManager._clampRange(raw.injuryDays, range.injury);
     const narrative = String(raw.narrative || '').trim().slice(0, 120);
     if (narrative) out.narrative = narrative;
-    if (raw.breakthrough === true) out.breakthrough = true;
-    if (raw.pillKey && CultivationManager.SHOP.some(i => i.breakthrough && i.key === raw.pillKey)) {
+    if (tier === 'great' && raw.breakthrough === true) out.breakthrough = true;
+    if (tier === 'great' && raw.pillKey && CultivationManager.SHOP.some(i => i.breakthrough && i.key === raw.pillKey)) {
       out.pillKey = raw.pillKey;
     }
-    if (raw.item) {
+    if ((tier === 'great' || tier === 'good') && raw.item) {
       const item = CultivationManager.sanitizeCustomItem(raw.item);
       if (item) out.item = item;
-    }
-    if (out.stones === 0 && out.exp === 0 && out.injuryDays === 0 && !out.item && !out.pillKey && !out.breakthrough) {
-      out.tier = 'plain';
     }
     return out;
   }
 
   // 套用洞府结果：修为/灵石/伤势/道具/突破丹入包/顿悟突破
-  async applyExploreResult(result) {
+  async applyExploreResult(result, tierHint) {
     const state = await this._loadState();
     if (!state || state.dead) return null;
     const today = this._getToday();
-    const r = CultivationManager.sanitizeExploreResult(result) || { tier: 'plain', stones: 0, exp: 0, injuryDays: 0 };
+    const r = CultivationManager.sanitizeExploreResult(result, tierHint)
+      || { tier: (tierHint || 'plain'), stones: 0, exp: 0, injuryDays: 0, narrative: CultivationManager.exploreFallbackText(tierHint || 'plain') };
     state.stones = Math.max(0, (state.stones || 0) + r.stones);
     state.exp = Math.max(0, state.exp + r.exp);
     if (r.injuryDays > 0) state.injured = Math.max(state.injured, r.injuryDays);
@@ -591,7 +640,7 @@ export class CultivationManager {
     if (r.stones) gains.push(`灵石 ${r.stones > 0 ? '+' : ''}${r.stones}`);
     if (r.exp) gains.push(`修为 ${r.exp > 0 ? '+' : ''}${r.exp}`);
     if (r.injuryDays > 0) gains.push(`伤势 ${r.injuryDays} 天`);
-    this._addLog(state, 'explore', `${tierLabel}·探索洞府：${r.narrative || '一座荒废空府，无甚所得。'}${gains.length ? `（${gains.join('、')}）` : ''}`);
+    this._addLog(state, 'explore', `${tierLabel}·探索洞府：${r.narrative || CultivationManager.exploreFallbackText(r.tier)}${gains.length ? `（${gains.join('、')}）` : ''}`);
     if (r.item) {
       const full = await this.addCustomItem({ ...r.item, source: 'explore', buyable: false, date: today });
       if (full) {
@@ -609,37 +658,57 @@ export class CultivationManager {
     return { ...r, breakthroughReady: !!(r.breakthrough && afterRealm.nextExp !== null && state.exp >= afterRealm.nextExp) };
   }
 
+  // LLM 失败时的档内兜底文案（纯函数）
+  static exploreFallbackText(tier) {
+    return {
+      great: '误入古修坐化之地，得遗蜕传承与一瓶凝元丹，福缘深厚。',
+      good: '循灵脉入洞府，采得几株灵药，小有收获。',
+      plain: '一座半荒废洞府，静坐参悟半日，聊有寸进。',
+      bad: '触动洞府残阵，被瘴气所伤，狼狈退出。'
+    }[tier] || '一座荒废空府，无甚所得。';
+  }
+
+  static fortuneFallbackText(tier) {
+    return {
+      great: '云游路遇隐世前辈，得指点一番，茅塞顿开。',
+      good: '拾得散修遗落的储物袋，内有几枚灵石。',
+      plain: '云游半日，无惊无险。',
+      bad: '路遇凶兽拦道，费了一番手脚才脱身。',
+      none: '今日无甚机缘，修行如常。'
+    }[tier] || '今日无甚机缘，修行如常。';
+  }
+
   // ===== 机缘（天道裁定结果套用）=====
 
-  // 机缘结果收敛（纯函数，可单测）：tier 五档、数值钳制、可带道具/顿悟
-  static sanitizeFortune(raw) {
+  // 机缘结果收敛（纯函数，可单测）：tier 由掷签/白名单决定，数值按档内范围钳制；道具仅大吉/吉档；顿悟仅大吉档
+  static sanitizeFortune(raw, tierHint) {
     if (!raw || typeof raw !== 'object') return null;
-    const tier = ['great', 'good', 'plain', 'bad', 'none'].includes(raw.tier) ? raw.tier : 'plain';
-    const num = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
+    const tier = (tierHint && CultivationManager.FORTUNE_TIER_RANGES[tierHint])
+      ? tierHint
+      : (CultivationManager.FORTUNE_TIER_RANGES[raw.tier] ? raw.tier : 'plain');
+    const range = CultivationManager.FORTUNE_TIER_RANGES[tier];
     const out = { tier };
-    out.stones = num(raw.stones, -30, 60);
-    out.exp = num(raw.exp, -20, 40);
+    out.stones = CultivationManager._clampRange(raw.stones, range.stones);
+    out.exp = CultivationManager._clampRange(raw.exp, range.exp);
     const narrative = String(raw.narrative || '').trim().slice(0, 120);
     if (narrative) out.narrative = narrative;
-    if (raw.breakthrough === true) out.breakthrough = true;
-    if (raw.item) {
+    if (tier === 'great' && raw.breakthrough === true) out.breakthrough = true;
+    if ((tier === 'great' || tier === 'good') && raw.item) {
       const item = CultivationManager.sanitizeCustomItem(raw.item);
       if (item) out.item = item;
-    }
-    if (out.stones === 0 && out.exp === 0 && !out.item && !out.breakthrough) {
-      out.tier = tier === 'none' ? 'none' : 'plain';
     }
     return out;
   }
 
   // 套用机缘结果：修为/灵石/道具/顿悟突破（机缘突破需修为圆满）
-  async applyFortune(result) {
+  async applyFortune(result, tierHint) {
     const state = await this._loadState();
     if (!state || state.dead) return null;
     const today = this._getToday();
-    const r = CultivationManager.sanitizeFortune(result);
-    if (!r || r.tier === 'none') {
-      if (state) this._addLog(state, 'fortune', '☁️ 今日无甚机缘，修行如常。');
+    const r = CultivationManager.sanitizeFortune(result, tierHint)
+      || { tier: (tierHint || 'none'), stones: 0, exp: 0, narrative: CultivationManager.fortuneFallbackText(tierHint || 'none') };
+    if (r.tier === 'none') {
+      this._addLog(state, 'fortune', `☁️ ${r.narrative || CultivationManager.fortuneFallbackText('none')}`);
       await this._commit(state, today);
       return { tier: 'none' };
     }
@@ -649,7 +718,7 @@ export class CultivationManager {
     const gains = [];
     if (r.stones) gains.push(`灵石 ${r.stones > 0 ? '+' : ''}${r.stones}`);
     if (r.exp) gains.push(`修为 ${r.exp > 0 ? '+' : ''}${r.exp}`);
-    this._addLog(state, 'fortune', `${tierLabel}：${r.narrative || '天道冥冥，无惊无险。'}${gains.length ? `（${gains.join('、')}）` : ''}`);
+    this._addLog(state, 'fortune', `${tierLabel}：${r.narrative || CultivationManager.fortuneFallbackText(r.tier)}${gains.length ? `（${gains.join('、')}）` : ''}`);
     if (r.item) {
       const full = await this.addCustomItem({ ...r.item, source: 'fortune', buyable: false, date: today });
       if (full) {
@@ -888,6 +957,58 @@ export class CultivationManager {
       return;
     }
     await this.fm.writeFile(path, CultivationManager.buildDayMd(date, logs));
+  }
+
+  // ===== 生平档案（v3.28.0：每一世一个文档，LLM 每日结算续写完善）=====
+
+  // 当前世文档路径（纯函数）：第 N 世 = reincarnations + 1
+  static lifeDocPath(state) {
+    return `cultivation/life-${(state.reincarnations || 0) + 1}.md`;
+  }
+
+  // 初始生平文档（家世/灵根 + 空的分段骨架，LLM 逐日填充）
+  static buildInitialLifeDoc(state, today) {
+    const root = CultivationManager.rootDef(state.root);
+    const apt = CultivationManager.aptitudeDef(state.aptitude);
+    const bg = state.background || { text: '这一世，你出身凡俗，机缘巧合踏上仙途。', perk: null };
+    const lines = [
+      `# 第${(state.reincarnations || 0) + 1}世 · ${state.daoName} 修仙传`,
+      ``,
+      `- 道号：${state.daoName}`,
+      `- 灵根：${root.label}·${apt.label}`,
+      `- 家世：${bg.text}${bg.perk ? `（${CultivationManager.BACKGROUND_PERK_LABELS[bg.perk]}）` : ''}`,
+      `- 生于：${today}`
+    ];
+    if ((state.reincarnations || 0) > 0) {
+      lines.push(`- 前世：第 ${state.reincarnations} 世身死道消，真灵转世，资质随灵根继承，悟性更进一层`);
+    }
+    lines.push(``, `## 修行纪事`, ``, `## 人物与因果`, ``, `## 心境感悟`, ``);
+    return lines.join('\n');
+  }
+
+  // 读取当前世生平文档（无状态返回 null）
+  async getLifeDoc() {
+    const state = await this._loadState();
+    if (!state) return null;
+    const path = CultivationManager.lifeDocPath(state);
+    return { path, text: (await this.fm.readFile(path)) || '' };
+  }
+
+  // 写入当前世生平文档（LLM 续写后的全文落盘）
+  async saveLifeDoc(text) {
+    const state = await this._loadState();
+    if (!state || !text) return false;
+    await this.fm.writeFile(CultivationManager.lifeDocPath(state), String(text).slice(0, 4000));
+    this._notifyChange();
+    return true;
+  }
+
+  // 身死落笔：在当世文档末尾记下卒于（渡劫失败那一刻）
+  async _finalizeLifeDoc(state, realmName, today) {
+    const path = CultivationManager.lifeDocPath(state);
+    const existing = (await this.fm.readFile(path)) || CultivationManager.buildInitialLifeDoc(state, today);
+    const closing = `\n> ☠️ 卒于 ${today}：渡${realmName}劫失败，天雷灭体，真灵遁入轮回。\n`;
+    await this.fm.writeFile(path, existing.replace(/\n+$/, '\n') + closing);
   }
 
   // ===== 摘要 =====

@@ -49,7 +49,8 @@ const DEFAULT_SETTINGS = {
     petVoice: true,               // 宠物心声与性格更新（LLM，v3.25.0）
     petSpecials: true,            // 宠物每日特供道具生成（LLM，v3.26.0）
     cultTick: true,               // 修仙状态结算（伤势/断签/道心/心魔，v3.27.0）
-    cultFortune: true             // 修仙机缘裁定（LLM，v3.27.0）
+    cultFortune: true,            // 修仙机缘裁定（LLM，v3.27.0）
+    cultLife: true                // 本世生平档案续写（LLM，v3.28.0）
   }
 };
 
