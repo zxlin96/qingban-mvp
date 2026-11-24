@@ -115,6 +115,19 @@ export class CultivationManager {
   static DEMON_TWO_DAY_CLEAR = -30; // 连续 2 天全达标额外 -30/天
   static EARTH_DEMON_DISCOUNT = 0.8; // 土灵根：心魔滋生 -20%
 
+  // ===== 心境事件（v3.30.0：LLM 读每日聊天摘要裁定心境 → 道心/心魔/修为微调）=====
+  // 类型白名单：delta 由系统固定（LLM 只能选类型+给一句理由，防止数值滥用）
+  static MOOD_TYPES = {
+    discipline: { mind: 1, demon: 0, exp: 0, label: '守律坚持' },
+    temptation: { mind: -1, demon: 2, exp: 0, label: '欲念缠身' },
+    stress: { mind: -1, demon: 1, exp: 0, label: '俗务压心' },
+    joy: { mind: 1, demon: 0, exp: 0, label: '心境顺遂' },
+    insight: { mind: 0, demon: 0, exp: 2, label: '灵机一动' }
+  };
+  static MOOD_EVENT_MAX = 3;        // 单次裁定最多事件数（同类型去重）
+  static MOOD_REASON_MAX = 20;      // 理由限长
+  static MOOD_RT_DAILY_CAP = 5;     // 即时渠道（cultivation_mood 工具）每日累计 |delta| 上限，随 behavior 跨天重置
+
   // 坊市：3 件常售丹 + 9 颗突破丹（key 含目标境界 level，price 随境界递增）
   // v3.28.0 价格随进阶曲线重调（日入约 10-40 灵石，首丹约 2-4 天攒够）
   // effect: exp=修为 / heal=清伤势 / demon=心魔增量（负为消减）；breakthrough=目标境界（仅突破丹）
@@ -329,7 +342,7 @@ export class CultivationManager {
   // ===== 行为奖励（app.js 挂接入口；当日去重）=====
 
   _freshBehavior(today) {
-    return { date: today, checkins: {}, meals: 0, weights: 0, fortune: 0, explore: 0, allDone: false, mindToday: 0 };
+    return { date: today, checkins: {}, meals: 0, weights: 0, fortune: 0, explore: 0, allDone: false, mindToday: 0, moodRtAbs: 0 };
   }
 
   _ensureBehaviorDay(state, today) {
@@ -586,6 +599,95 @@ export class CultivationManager {
   _demonInc(state, base) {
     const factor = state.root === 'earth' ? CultivationManager.EARTH_DEMON_DISCOUNT : 1;
     return Math.max(1, Math.round(base * factor));
+  }
+
+  // ===== 心境裁定（v3.30.0：聊天内容 → 道心/心魔/修为）=====
+
+  // 心境事件收敛（纯函数，可单测）：类型白名单、同类型去重、限条数、reason 限长；delta 由 MOOD_TYPES 映射
+  static sanitizeMoodEvents(raw) {
+    if (!raw) return null;
+    const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.events) ? raw.events : null);
+    if (!arr || arr.length === 0) return null;
+    const out = [];
+    const seen = new Set();
+    for (const e of arr) {
+      if (out.length >= CultivationManager.MOOD_EVENT_MAX) break;
+      if (!e || typeof e !== 'object') continue;
+      const def = CultivationManager.MOOD_TYPES[String(e.type || '')];
+      if (!def || seen.has(String(e.type))) continue;
+      seen.add(String(e.type));
+      out.push({
+        type: String(e.type),
+        reason: String(e.reason || '').trim().slice(0, CultivationManager.MOOD_REASON_MAX),
+        mind: def.mind, demon: def.demon, exp: def.exp, label: def.label
+      });
+    }
+    return out.length ? out : null;
+  }
+
+  // 心魔爆发判定（v3.30.0 抽取共用：tickDaily 与心境裁定复用）：≥100 则爆发，修为 -10%
+  _resolveDemonBurst(state) {
+    if (state.demon < CultivationManager.DEMON_BURST) return false;
+    state.exp = Math.floor(state.exp * 0.9);
+    this._addLog(state, 'demon', `🔥 心魔爆发！修为跌落至 ${state.exp}，修行收益减半（全达标两日或服清心丹可化解）`);
+    return true;
+  }
+
+  // 套用心境事件：channel 'settlement'（每日结算，按 date 幂等）/ 'realtime'（AI 对话即时，日累计 |delta| 封顶）
+  // 返回 { applied, demonBursted, summary, skipped }；skipped：settled（已裁定过）/ rt_cap（即时额度尽）/ dead（身死冻结）
+  async applyMoodEvents(events, date, channel = 'settlement') {
+    const clean = CultivationManager.sanitizeMoodEvents(events);
+    const none = { applied: [], demonBursted: false, summary: '' };
+    if (!clean) return none;
+    const state = await this._loadState();
+    if (!state) return none;
+    const today = this._getToday();
+    this._ensureBehaviorDay(state, today);
+
+    if (channel === 'settlement') {
+      if (state.lastMoodDate === date) return { ...none, skipped: 'settled' }; // 幂等：同一日期只裁定一次
+    } else {
+      // 即时渠道节流：当日累计 |delta| 不超过 MOOD_RT_DAILY_CAP
+      let budget = CultivationManager.MOOD_RT_DAILY_CAP - (state.behavior.moodRtAbs || 0);
+      if (budget <= 0) return { ...none, skipped: 'rt_cap' };
+      const picked = [];
+      for (const ev of clean) {
+        const cost = Math.abs(ev.mind) + Math.abs(ev.demon) + Math.abs(ev.exp);
+        if (cost > budget) continue;
+        picked.push(ev);
+        budget -= cost;
+      }
+      if (!picked.length) return { ...none, skipped: 'rt_cap' };
+      clean.length = 0;
+      clean.push(...picked);
+    }
+
+    if (state.dead) {
+      if (channel === 'settlement') { state.lastMoodDate = date; await this._saveState(state); }
+      return { ...none, skipped: 'dead' };
+    }
+
+    const applied = [];
+    const parts = [];
+    for (const ev of clean) {
+      if (ev.mind) state.mind = CultivationManager.clampStat(state.mind + ev.mind);
+      if (ev.demon) state.demon = CultivationManager.clampStat(state.demon + ev.demon);
+      if (ev.exp) state.exp = Math.max(0, (state.exp || 0) + ev.exp);
+      applied.push(ev);
+      const deltaText = [
+        ev.mind ? `道心 ${ev.mind > 0 ? '+' : ''}${ev.mind}` : '',
+        ev.demon ? `心魔 ${ev.demon > 0 ? '+' : ''}${ev.demon}` : '',
+        ev.exp ? `修为 ${ev.exp > 0 ? '+' : ''}${ev.exp}` : ''
+      ].filter(Boolean).join('、');
+      parts.push(`${ev.label}（${deltaText}${ev.reason ? `：${ev.reason}` : ''}）`);
+    }
+    const summary = parts.join('；');
+    this._addLog(state, 'mood', `🎭 心境裁定：${summary}`);
+    if (channel === 'settlement') state.lastMoodDate = date;
+    else state.behavior.moodRtAbs = (state.behavior.moodRtAbs || 0) + applied.reduce((a, e) => a + Math.abs(e.mind) + Math.abs(e.demon) + Math.abs(e.exp), 0);
+    const demonBursted = this._resolveDemonBurst(state);
+    await this._commit(state, channel === 'settlement' ? date : today);
+    return { applied, demonBursted, summary };
   }
 
   // ===== 洞府探索 =====
@@ -924,11 +1026,7 @@ export class CultivationManager {
     }
 
     // 心魔爆发判定
-    if (state.demon >= CultivationManager.DEMON_BURST) {
-      demonBursted = true;
-      state.exp = Math.floor(state.exp * 0.9);
-      this._addLog(state, 'demon', `🔥 心魔爆发！修为跌落至 ${state.exp}，修行收益减半（全达标两日或服清心丹可化解）`);
-    }
+    if (this._resolveDemonBurst(state)) demonBursted = true;
 
     await this._commit(state, yesterdayDate);
     return { changed: true, demonBursted };
@@ -1004,11 +1102,11 @@ export class CultivationManager {
     return { path, text: (await this.fm.readFile(path)) || '' };
   }
 
-  // 写入当前世生平文档（LLM 续写后的全文落盘）
+  // 写入当前世生平文档（LLM 续写后的全文落盘；v3.30.0 上限 4000→6000，给小说连载留空间）
   async saveLifeDoc(text) {
     const state = await this._loadState();
     if (!state || !text) return false;
-    await this.fm.writeFile(CultivationManager.lifeDocPath(state), String(text).slice(0, 4000));
+    await this.fm.writeFile(CultivationManager.lifeDocPath(state), String(text).slice(0, 6000));
     this._notifyChange();
     return true;
   }

@@ -878,3 +878,135 @@ describe('日志与摘要', () => {
     assert.equal(CultivationManager.extractJson('没有JSON'), null);
   });
 });
+
+// ===== 心境裁定（v3.30.0：聊天内容 → 道心/心魔/修为）=====
+
+describe('心境裁定', () => {
+  test('sanitizeMoodEvents：非数组/空数组 → null', () => {
+    assert.equal(CultivationManager.sanitizeMoodEvents(null), null);
+    assert.equal(CultivationManager.sanitizeMoodEvents([]), null);
+    assert.equal(CultivationManager.sanitizeMoodEvents({ events: [] }), null);
+    assert.equal(CultivationManager.sanitizeMoodEvents('junk'), null);
+  });
+
+  test('sanitizeMoodEvents：未知类型剔除、同类型去重、delta 由系统映射', () => {
+    const out = CultivationManager.sanitizeMoodEvents([
+      { type: 'temptation', reason: '夜宵暴食' },
+      { type: 'hacked', reason: 'x' },
+      { type: 'temptation', reason: '重复' },
+      { type: 'joy', reason: '心情不错' }
+    ]);
+    assert.equal(out.length, 2);
+    assert.equal(out[0].type, 'temptation');
+    assert.deepEqual([out[0].mind, out[0].demon, out[0].exp], [-1, 2, 0]);
+    assert.equal(out[1].type, 'joy');
+    assert.deepEqual([out[1].mind, out[1].demon, out[1].exp], [1, 0, 0]);
+  });
+
+  test('sanitizeMoodEvents：超 3 条截断、reason 截 20 字、支持 {events:[...]} 包装', () => {
+    const out = CultivationManager.sanitizeMoodEvents({
+      events: [
+        { type: 'discipline' }, { type: 'temptation' }, { type: 'stress' }, { type: 'joy' },
+        { type: 'insight', reason: '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十' }
+      ]
+    });
+    assert.equal(out.length, 3);
+    assert.ok(out.every(e => e.reason.length <= 20));
+  });
+
+  test('applyMoodEvents(settlement)：套用固定 delta 并记 mood 日志', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { mind: 60, demon: 0, exp: 100 });
+    const res = await cm.applyMoodEvents([{ type: 'temptation', reason: '夜宵暴食' }], yesterday, 'settlement');
+    assert.equal(res.applied.length, 1);
+    assert.equal(res.demonBursted, false);
+    const st = readState(cm);
+    assert.equal(st.mind, 59);
+    assert.equal(st.demon, 2);
+    assert.equal(st.exp, 100);
+    assert.equal(st.lastMoodDate, yesterday);
+    assert.ok(st.log.some(l => l.type === 'mood' && l.text.includes('欲念缠身')));
+  });
+
+  test('applyMoodEvents(settlement)：insight 修为 +2；幂等（同日期第二次 skipped=settled）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { exp: 100 });
+    const res = await cm.applyMoodEvents({ events: [{ type: 'insight', reason: '有所感悟' }] }, yesterday, 'settlement');
+    assert.equal(readState(cm).exp, 102);
+    const again = await cm.applyMoodEvents([{ type: 'insight' }], yesterday, 'settlement');
+    assert.equal(again.skipped, 'settled');
+    assert.equal(again.applied.length, 0);
+    assert.equal(readState(cm).exp, 102); // 未重复加
+  });
+
+  test('applyMoodEvents：心魔推过阈值 → 心魔爆发联动（修为 ×0.9）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { demon: 99, exp: 1000 });
+    const res = await cm.applyMoodEvents([{ type: 'temptation', reason: '暴食' }], yesterday, 'settlement');
+    assert.equal(res.demonBursted, true);
+    const st = readState(cm);
+    assert.equal(st.demon, 100);
+    assert.equal(st.exp, 900);
+    assert.ok(st.log.some(l => l.text.includes('心魔爆发')));
+  });
+
+  test('applyMoodEvents(realtime)：套用并累计 |delta|，达日封顶 5 后 skipped=rt_cap', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { demon: 0, mind: 60 });
+    const r1 = await cm.applyMoodEvents([{ type: 'temptation' }], null, 'realtime'); // cost 3
+    assert.equal(r1.applied.length, 1);
+    const r2 = await cm.applyMoodEvents([{ type: 'stress' }], null, 'realtime');     // cost 2
+    assert.equal(r2.applied.length, 1);
+    assert.equal(readState(cm).behavior.moodRtAbs, 5);
+    const r3 = await cm.applyMoodEvents([{ type: 'joy' }], null, 'realtime');        // 额度尽
+    assert.equal(r3.skipped, 'rt_cap');
+    assert.equal(r3.applied.length, 0);
+    const st = readState(cm);
+    assert.equal(st.demon, 3); // temptation+2 stress+1，joy 未套用
+    assert.equal(st.mind, 58); // 60 -1(temptation) -1(stress)
+  });
+
+  test('applyMoodEvents(realtime)：跨天 behavior 重置后额度恢复', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm);
+    await cm.applyMoodEvents([{ type: 'temptation' }], null, 'realtime');
+    assert.equal(readState(cm).behavior.moodRtAbs, 3);
+    // 模拟跨天：behavior.date 拨回昨天
+    const st = readState(cm);
+    st.behavior.date = yesterday;
+    cm.fm.files.set('.meta/cultivation-state.json', JSON.stringify(st));
+    const r = await cm.applyMoodEvents([{ type: 'joy' }], null, 'realtime');
+    assert.equal(r.applied.length, 1);
+    assert.equal(readState(cm).behavior.moodRtAbs, 1);
+  });
+
+  test('applyMoodEvents：身死态冻结（skipped=dead，settlement 落 lastMoodDate 防重）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { dead: true, demon: 50 });
+    const res = await cm.applyMoodEvents([{ type: 'temptation' }], yesterday, 'settlement');
+    assert.equal(res.skipped, 'dead');
+    const st = readState(cm);
+    assert.equal(st.demon, 50); // 未变动
+    assert.equal(st.lastMoodDate, yesterday);
+    const again = await cm.applyMoodEvents([{ type: 'temptation' }], yesterday, 'settlement');
+    assert.equal(again.skipped, 'settled');
+  });
+
+  test('tickDaily 回归：心魔 ≥100 爆发，修为 ×0.9（_resolveDemonBurst 抽取后行为不变）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { demon: 100, exp: 1000, lastTickDate: null });
+    const res = await cm.tickDaily(yesterday, { hasHabits: false });
+    assert.equal(res.demonBursted, true);
+    const st = readState(cm);
+    assert.equal(st.exp, 900);
+    assert.equal(st.lastTickDate, yesterday);
+    assert.ok(st.log.some(l => l.text.includes('心魔爆发')));
+  });
+
+  test('saveLifeDoc：上限 6000 字（v3.30.0 小说连载扩容）', async () => {
+    const { cm, fm } = newCM();
+    const { state } = await cm.startJourney('wood', '青木');
+    await cm.saveLifeDoc('x'.repeat(7000));
+    assert.equal(fm.files.get(CultivationManager.lifeDocPath(state)).length, 6000);
+  });
+});

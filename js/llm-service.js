@@ -278,15 +278,18 @@ ${exercise || '（暂无记录）'}`;
       }
     }
 
-    // 读取修仙状态（v3.27.0）— 一行摘要注入动态段尾部；v3.28.0 追加本世生平片段（AI 可引用剧情与前世因果）
+    // 读取修仙状态（v3.27.0）— 一行摘要注入动态段尾部；v3.28.0 追加本世生平片段（AI 可引用剧情与前世因果）；v3.30.0 追加近日修行纪事
     let cultSection = '（用户还未踏上仙途，可在修仙面板开启）';
     if (this.onGetCultivationStatus) {
       try {
         const cult = await this.onGetCultivationStatus();
         if (cult && cult.summary) {
           cultSection = cult.summary;
+          if (cult.yesterdayLog) {
+            cultSection += `\n- 近日修行纪事（cultivation 昨日日志，聊修行/用户喊累时可自然衔接）：${cult.yesterdayLog}`;
+          }
           if (cult.lifeDoc && cult.lifeDoc.text) {
-            cultSection += `\n- 本世生平（${cult.lifeDoc.path}，可引用其中剧情/人物/因果与其互动）：${cult.lifeDoc.text.replace(/\s+/g, ' ').slice(0, 400)}`;
+            cultSection += `\n- 本世生平（${cult.lifeDoc.path}，小说连载体，可引用其中剧情/人物/因果与其互动）：${cult.lifeDoc.text.replace(/\s+/g, ' ').slice(0, 400)}`;
           }
         }
       } catch (e) {
@@ -644,6 +647,25 @@ ${cultSection}`;
             required: []
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'cultivation_mood',
+          description: '裁定用户当下心境对修行的影响（v3.30.0）：仅当用户在对话中明确谈及情绪/守律/饮食失控/压力/感悟时调用，如"今晚又暴食了""这几天压力好大""今天坚持下来了"。幅度由系统按类型固定（每日额度有限，勿频繁调用）。调用后用结果自然呼应用户一两句。',
+          parameters: {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['discipline', 'temptation', 'stress', 'joy', 'insight'],
+                description: 'discipline 守律坚持 / temptation 欲念缠身（暴食熬夜等）/ stress 俗务压心 / joy 心境顺遂 / insight 灵机感悟'
+              },
+              reason: { type: 'string', description: '一句依据（≤30字），须落在用户当面对话证据上' }
+            },
+            required: ['type', 'reason']
+          }
+        }
       }
     ];
   }
@@ -860,6 +882,15 @@ ${cultSection}`;
             result = '修仙洞府探索回调未注册';
           }
           displayName = `cultivation_explore()`;
+          break;
+
+        case 'cultivation_mood':
+          if (this.onCultivationMood) {
+            result = await this.onCultivationMood(args);
+          } else {
+            result = '心境裁定回调未注册';
+          }
+          displayName = `cultivation_mood("${(args && args.type) || ''}")`;
           break;
 
         default:

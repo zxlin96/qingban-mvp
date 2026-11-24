@@ -50,7 +50,8 @@ const DEFAULT_SETTINGS = {
     petSpecials: true,            // 宠物每日特供道具生成（LLM，v3.26.0）
     cultTick: true,               // 修仙状态结算（伤势/断签/道心/心魔，v3.27.0）
     cultFortune: true,            // 修仙机缘裁定（LLM，v3.27.0）
-    cultLife: true                // 本世生平档案续写（LLM，v3.28.0）
+    cultLife: true,               // 本世生平档案续写（LLM，v3.28.0）
+    cultMood: true                // 心境裁定（LLM 读昨日聊天摘要 → 道心/心魔/修为微调，v3.30.0）
   }
 };
 

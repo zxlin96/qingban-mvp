@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.29.1';
+const APP_VERSION = '3.30.0';
 const APP_VERSION_DATE = '2026-11-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,15 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.30.0', date: '2026-11-24',
+    items: [
+      '新增：心境裁定 — 每日结算 LLM 读昨日聊天摘要裁定心境事件（守律/欲念/压力/顺遂/感悟五类，数值由系统定），道心/心魔/修为随之微调；AI 对话新增 cultivation_mood 工具可即时裁定（每日额度封顶），聊天内容真正影响修仙',
+      '升级：本世生平档案改为 LLM 小说连载 — 以修行事件为主线、用户日常为灵感种子尽情虚构剧情（埋伏笔/结因果/造人物），档案上限 4000→6000 字，面板生平卡点击展开全文',
+      '升级：机缘/洞府剧情 LLM 自由创作精彩际遇，可呼应近日生活意象（数值仍由掷签档位钳制）；转世家世改为小说主角式强戏剧开局',
+      '升级：AI 对话注入「近日修行纪事」，聊天自然衔接昨日渡劫/机缘/心境剧情；人设 v25，全量 410 测试过'
+    ]
+  },
   {
     ver: '3.29.1', date: '2026-11-24',
     items: [
@@ -1538,7 +1547,7 @@ class App {
       }
     }
 
-    // 步骤 3.11: 本世生平续写（v3.28.0）— LLM 结合昨日修行日志合并更新 cultivation/life-N.md（失败静默跳过）
+    // 步骤 3.11: 本世生平续写（v3.28.0；v3.30.0 改小说连载制）— LLM 结合昨日聊天摘要与修行日志合并更新 cultivation/life-N.md（失败静默跳过）
     if (setlOn('cultLife')) {
       if (this._dtAddStep) this._dtAddStep('本世生平续写');
       const stepCultLife = this._dtStepIndex - 1;
@@ -1551,6 +1560,31 @@ class App {
         } catch (e) {
           console.error('[DayRollover] 生平续写失败（跳过）:', e.message);
           if (this._dtUpdateStep) this._dtUpdateStep(stepCultLife, 'error', e.message);
+        }
+      }
+    }
+
+    // 步骤 3.12: 心境裁定（v3.30.0）— LLM 读昨日聊天摘要裁定心境事件 → 道心/心魔/修为微调（失败静默跳过）
+    if (setlOn('cultMood')) {
+      if (this._dtAddStep) this._dtAddStep('心境裁定（聊天→道心/心魔）');
+      const stepCultMood = this._dtStepIndex - 1;
+      if (stepDone(stepCultMood)) {
+        if (this._dtUpdateStep) this._dtUpdateStep(stepCultMood, 'done');
+      } else {
+        try {
+          const mood = await this._stepTimeout(this._generateMoodEvents(yesterdayDate), 90000, '心境裁定');
+          if (mood && (mood.applied.length > 0 || mood.demonBursted)) {
+            await this.notificationManager.schedule({
+              title: '🎭 心境裁定',
+              message: `${mood.summary}${mood.demonBursted ? ' 心魔爆发，修为倒退！' : ''}`,
+              delayMinutes: 0,
+              type: 'custom'
+            });
+          }
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCultMood, 'done', null, mood && mood.applied.length > 0 ? undefined : '昨日心境平稳或无聊天内容');
+        } catch (e) {
+          console.error('[DayRollover] 心境裁定失败（跳过）:', e.message);
+          if (this._dtUpdateStep) this._dtUpdateStep(stepCultMood, 'error', e.message);
         }
       }
     }
@@ -1813,7 +1847,8 @@ class App {
       ['petSpecials', 'setlPetSpecials'],
       ['cultTick', 'setlCultTick'],
       ['cultFortune', 'setlCultFortune'],
-      ['cultLife', 'setlCultLife']
+      ['cultLife', 'setlCultLife'],
+      ['cultMood', 'setlCultMood']
     ];
   }
 
@@ -6342,12 +6377,26 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         background: state.background || null,
         inventory: state.inventory,
         lifeDoc: await this.cultManager.getLifeDoc(), // 本世生平（v3.28.0，AI 可引用剧情）
+        yesterdayLog: await this._cultYesterdayLog(), // 近日修行纪事（v3.30.0，系统 prompt 注入）
         summary: await this.cultManager.summaryLine()
       };
     };
 
     // cultivation_explore — AI 代用户探索洞府（消耗每日次数，天道裁定吉凶）
     this.llmService.onCultivationExplore = async () => this._doCultivateExplore(true);
+
+    // cultivation_mood — AI 在对话中即时裁定心境（v3.30.0）：幅度由系统定，每日 |delta| 封顶
+    this.llmService.onCultivationMood = async (args) => {
+      const res = await this.cultManager.applyMoodEvents(
+        [{ type: args && args.type, reason: args && args.reason }],
+        null,
+        'realtime'
+      );
+      if (res.skipped === 'rt_cap') return '今日心境牵动额度已尽，明日再叙。（数值不再变化）';
+      if (res.skipped === 'dead') return '道友真灵已入轮回，转世后再受心境牵动。';
+      if (!res.applied.length) return '心境无波澜。（未产生数值变化）';
+      return `${res.summary}${res.demonBursted ? ' 心魔爆发，修为倒退！' : ''}`;
+    };
 
     // 数据变化 → 刷新修仙面板
     this.cultManager.onChangeCallback = () => this._refreshCultPanelIfOpen();
@@ -6389,13 +6438,55 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
   }
 
+  // 昨日修行日志摘要（v3.30.0：系统 prompt「近日修行纪事」素材；无则 null）
+  async _cultYesterdayLog() {
+    try {
+      const yesterday = StatsManager._shiftDate(this.chatManager.getEffectiveToday(), -1);
+      const text = await this.fm.readFile(`cultivation/${yesterday}.md`);
+      if (!text) return null;
+      return String(text).replace(/^---\s*date:[^\n]*\n---\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 近 2 天聊天要点（v3.30.0：机缘/洞府/生平剧情的生活意象素材；缺失静默降级为空串）
+  // 来源：chat/昨日.md + chat/前日.md（各截 250 字）+ 当日内存用户消息（截 300 字）
+  async _cultChatDigest() {
+    try {
+      const today = this.chatManager.getEffectiveToday();
+      const parts = [];
+      for (const d of [StatsManager._shiftDate(today, -1), StatsManager._shiftDate(today, -2)]) {
+        try {
+          const text = await this.fm.readFile(`chat/${d}.md`);
+          if (text) parts.push(`${d}：${String(text).replace(/^---\s*date:[^\n]*\n---\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 250)}`);
+        } catch (_) {}
+      }
+      // 当日聊天（日结摘要未生成，直接从内存取用户消息文本）
+      try {
+        const history = (this.chatManager && this.chatManager.history) || [];
+        const todayMsgs = history
+          .filter(m => m && m.role === 'user' && m.content)
+          .slice(-6)
+          .map(m => String(m.content).replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        if (todayMsgs.length) parts.push(`今日聊天：${todayMsgs.join('；').slice(0, 300)}`);
+      } catch (_) {}
+      return parts.join('\n');
+    } catch (_) {
+      return '';
+    }
+  }
+
   // LLM 天道裁定机缘（v3.28.0：档位已由掷签决定，LLM 在档内编剧情与具体数值）；失败返回档内兜底
+  // v3.30.0：剧情主体自由创作，近日聊天要点仅作意象呼应素材
   async _generateFortune(tier = 'plain') {
     const state = await this.cultManager.getState();
     if (!state || !this.llm || !this.llm.chat) return { tier, narrative: CultivationManager.fortuneFallbackText(tier) };
     const root = CultivationManager.rootDef(state.root);
     const apt = CultivationManager.aptitudeDef(state.aptitude);
     const habitDigest = await this._cultHabitDigest();
+    const chatDigest = await this._cultChatDigest();
     const range = CultivationManager.FORTUNE_TIER_RANGES[tier] || CultivationManager.FORTUNE_TIER_RANGES.plain;
     const tierNames = { great: '大吉', good: '吉', plain: '平', bad: '凶', none: '无波澜' };
     const extraFields = tier === 'great'
@@ -6406,9 +6497,13 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
 {"stones": "灵石变化 ${range.stones[0]}~${range.stones[1]}（档内整数）",
  "exp": "修为变化 ${range.exp[0]}~${range.exp[1]}（档内整数）",
  "narrative": "60-100 字的剧情：具体人物/地点/经过（如路过茶棚听散修论道、悬崖下拾得残剑、被仇家尾随讹诈等），有画面感，贴合本档吉凶"${extraFields}}
-要求：剧情要具体生动像小说片段，不要泛泛而谈；数值必须落在本档范围内。`;
+要求：
+1. 剧情主体尽情自由创作，要精彩曲折像小说片段（偶遇/反转/伏笔皆可），不要泛泛而谈
+2. 用户近日生活要点仅作意象呼应素材（如连日应酬→酒肆遇仙、加班深夜→夜访古洞），一两笔点化即可，切忌照搬叙述日常
+3. 数值必须落在本档范围内。`;
     const user = `修行者：${state.daoName}（${root.label}·${apt.label}），第${state.level}境，修为 ${state.exp}，灵石 ${state.stones}，道心 ${state.mind}，心魔 ${state.demon}。
 近 2 天习惯遵守：${habitDigest}
+${chatDigest ? `近日用户生活要点（仅作意象呼应素材，勿照搬）：\n${chatDigest}\n` : ''}
 档位：${tierNames[tier] || tier}。请编写此次机缘剧情（输出 JSON）：`;
     try {
       const resp = await this.llm.chat(
@@ -6424,10 +6519,12 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
   }
 
   // LLM 天道裁定洞府探索（v3.28.0：档位已由掷签决定，LLM 在档内编剧情与具体数值）；失败返回档内兜底
+  // v3.30.0：剧情主体自由创作，近日聊天要点仅作意象呼应素材
   async _generateExploreResult(tier = 'plain') {
     const state = await this.cultManager.getState();
     if (!state || !this.llm || !this.llm.chat) return { tier, stones: 0, exp: 0, injuryDays: tier === 'bad' ? 1 : 0, narrative: CultivationManager.exploreFallbackText(tier) };
     const habitDigest = await this._cultHabitDigest();
+    const chatDigest = await this._cultChatDigest();
     const range = CultivationManager.EXPLORE_TIER_RANGES[tier] || CultivationManager.EXPLORE_TIER_RANGES.plain;
     const tierNames = { great: '大吉', good: '吉', plain: '平', bad: '凶' };
     const extraFields = tier === 'great'
@@ -6439,9 +6536,13 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
  "exp": "修为变化 ${range.exp[0]}~${range.exp[1]}（档内整数）",
  "injuryDays": "伤势天数 ${range.injury[0]}~${range.injury[1]}（档内整数）",
  "narrative": "80-120 字的洞府剧情：洞府来历/禁制/所遇所见的画面感（如大雾深处的无名洞府、坐化的古修遗蜕、灵药园、残阵反噬等），贴合本档吉凶"${extraFields}}
-要求：剧情要具体生动像小说片段，有探索的悬念与转折，不要泛泛而谈；数值必须落在本档范围内。`;
+要求：
+1. 剧情主体尽情自由创作，有探索的悬念与转折，像小说片段，不要泛泛而谈
+2. 用户近日生活要点仅作意象呼应素材（如连日应酬→酒肆遇仙、加班深夜→夜访古洞），一两笔点化即可，切忌照搬叙述日常
+3. 数值必须落在本档范围内。`;
     const user = `修行者：第${state.level}境，修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}，${state.injured > 0 ? `重伤中（${state.injured} 天），` : ''}灵石 ${state.stones}。
 近 2 天习惯遵守：${habitDigest}
+${chatDigest ? `近日用户生活要点（仅作意象呼应素材，勿照搬）：\n${chatDigest}\n` : ''}
 档位：${tierNames[tier] || tier}。请编写此次洞府探索剧情（输出 JSON）：`;
     try {
       const resp = await this.llm.chat(
@@ -6475,13 +6576,14 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
   }
 
   // LLM 生成转世家世背景（text + perk 白名单，v3.28.0 携前世概要续因果）；失败返回 null 走模板
+  // v3.30.0：强戏剧开局 — 每一世开场即小说主角式际遇
   async _generateBackground(reincarnations, prevSummary = '') {
     if (!this.llm || !this.llm.chat) return null;
     try {
       const sys = `你是轮回司的执笔，为身死道消后转世重修的修行者安排这一世的家世背景。输出 JSON（不要 code fence）：
-{"text": "这一世，你转世为……（40-80字，家世具体生动：富商之子/将门之后/落魄书生/山野猎户等），最好与前世的因果隐约呼应",
+{"text": "这一世，你转世为……（40-80字，小说主角式的强戏剧开局：身世之谜/灭门遗孤/隐世血脉/宿敌转世/落魄天才/被夺气运等，任选其一尽情发挥），最好与前世的因果隐约呼应",
  "perk": "家世带来的一个小助益，四选一：stones20 开局灵石+20 / speed3 修行速度+3% / explore1 洞府探索每日+1次 / fortune1 机缘每日+1次"}`;
-      const user = `这是修行者第 ${reincarnations + 1} 世重修。${prevSummary ? `前世概要：${prevSummary}\n` : ''}请安排家世（输出 JSON）：`;
+      const user = `这是修行者第 ${reincarnations + 1} 世重修。${prevSummary ? `前世概要：${prevSummary}\n` : ''}请安排这一世的家世开局（输出 JSON）：`;
       const resp = await this.llm.chat(
         [{ role: 'system', content: sys }, { role: 'user', content: user }],
         null,
@@ -6494,7 +6596,7 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     }
   }
 
-  // LLM 每日续写本世生平档案（v3.28.0）：结合昨日修行日志与当前档案合并更新（保持分段结构）
+  // LLM 每日续写本世生平档案（v3.28.0；v3.30.0 改"小说连载制"）：聊天生活是灵感种子，想象力是主料
   // 返回 true 表示已更新；失败返回 false（静默跳过，宁缺毋滥）
   async _generateCultLife(yesterdayDate) {
     if (!this.llm || !this.llm.chat) return false;
@@ -6502,17 +6604,27 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
     if (!state) return false;
     const lifeDoc = await this.cultManager.getLifeDoc();
     const dayLog = (await this.fm.readFile(`cultivation/${yesterdayDate}.md`)) || '（昨日无修行动态）';
-    const sys = `你是修真世界的史官，为一位修行者续写其"本世生平档案"（Markdown）。基于旧档案与昨日发生的修行事件，输出合并更新后的完整档案（不要 code fence、不要解释）：
-要求：
+    const chatDigest = ((await this.fm.readFile(`chat/${yesterdayDate}.md`)) || '').replace(/^---\s*date:[^\n]*\n---\s*/, '').trim().slice(0, 600);
+    const sys = `你是修真世界的说书人，为一位修行者将其"本世生平档案"（Markdown）写成精彩的修仙小说连载。基于旧档案、昨日修行事件与昨日生活随笔，输出合并更新后的完整档案（不要 code fence、不要解释）。
+素材优先级：
+1. 旧档案中的人物/因果/未收伏笔（必须延续，不得弃坑）
+2. 昨日修行事件（渡劫/机缘/心魔/洞府/心境裁定，是大事件素材，笔法郑重）
+3. 昨日用户生活随笔（仅作灵感种子，一两笔点化即可：加班→红尘炼心斩俗念、聚餐→麻辣灵膳淬体、通勤→御剑赶路既视感；切忌流水账复述日常）
+创作要求：
 1. 保持原有分段结构（家世信息行 + ## 修行纪事 / ## 人物与因果 / ## 心境感悟）
-2. 「修行纪事」按日期追加条目（日期前缀，一条一行，最多保留近 15 条）；渡劫/身死/顿悟等大事件要单独成条且笔法郑重
-3. 「人物与因果」记录遇到的人物与结下的因果（最多 6 条）；「心境感悟」写一两句当下心境（可化用修仙意象）
-4. 全文不超过 800 字，语言凝练有古风，像真正的传记`;
+2. 「修行纪事」按日期追加条目（日期前缀，一条一行，最多保留近 15 条），每则有画面感与转折；渡劫/身死/顿悟等大事件单独成章
+3. 可自由虚构同门/散修/宿敌/前辈等人物推进剧情；每 3-5 日埋一个新伏笔或推进一条因果线
+4. 「人物与因果」记录遇到的人物与结下的因果（最多 6 条）；「心境感悟」写一两句当下心境，与当集剧情呼应
+5. 全文不超过 1200 字，语言凝练有古风，像真正的传记小说
+底线约束：剧情可尽情虚构，但修为/灵石/境界等数值一律以上方"当前状态"为准，不得在文中虚构数值。`;
     const user = `## 当前档案（第 ${state.reincarnations + 1} 世）
 ${lifeDoc ? lifeDoc.text.slice(0, 2500) : '（暂无）'}
 
 ## 昨日修行动态（${yesterdayDate}）
 ${dayLog.slice(0, 1200)}
+
+## 昨日用户生活随笔（chat 摘要，仅作灵感种子）
+${chatDigest || '（昨日无对话记录）'}
 
 ## 当前状态
 ${CultivationManager.realmOfState(state).fullName}（第${state.level}境），修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}。
@@ -6530,6 +6642,46 @@ ${CultivationManager.realmOfState(state).fullName}（第${state.level}境），�
     } catch (e) {
       console.warn('[CultLife] 生平续写失败:', e.message);
       return false;
+    }
+  }
+
+  // LLM 心境裁定（v3.30.0）：读昨日聊天摘要 + 昨日修行日志 → 心境事件（类型白名单，delta 由系统定）
+  // 返回 applyMoodEvents 结果；失败/无聊天内容返回 null（静默跳过）
+  async _generateMoodEvents(yesterdayDate) {
+    if (!this.llm || !this.llm.chat) return null;
+    const state = await this.cultManager.getState();
+    if (!state) return null;
+    const chatDigest = ((await this.fm.readFile(`chat/${yesterdayDate}.md`)) || '').replace(/^---\s*date:[^\n]*\n---\s*/, '').trim().slice(0, 800);
+    if (!chatDigest) return null; // 心境裁定以聊天内容为依据，无聊天则跳过（习惯遵守已有 tickDaily 管）
+    const dayLog = ((await this.fm.readFile(`cultivation/${yesterdayDate}.md`)) || '').replace(/^---\s*date:[^\n]*\n---\s*/, '').trim().slice(0, 400);
+    const moodDesc = Object.entries(CultivationManager.MOOD_TYPES).map(([k, v]) => `${k}=${v.label}`).join(' / ');
+    const sys = `你是修真世界的"心镜"，照见修行者昨日的心境起伏。基于其昨日与 AI 助手的对话摘要与修行日志，裁定昨日值得记录的 0-3 个心境事件。
+输出 JSON（不要 code fence、不要解释）：
+{"events": [{"type": "五选一：${moodDesc}", "reason": "12字内，依据对话中的具体言行（如'夜宵暴食''坚持晨跑''工作高压'）"}]}
+要求：
+1. 仅当对话/日志中确有对应言行时才给出事件，无则输出 {"events": []}；宁缺毋滥
+2. 最多 3 个，同类型只取最显著一个；reason 必须落在对话证据上，不得虚构
+3. 你只定类型与理由，数值由系统裁定`;
+    const user = `修行者：${state.daoName}，第${state.level}境，当前道心 ${state.mind}、心魔 ${state.demon}。
+## 昨日对话摘要（${yesterdayDate}）
+${chatDigest}
+
+## 昨日修行日志
+${dayLog || '（昨日无修行动态）'}
+
+请裁定昨日心境事件（输出 JSON）：`;
+    try {
+      const resp = await this.llm.chat(
+        [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        null,
+        { task: 'cult_mood' }
+      );
+      const obj = CultivationManager.extractJson(resp && resp.content);
+      if (!obj) return null;
+      return await this.cultManager.applyMoodEvents(obj, yesterdayDate, 'settlement');
+    } catch (e) {
+      console.warn('[CultMood] 心境裁定失败:', e.message);
+      return null;
     }
   }
 
@@ -6698,10 +6850,11 @@ ${CultivationManager.realmOfState(state).fullName}（第${state.level}境），�
       ? '<div class="cult-log"><div class="cult-log-item">暂无动态</div></div>'
       : `<div class="cult-log">${logs.map(l => `<div class="cult-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="cult-log-more">仅显示最近 8 条</div>' : ''}`;
 
-    // 本世生平档案（v3.28.0：每一世一个文档，每日结算由 LLM 续写）
+    // 本世生平档案（v3.28.0：每一世一个文档，每日结算由 LLM 续写；v3.30.0：点击展开全文）
     const lifeDoc = await this.cultManager.getLifeDoc();
+    this._lifeDocFull = (lifeDoc && lifeDoc.text) || '';
     const lifeHtml = (lifeDoc && lifeDoc.text)
-      ? `<div class="cult-life-card"><div class="cult-life-title">📜 第 ${(state.reincarnations || 0) + 1} 世生平 <span class="cult-life-path">${escapeHtml(lifeDoc.path)}</span></div><div class="cult-life-text">${escapeHtml(lifeDoc.text.slice(0, 500))}${lifeDoc.text.length > 500 ? '…' : ''}</div></div>`
+      ? `<div class="cult-life-card" id="cultLifeCard" role="button" tabindex="0" title="点击展开全文"><div class="cult-life-title">📜 第 ${(state.reincarnations || 0) + 1} 世生平 <span class="cult-life-path">${escapeHtml(lifeDoc.path)}</span></div><div class="cult-life-text" id="cultLifeText">${escapeHtml(lifeDoc.text.slice(0, 500))}${lifeDoc.text.length > 500 ? '…' : ''}</div>${lifeDoc.text.length > 500 ? '<div class="cult-life-more">点击展开全文</div>' : ''}</div>`
       : '';
 
     contentEl.innerHTML = `
@@ -6737,6 +6890,19 @@ ${CultivationManager.realmOfState(state).fullName}（第${state.level}境），�
 
   // 修仙面板事件委托（内容区动态重绘，按钮统一在此分发）
   async _onCultContentClick(e) {
+    // 生平卡点击展开/收起全文（v3.30.0）
+    if (e.target.closest('#cultLifeCard')) {
+      const textEl = document.getElementById('cultLifeText');
+      if (textEl && this._lifeDocFull) {
+        const expanded = textEl.classList.toggle('expanded');
+        textEl.textContent = expanded
+          ? this._lifeDocFull
+          : this._lifeDocFull.slice(0, 500) + (this._lifeDocFull.length > 500 ? '…' : '');
+        const moreEl = textEl.parentElement.querySelector('.cult-life-more');
+        if (moreEl) moreEl.textContent = expanded ? '点击收起' : '点击展开全文';
+      }
+      return;
+    }
     const rootBtn = e.target.closest('[data-cult-root]');
     if (rootBtn) {
       this._cultSetupRoot = rootBtn.dataset.cultRoot;
