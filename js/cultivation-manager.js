@@ -58,6 +58,8 @@ export class CultivationManager {
   // v3.28.0 节奏重调：日活约 60-150 修为/天，炼气→筑基约 2-3 天，一路到金仙约一年以上
   static LEVELS = [0, 240, 700, 1500, 2800, 4800, 7800, 12000, 18000, 26000];
   static REALMS = ['炼气', '筑基', '金丹', '元婴', '化神', '合体', '大乘', '渡劫', '真仙', '金仙'];
+  // 小境界（v3.29.0）：每个大境界内分 4 段，长门槛内进度更平缓
+  static SUBREALMS = ['初期', '中期', '后期', '大圆满'];
 
   // 由 exp 反推境界阈值（纯函数，仅测试/工具用）：运行时的境界以 state.realm 为准（突破才提升）
   static realmOf(exp) {
@@ -70,12 +72,15 @@ export class CultivationManager {
   }
 
   // 当前境界（运行时唯一口径，纯函数）：realm 由渡劫/顿悟提升，exp 只决定境内进度与是否圆满
+  // subIndex/subName/fullName：境内小境界（v3.29.0，4 段制，进度条更平缓）
   static realmOfState(state) {
     const realm = Math.max(1, Math.min(10, state.realm || 1));
     const nextExp = realm < 10 ? CultivationManager.LEVELS[realm] : null;
     const base = CultivationManager.LEVELS[realm - 1];
     const progress = nextExp === null ? 1 : Math.min(1, Math.max(0, ((state.exp || 0) - base) / (nextExp - base)));
-    return { level: realm, name: CultivationManager.REALMS[realm - 1], nextExp, base, progress };
+    const subIndex = nextExp === null ? 3 : Math.min(3, Math.floor(progress * 4));
+    const subName = CultivationManager.SUBREALMS[subIndex];
+    return { level: realm, name: CultivationManager.REALMS[realm - 1], nextExp, base, progress, subIndex, subName, fullName: `${CultivationManager.REALMS[realm - 1]}·${subName}` };
   }
 
   // 行为奖励表：exp 为基础修为（实际 = base × 修行速度公式）；stones 直接发灵石
@@ -415,12 +420,17 @@ export class CultivationManager {
     return { type: 'weight', exp, stones: 0 };
   }
 
-  // 发放基础修为：base × (1+灵根亲和) × expGainFactor，记吐纳/打坐等日志
+  // 发放基础修为：base × (1+灵根亲和) × expGainFactor，记吐纳/打坐等日志；跨小境界时记「境界精进」
   _applyExp(state, type) {
     const base = CultivationManager.REWARDS[type].exp;
     const affinity = 1 + CultivationManager.rootAffinityBonus(state.root, type);
+    const beforeSub = CultivationManager.realmOfState(state).subIndex;
     const gain = Math.max(1, Math.round(base * affinity * this.expGainFactor(state)));
     state.exp = (state.exp || 0) + gain;
+    const afterRealm = CultivationManager.realmOfState(state);
+    if (afterRealm.subIndex > beforeSub) {
+      this._addLog(state, 'subrealm', `🌊 境界精进：${afterRealm.fullName}`);
+    }
     const texts = {
       checkin: `吐纳（打卡）：修为 +${gain}`,
       meal: `服用灵膳：修为 +${gain}`,
@@ -1026,7 +1036,7 @@ export class CultivationManager {
       : state.demon >= CultivationManager.DEMON_BURST ? '心魔爆发中'
       : state.injured > 0 ? `重伤中（${state.injured} 天，收益减半）` : '修行如常';
     const expText = realm.nextExp === null ? '金仙圆满' : `修为${state.exp}/${realm.nextExp}`;
-    let line = `☯ ${state.daoName}（${root.icon}${root.label}·${apt.label}）第${realm.level}境·${realm.name} ${expText} ｜ 灵石${state.stones} ｜ 道心${state.mind} 心魔${state.demon} ｜ ${status} ｜ 修行速度${speedPct}`;
+    let line = `☯ ${state.daoName}（${root.icon}${root.label}·${apt.label}）第${realm.level}境·${realm.name}${realm.subName} ${expText} ｜ 灵石${state.stones} ｜ 道心${state.mind} 心魔${state.demon} ｜ ${status} ｜ 修行速度${speedPct}`;
     if (state.streak > 0) line += ` ｜ 连续活跃 ${state.streak} 天`;
     if ((state.reincarnations || 0) > 0) line += ` ｜ 第 ${state.reincarnations + 1} 世`;
     const bt = await this.getBreakthroughInfo();

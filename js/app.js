@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.28.0';
+const APP_VERSION = '3.29.0';
 const APP_VERSION_DATE = '2026-11-24';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.29.0', date: '2026-11-24',
+    items: [
+      '新增：小境界（初期/中期/后期/大圆满）— 每个大境界内按进度分 4 段，长门槛内进度更平缓；跨段记「🌊 境界精进」日志并进入生平档案；面板/摘要/AI 状态均展示（如「金丹·中期」），全量 399 测试过'
+    ]
+  },
   {
     ver: '3.28.0', date: '2026-11-24',
     items: [
@@ -6320,6 +6326,8 @@ ${intent.allDone ? '4. 主人旅行期间坚持完成了所有习惯，要为此
         root: state.root,
         aptitude: state.aptitude,
         realm: realm.name,
+        subName: realm.subName,   // 小境界（v3.29.0：初期/中期/后期/大圆满）
+        fullName: realm.fullName,
         level: realm.level,
         exp: state.exp,
         nextExp: realm.nextExp,
@@ -6506,7 +6514,7 @@ ${lifeDoc ? lifeDoc.text.slice(0, 2500) : '（暂无）'}
 ${dayLog.slice(0, 1200)}
 
 ## 当前状态
-第${state.level}境，修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}。
+${CultivationManager.realmOfState(state).fullName}（第${state.level}境），修为 ${state.exp}，道心 ${state.mind}，心魔 ${state.demon}。
 
 请输出合并更新后的完整档案 Markdown：`;
     try {
@@ -6643,8 +6651,8 @@ ${dayLog.slice(0, 1200)}
       : (state.streak || 0) >= 3 ? '灵气运转，渐入佳境。'
       : '修行如常，日拱一卒。';
     const levelBar = realm.nextExp === null
-      ? `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.name}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:100%"></div></div><span class="cult-level-next">金仙圆满</span></div>`
-      : `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.name}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:${Math.round(realm.progress * 100)}%"></div></div><span class="cult-level-next">修为 ${state.exp}/${realm.nextExp}</span></div>`;
+      ? `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.fullName}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:100%"></div></div><span class="cult-level-next">金仙圆满</span></div>`
+      : `<div class="cult-level-row"><span class="cult-level-name">第${realm.level}境 ${realm.fullName}</span><div class="cult-level-bar"><div class="cult-level-fill" style="width:${Math.round(realm.progress * 100)}%"></div></div><span class="cult-level-next">修为 ${state.exp}/${realm.nextExp}</span></div>`;
 
     // 突破区
     const bt = await this.cultManager.getBreakthroughInfo();

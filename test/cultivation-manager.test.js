@@ -718,6 +718,42 @@ describe('洞府探索', () => {
   });
 });
 
+// ===== 小境界（v3.29.0：每境初期/中期/后期/大圆满四段）=====
+
+describe('小境界', () => {
+  test('realmOfState 按境内进度分 4 段：0/25%/50%/75%', () => {
+    const span = T1 - 0; // 炼气境 0→240
+    const st = (exp) => CultivationManager.realmOfState({ realm: 1, exp });
+    assert.equal(st(0).subName, '初期');
+    assert.equal(st(Math.floor(span * 0.25)).subName, '中期');
+    assert.equal(st(Math.floor(span * 0.5)).subName, '后期');
+    assert.equal(st(Math.floor(span * 0.75)).subName, '大圆满');
+    assert.equal(st(T1).subName, '大圆满'); // 圆满未突破仍是大圆满
+    assert.equal(st(0).fullName, '炼气·初期');
+  });
+
+  test('满级（realm 10）恒为大圆满', () => {
+    const r = CultivationManager.realmOfState({ realm: 10, exp: 99999 });
+    assert.equal(r.subName, '大圆满');
+    assert.equal(r.fullName, '金仙·大圆满');
+  });
+
+  test('跨小境界记「境界精进」日志', async () => {
+    const { cm } = newCM();
+    // 炼气 0→240：235 + 10 修为 → 245？不，235+10=245 已破境；用 55+10=65 跨 60（25%）
+    await seedCultivation(cm, { exp: 55, root: 'metal' }); // 金灵根运动亲和 +25% → +13
+    await cm.onExercise(); // 55 → 68，跨过 60 → 中期
+    const logs = readState(cm).log;
+    assert.ok(logs.some(l => l.type === 'subrealm' && l.text.includes('炼气·中期')));
+  });
+
+  test('summaryLine 含小境界名', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { exp: Math.floor(T1 * 0.3) }); // 炼气·中期
+    assert.ok((await cm.summaryLine()).includes('炼气中期'));
+  });
+});
+
 // ===== 天道掷签（v3.28.0）=====
 
 describe('天道掷签', () => {
