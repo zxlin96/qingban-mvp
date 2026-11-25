@@ -3,8 +3,8 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.30.0';
-const APP_VERSION_DATE = '2026-11-24';
+const APP_VERSION = '3.30.1';
+const APP_VERSION_DATE = '2026-11-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
 
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.30.1', date: '2026-11-25',
+    items: [
+      '修复：心境裁定步骤 90s 超时失败 — LLM 产出与数值套用解耦（套用收口在结算步骤内，超时后旧调用仍在后台跑也不重复套用），超时放宽至 150s 且失败 10s 后自动重试一次（对齐习惯刷新/宠物心声模式，结算链末端 LLM 密集易撞限流），全量 410 测试过'
+    ]
+  },
   {
     ver: '3.30.0', date: '2026-11-24',
     items: [
@@ -1565,6 +1571,8 @@ class App {
     }
 
     // 步骤 3.12: 心境裁定（v3.30.0）— LLM 读昨日聊天摘要裁定心境事件 → 道心/心魔/修为微调（失败静默跳过）
+    // v3.30.1：LLM 只产出事件、套用收口在步骤内（_stepTimeout 超时后旧调用仍在后台跑，解耦后重试无副作用）；
+    //          超时 90s→150s + 失败 10s 后重试一次（对齐习惯刷新模式；结算链末端 LLM 密集易撞限流）
     if (setlOn('cultMood')) {
       if (this._dtAddStep) this._dtAddStep('心境裁定（聊天→道心/心魔）');
       const stepCultMood = this._dtStepIndex - 1;
@@ -1572,7 +1580,15 @@ class App {
         if (this._dtUpdateStep) this._dtUpdateStep(stepCultMood, 'done');
       } else {
         try {
-          const mood = await this._stepTimeout(this._generateMoodEvents(yesterdayDate), 90000, '心境裁定');
+          let events = null;
+          try {
+            events = await this._stepTimeout(this._generateMoodEvents(yesterdayDate), 150000, '心境裁定');
+          } catch (e1) {
+            console.warn('[DayRollover] 心境裁定首次失败，10s 后重试:', e1.message);
+            await new Promise((r) => setTimeout(r, 10000));
+            events = await this._stepTimeout(this._generateMoodEvents(yesterdayDate), 150000, '心境裁定');
+          }
+          const mood = events ? await this.cultManager.applyMoodEvents(events, yesterdayDate, 'settlement') : null;
           if (mood && (mood.applied.length > 0 || mood.demonBursted)) {
             await this.notificationManager.schedule({
               title: '🎭 心境裁定',
@@ -6646,7 +6662,7 @@ ${CultivationManager.realmOfState(state).fullName}（第${state.level}境），�
   }
 
   // LLM 心境裁定（v3.30.0）：读昨日聊天摘要 + 昨日修行日志 → 心境事件（类型白名单，delta 由系统定）
-  // 返回 applyMoodEvents 结果；失败/无聊天内容返回 null（静默跳过）
+  // v3.30.1：只产出事件不套用（套用收口在结算步骤内，_stepTimeout 超时重试无副作用）；失败/无聊天内容返回 null
   async _generateMoodEvents(yesterdayDate) {
     if (!this.llm || !this.llm.chat) return null;
     const state = await this.cultManager.getState();
@@ -6678,7 +6694,7 @@ ${dayLog || '（昨日无修行动态）'}
       );
       const obj = CultivationManager.extractJson(resp && resp.content);
       if (!obj) return null;
-      return await this.cultManager.applyMoodEvents(obj, yesterdayDate, 'settlement');
+      return CultivationManager.sanitizeMoodEvents(obj);
     } catch (e) {
       console.warn('[CultMood] 心境裁定失败:', e.message);
       return null;
