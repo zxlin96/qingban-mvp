@@ -239,7 +239,22 @@ export class CultivationManager {
     if (!raw) return null;
     try {
       const d = JSON.parse(raw);
-      return (d && d.daoName) ? d : null; // 缺 daoName 视为损坏，走重新创建
+      if (!d || !d.daoName) return null; // 缺 daoName 视为损坏，走重新创建
+      // v3.30.3 invariant 校准：修为不低于当前境界下限（v3.28.0 门槛上调前的旧档、或连次心魔爆发跌破下限，
+      // 会导致境内进度为负、进度条/小境界显示异常；校准并记日志，version 升 2）
+      const realm = Math.max(1, Math.min(10, d.realm || 1));
+      const base = CultivationManager.LEVELS[realm - 1];
+      if (!Array.isArray(d.log)) d.log = [];
+      if ((d.exp || 0) < base) {
+        d.exp = base;
+        d.version = 2;
+        this._addLog(d, 'migrate', `🛠 修为校准至本境下限 ${base}`);
+        await this._saveState(d);
+      } else if (d.version !== 2) {
+        d.version = 2;
+        await this._saveState(d);
+      }
+      return d;
     } catch {
       return null;
     }
@@ -274,7 +289,7 @@ export class CultivationManager {
     const def = CultivationManager.rootDef(rootKey);
     const today = this._getToday();
     const state = {
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
       daoName: (String(daoName || '').trim() || '无名散修').slice(0, 8),
       root: def.key,
@@ -404,6 +419,7 @@ export class CultivationManager {
     this._ensureBehaviorDay(state, today);
     if (state.behavior.meals >= CultivationManager.MEAL_DAILY_LIMIT) return null;
     state.behavior.meals++;
+    this._touchStreak(state, today); // v3.30.3：三餐也算修行活跃
     const exp = this._applyExp(state, 'meal');
     await this._commit(state, today);
     return { type: 'meal', exp, stones: 0 };
@@ -415,6 +431,7 @@ export class CultivationManager {
     if (!state || state.dead) return null;
     const today = this._getToday();
     this._ensureBehaviorDay(state, today);
+    this._touchStreak(state, today); // v3.30.3：打坐炼体也算修行活跃
     const exp = this._applyExp(state, 'exercise');
     await this._commit(state, today);
     return { type: 'exercise', exp, stones: 0 };
@@ -428,6 +445,7 @@ export class CultivationManager {
     this._ensureBehaviorDay(state, today);
     if (state.behavior.weights >= 1) return null;
     state.behavior.weights++;
+    this._touchStreak(state, today); // v3.30.3：内视探脉也算修行活跃
     const exp = this._applyExp(state, 'weight');
     await this._commit(state, today);
     return { type: 'weight', exp, stones: 0 };
@@ -515,6 +533,7 @@ export class CultivationManager {
     }
     const today = this._getToday();
     state.inventory[pill.key]--;
+    this._touchStreak(state, today); // v3.30.3：渡劫也算修行活跃
     const rate = CultivationManager.tribulationRate(state);
     this._addLog(state, 'tribulation', `⚡ 服下${pill.icon}${pill.name}引动天劫，冲击${CultivationManager.REALMS[realm.level]}境（成算 ${Math.round(rate * 100)}%）`);
     if (this._rand() < rate) {
@@ -548,6 +567,7 @@ export class CultivationManager {
     if (realm.nextExp === null || state.exp < realm.nextExp) return null;
     state.realm = realm.level + 1;
     state.injured = 0;
+    this._touchStreak(state, this._getToday()); // v3.30.3：顿悟突破也算修行活跃
     this._addLog(state, 'breakthrough', `🌟 ${sourceText || '一朝顿悟'}，水到渠成，直入${CultivationManager.REALMS[realm.level]}境！`);
     await this._commit(state, this._getToday());
     return CultivationManager.realmOfState(state);
@@ -708,6 +728,7 @@ export class CultivationManager {
     const remaining = limit - state.behavior.explore;
     if (remaining <= 0) return { success: false, reason: 'limit_reached', message: '今日探索次数已尽，明日再来', remaining: 0 };
     state.behavior.explore++;
+    this._touchStreak(state, today); // v3.30.3：洞府探索也算修行活跃
     await this._commit(state, today);
     return { success: true, remaining: remaining - 1 };
   }
@@ -987,15 +1008,15 @@ export class CultivationManager {
     // 伤势倒计时
     if (state.injured > 0) state.injured--;
 
-    // 断签 reconciliation：昨日完全无打卡且今日也未打卡 → 连续活跃清零
-    const checkins = habitInfo.checkinCount || 0;
-    if (checkins === 0 && state.lastActiveDate && state.lastActiveDate < yesterdayDate) {
-      if (state.streak > 0) this._addLog(state, 'mind', `断签数日，修行懈怠，连续记录归零（此前 ${state.streak} 天）`);
+    // 断签 reconciliation（v3.30.3：连续活跃=任意修行行为日；昨日与今日皆无修行 → 清零，与习惯打卡解耦）
+    if (state.lastActiveDate && state.lastActiveDate < yesterdayDate) {
+      if (state.streak > 0) this._addLog(state, 'mind', `数日未有修行，连续活跃归零（此前 ${state.streak} 天）`);
       state.streak = 0;
     }
 
     // 道心/心魔：按昨日习惯遵守结算（无习惯数据则不奖不罚）
     if (habitInfo.hasHabits) {
+      const checkins = habitInfo.checkinCount || 0;
       if (habitInfo.allDone) {
         state.allDoneStreak = (state.allDoneStreak || 0) + 1;
         state.partialStreak = 0;

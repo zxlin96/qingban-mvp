@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.30.2';
+const APP_VERSION = '3.30.3';
 const APP_VERSION_DATE = '2026-11-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,13 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.30.3', date: '2026-11-25',
+    items: [
+      '修复：修为低于本境下限导致进度条空/小境界异常 — 载入时强制校准修为至当前境界下限并记 🛠 日志（v3.28.0 门槛上调的旧档未迁移、连次心魔爆发均可跌破下限；如金丹境修为 400 自动校准为 700），state.version 升 2',
+      '修复：连续活跃只认习惯打卡 — 改为任意修行行为都计数（打卡/三餐/运动/称重/洞府探索/渡劫），断签判定同步改为按最后活跃日（与习惯打卡解耦），引导文案与人设 v26 同步，全量 419 测试过'
+    ]
+  },
   {
     ver: '3.30.2', date: '2026-11-25',
     items: [
@@ -6785,7 +6792,7 @@ ${dayLog || '（昨日无修行动态）'}
       contentEl.innerHTML = `
         <div class="cult-setup">
           <div class="cult-setup-title">踏入仙途</div>
-          <div class="cult-setup-note">你的减肥日常就是修行：打卡=吐纳、运动=打坐炼体、三餐=服用灵膳、称重=内视探脉，皆有修为。<br>连续打卡提升修行速度；破戒会滋生心魔，心魔爆发修为倒退。修为圆满后服突破丹渡劫，越到高境越难——身死道消亦可转世重修，灵根资质世世相随。</div>
+          <div class="cult-setup-note">你的减肥日常就是修行：打卡=吐纳、运动=打坐炼体、三餐=服用灵膳、称重=内视探脉，皆有修为；洞府探索与渡劫亦记活跃。<br>连续修行提升修行速度；破戒会滋生心魔，心魔爆发修为倒退。修为圆满后服突破丹渡劫，越到高境越难——身死道消亦可转世重修，灵根资质世世相随。</div>
           <div class="cult-section-title">选择灵根（亲和行为修为 +25%）</div>
           <div class="cult-root-picker">
             ${CultivationManager.ROOTS.map(r => `<button class="cult-root-option ${r.key === active ? 'active' : ''}" data-cult-root="${r.key}" type="button"><span class="cult-root-emoji">${r.icon}</span><span class="cult-root-label">${r.label}</span><span class="cult-root-affinity">${r.affinityLabel}</span></button>`).join('')}

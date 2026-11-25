@@ -1,6 +1,6 @@
 {
   "name": "qingban-mvp",
-  "version": "3.30.2",
+  "version": "3.30.3",
   "type": "module",
   "private": true,
   "scripts": {

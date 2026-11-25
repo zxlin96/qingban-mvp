@@ -307,6 +307,90 @@ describe('连续活跃 streak', () => {
     const r = await cm.tickDaily(yesterday, { hasHabits: true, checkinCount: 3, allDone: true });
     assert.equal(r.changed, false);
   });
+
+  // v3.30.3：连续活跃 = 任意修行行为（打卡/三餐/运动/称重/探索/渡劫）
+  test('三餐/运动/称重均推进连续活跃（首次 streak=1，lastActiveDate=今日）', async () => {
+    for (const hook of ['onMeal', 'onExercise', 'onWeight']) {
+      const { cm } = newCM();
+      await seedCultivation(cm);
+      await cm[hook]();
+      const st = readState(cm);
+      assert.equal(st.streak, 1, `${hook} 应推进 streak`);
+      assert.equal(st.lastActiveDate, today, `${hook} 应更新 lastActiveDate`);
+    }
+  });
+
+  test('同日多次行为不重复计数（streak 仍 1，bestStreak 1）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm);
+    await cm.onMeal();
+    await cm.onExercise();
+    await cm.onCheckin('h1');
+    const st = readState(cm);
+    assert.equal(st.streak, 1);
+    assert.equal(st.bestStreak, 1);
+  });
+
+  test('洞府探索推进连续活跃', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { streak: 2, lastActiveDate: yesterday });
+    await cm.consumeExplore();
+    assert.equal(readState(cm).streak, 3);
+  });
+
+  test('渡劫尝试推进连续活跃', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { exp: T1, inventory: { zhuji: 1 } });
+    seedRand(cm, [0.5]); // 成功
+    await cm.attemptBreakthrough();
+    const st = readState(cm);
+    assert.equal(st.streak, 1);
+    assert.equal(st.lastActiveDate, today);
+  });
+
+  test('tickDaily：昨日有任意修行行为（lastActiveDate=昨日）→ streak 不清零', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { streak: 5, lastActiveDate: yesterday });
+    const r = await cm.tickDaily(yesterday, { hasHabits: true, checkinCount: 0, allDone: false });
+    assert.equal(r.changed, true);
+    assert.equal(readState(cm).streak, 5);
+  });
+
+  test('tickDaily 断签清零日志文案：数日未有修行', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { streak: 5, lastActiveDate: shift(today, -2) });
+    await cm.tickDaily(yesterday, { hasHabits: false });
+    const st = readState(cm);
+    assert.equal(st.streak, 0);
+    assert.ok(st.log.some(l => l.text.includes('数日未有修行')));
+  });
+});
+
+// ===== 修为下限 invariant 校准（v3.30.3）=====
+
+describe('修为下限校准', () => {
+  test('修为低于本境下限 → 载入自动校准 + 日志 + version 2', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { realm: 2, exp: 100, version: 1 }); // 筑基下限 240
+    const st = await cm.getState();
+    assert.equal(st.exp, CultivationManager.LEVELS[1]);
+    assert.equal(st.version, 2);
+    assert.ok(st.log.some(l => l.type === 'migrate' && l.text.includes('修为校准')));
+  });
+
+  test('修为正常不动（不触发校准日志）', async () => {
+    const { cm } = newCM();
+    await seedCultivation(cm, { realm: 2, exp: 500, version: 2 });
+    const st = await cm.getState();
+    assert.equal(st.exp, 500);
+    assert.ok(!st.log.some(l => l.type === 'migrate'));
+  });
+
+  test('startJourney 新档 version 2', async () => {
+    const { cm } = newCM();
+    const { state } = await cm.startJourney('water', '青崖');
+    assert.equal(state.version, 2);
+  });
 });
 
 // ===== 道心/心魔结算 =====
