@@ -3708,11 +3708,9 @@ html.web-env .pwa-hint span { flex: 1; }
   white-space: pre-wrap;
   word-break: break-all;
 }
-/* 生平卡展开全文（v3.30.0）：点击后显示完整连载 */
+/* 生平卡展开全文（v3.30.2）：全文随面板体（.cult-body）滚动，无内滚动框 */
 .cult-life-card { cursor: pointer; }
 .cult-life-text.expanded {
-  max-height: 60vh;
-  overflow-y: auto;
   color: var(--ink);
 }
 .cult-life-more {

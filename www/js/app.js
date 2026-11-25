@@ -3,7 +3,7 @@
 
 // ===== 版本号 =====
 // 每次发布修改版本号，App 启动时显示在顶栏，点击可查看 CHANGELOG
-const APP_VERSION = '3.30.1';
+const APP_VERSION = '3.30.2';
 const APP_VERSION_DATE = '2026-11-25';
 // 暴露版本到全局：启动诊断横幅据此判断新包是否真的加载到了最新代码
 window.__qbVersion = APP_VERSION;
@@ -14,6 +14,12 @@ const ROLLOVER_PENDING_KEY = '.meta/rollover-pending.json';
 const DRAFT_KEY = '.meta/daily-draft.json';
 
 const CHANGELOG = [
+  {
+    ver: '3.30.2', date: '2026-11-25',
+    items: [
+      '修复：修仙面板生平卡「展开全文」不完整 — 展开状态从 DOM 改为实例标志（面板任何重渲染不再打回折叠态），全文随面板体滚动呈现（去掉 60vh 内滚动框），打开面板时重置为折叠，全量 410 测试过'
+    ]
+  },
   {
     ver: '3.30.1', date: '2026-11-25',
     items: [
@@ -6720,6 +6726,7 @@ ${dayLog || '（昨日无修行动态）'}
 
   // 打开修仙面板（顶栏按钮）
   async showCultPanel() {
+    this._cultLifeExpanded = false; // v3.30.2：每次打开重置生平卡展开态
     document.getElementById('cultOverlay').style.display = 'flex';
     await this._renderCultPanel();
   }
@@ -6866,11 +6873,13 @@ ${dayLog || '（昨日无修行动态）'}
       ? '<div class="cult-log"><div class="cult-log-item">暂无动态</div></div>'
       : `<div class="cult-log">${logs.map(l => `<div class="cult-log-item">${l.time} ${escapeHtml(l.text)}</div>`).join('')}</div>${state.log.length > 8 ? '<div class="cult-log-more">仅显示最近 8 条</div>' : ''}`;
 
-    // 本世生平档案（v3.28.0：每一世一个文档，每日结算由 LLM 续写；v3.30.0：点击展开全文）
+    // 本世生平档案（v3.28.0：每一世一个文档，每日结算由 LLM 续写；v3.30.2：展开态存实例标志，面板重渲染不丢）
     const lifeDoc = await this.cultManager.getLifeDoc();
     this._lifeDocFull = (lifeDoc && lifeDoc.text) || '';
+    const lifeLong = this._lifeDocFull.length > 500;
+    const lifeExpanded = !!this._cultLifeExpanded && lifeLong;
     const lifeHtml = (lifeDoc && lifeDoc.text)
-      ? `<div class="cult-life-card" id="cultLifeCard" role="button" tabindex="0" title="点击展开全文"><div class="cult-life-title">📜 第 ${(state.reincarnations || 0) + 1} 世生平 <span class="cult-life-path">${escapeHtml(lifeDoc.path)}</span></div><div class="cult-life-text" id="cultLifeText">${escapeHtml(lifeDoc.text.slice(0, 500))}${lifeDoc.text.length > 500 ? '…' : ''}</div>${lifeDoc.text.length > 500 ? '<div class="cult-life-more">点击展开全文</div>' : ''}</div>`
+      ? `<div class="cult-life-card" id="cultLifeCard" role="button" tabindex="0" title="${lifeExpanded ? '点击收起' : '点击展开全文'}"><div class="cult-life-title">📜 第 ${(state.reincarnations || 0) + 1} 世生平 <span class="cult-life-path">${escapeHtml(lifeDoc.path)}</span></div><div class="cult-life-text ${lifeExpanded ? 'expanded' : ''}" id="cultLifeText">${escapeHtml(lifeExpanded ? this._lifeDocFull : this._lifeDocFull.slice(0, 500) + (lifeLong ? '…' : ''))}</div>${lifeLong ? `<div class="cult-life-more">${lifeExpanded ? '点击收起' : '点击展开全文'}</div>` : ''}</div>`
       : '';
 
     contentEl.innerHTML = `
@@ -6906,16 +6915,11 @@ ${dayLog || '（昨日无修行动态）'}
 
   // 修仙面板事件委托（内容区动态重绘，按钮统一在此分发）
   async _onCultContentClick(e) {
-    // 生平卡点击展开/收起全文（v3.30.0）
+    // 生平卡点击展开/收起全文（v3.30.0；v3.30.2：翻转实例标志后整体重渲染，重渲染不丢展开态）
     if (e.target.closest('#cultLifeCard')) {
-      const textEl = document.getElementById('cultLifeText');
-      if (textEl && this._lifeDocFull) {
-        const expanded = textEl.classList.toggle('expanded');
-        textEl.textContent = expanded
-          ? this._lifeDocFull
-          : this._lifeDocFull.slice(0, 500) + (this._lifeDocFull.length > 500 ? '…' : '');
-        const moreEl = textEl.parentElement.querySelector('.cult-life-more');
-        if (moreEl) moreEl.textContent = expanded ? '点击收起' : '点击展开全文';
+      if ((this._lifeDocFull || '').length > 500) {
+        this._cultLifeExpanded = !this._cultLifeExpanded;
+        await this._renderCultPanel();
       }
       return;
     }
